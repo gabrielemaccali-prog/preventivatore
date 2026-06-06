@@ -1,0 +1,425 @@
+* {
+  box-sizing: border-box;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+body {
+  background-color: #f1f5f9;
+  margin: 0;
+  padding: 0;
+  color: #1e293b;
+}
+
+/* --- INTERFACCIA LOGIN --- */
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #0f172a;
+}
+.login-card {
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+  text-align: center;
+  width: 100%;
+  max-width: 400px;
+}
+.login-logo {
+  max-height: 80px;
+  margin-bottom: 20px;
+}
+.login-card h2 { color: #1e293b; margin-bottom: 25px; font-size: 1.5rem; }
+.login-card input {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 15px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 1rem;
+}
+.login-card button { width: 100%; padding: 12px; font-size: 1rem; background-color: #2563eb; }
+
+/* --- STRUTTURA LAYOUT --- */
+.app-container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* TESTATA AZIENDALE */
+.main-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: white;
+  padding: 15px 25px;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  margin-bottom: 25px;
+}
+.header-brand { display: flex; align-items: center; gap: 15px; }
+.header-logo { max-height: 50px; }
+.main-header h1 { margin: 0; font-size: 1.4rem; color: #0f172a; }
+.main-header p { margin: 2px 0 0 0; font-size: 0.85rem; color: #64748b; }
+.header-menu { display: flex; gap: 10px; align-items: center; }
+
+.nav-btn { background-color: #e2e8f0; color: #475569; }
+.nav-btn.active { background-color: #0f172a; color: white; }
+.btn-logout { background-color: #ef4444; font-size: 0.9rem; padding: 8px 15px; }
+.btn-logout:hover { background-color: #dc2626; }
+
+/* PANNELLO ADMIN SCHEDA CONFIGURAZIONE */
+.schermata-admin {
+  background: white;
+  padding: 30px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+}
+.admin-grid-sezione {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 25px;
+  margin-bottom: 40px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.admin-form-box h3 { margin-top: 0; color: #2563eb; font-size: 1.05rem; }
+.admin-form-box input, .admin-form-box select {
+  width: 100%; padding: 10px; margin-bottom: 10px;
+  border: 1px solid #cbd5e1; border-radius: 6px;
+}
+.admin-form-box button { width: 100%; background-color: #10b981; padding: 10px; font-size: 0.95rem; }
+.admin-form-box button:hover { background-color: #059669; }
+
+/* TABELLE DATI GESTIONALI */
+.admin-table-box { max-height: 220px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
+table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
+th, td { padding: 12px; border-bottom: 1px solid #e2e8f0; }
+th { background-color: #f8fafc; color: #64748b; font-weight: 600; position: sticky; top: 0; }
+tr:hover { background-color: #f8fafc; }
+
+/* --- COMPONENTI PREVENTIVATORE --- */
+.schermata-inserimento {
+  background: white; padding: 30px; border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+}
+h2 { font-size: 1.15rem; color: #334155; margin-top: 0; }
+.sezione { margin-bottom: 30px; }
+.date-grid { display: flex; gap: 15px; }
+.date-grid label { display: flex; flex-direction: column; flex: 1; font-weight: 600; font-size: 0.9rem; }
+input[type="date"], input[type="text"], .dropdown-gonfiabili {
+  width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 5px; font-size: 1rem;
+}
+.info-giorni { margin: 8px 0; font-size: 0.9rem; color: #64748b; }
+.checkbox-logistica {
+  display: flex; align-items: center; gap: 8px; background-color: #f8fafc;
+  padding: 12px; border-radius: 6px; border: 1px dashed #cbd5e1; margin-top: 10px; cursor: pointer;
+}
+.lista-scelti-container { margin-top: 15px; }
+.lista-scelti { list-style: none; padding: 0; margin: 0; }
+.item-scelto {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 6px;
+}
+.ricerca-box { display: flex; gap: 8px; }
+.ricerca-box input { flex-grow: 1; margin-top: 0; }
+button { padding: 10px 20px; background-color: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+button:hover { background-color: #1d4ed8; }
+.btn-rimuovi { background-color: #ef4444; padding: 5px 10px; font-size: 0.8rem; }
+.btn-rimuovi:hover { background-color: #dc2626; }
+
+.risultati-ricerca {
+  list-style: none; padding: 0; margin: 5px 0 0 0; border: 1px solid #cbd5e1; border-radius: 6px;
+  max-height: 180px; overflow-y: auto; background: white;
+}
+.risultati-ricerca li { padding: 10px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 0.85rem; }
+.risultati-ricerca li:hover { background-color: #eff6ff; }
+.info-percorso-riepilogo { margin-top: 12px; padding: 12px; background-color: #f0fdf4; border-radius: 6px; border-left: 4px solid #16a34a; font-size: 0.9rem; }
+.extra-grid { display: flex; flex-direction: column; gap: 8px; }
+.extra-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+/* BOX STIMA INTEGRATA */
+.riepilogo { background-color: #0f172a; color: #f8fafc; padding: 25px; border-radius: 10px; margin-top: 35px; }
+.riepilogo h2 { color: white; border-bottom: 1px solid #334155; padding-bottom: 10px; }
+.blocco-dettaglio-calcolo { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+.scheda-riepilogo-prodotto { background-color: #1e293b; padding: 15px; border-radius: 6px; border-left: 4px solid #3b82f6; }
+.scheda-riepilogo-prodotto h4 { margin: 0 0 8px 0; color: #60a5fa; font-size: 1rem; }
+.voci-prezzo p { margin: 4px 0; font-size: 0.9rem; color: #cbd5e1; display: flex; justify-content: space-between; }
+.subtotale-prodotto { margin-top: 8px !important; padding-top: 6px; border-top: 1px dashed #334155; color: white !important; }
+.extra-box-dettaglio { border-left-color: #94a3b8; }
+.extra-box-dettaglio h4 { color: #cbd5e1; }
+.extra-box-dettaglio p { display: flex; justify-content: space-between; font-size: 0.9rem; margin: 4px 0; }
+.avviso-calcolo { font-size: 0.9rem; color: #64748b; margin: 0; }
+.totale-box-finale { border-top: 2px solid #334155; padding-top: 15px; }
+.totale-box-finale h3 { display: flex; justify-content: space-between; margin: 0; font-size: 1.4rem; }
+.totale-box-finale h3 span { color: #10b981; }
+.btn-preventivo { width: 100%; padding: 14px; background-color: #10b981; font-size: 1.1rem; margin-top: 20px; }
+.btn-preventivo:hover { background-color: #059669; }
+.btn-preventivo:disabled { background-color: #334155; color: #64748b; cursor: not-allowed; }
+
+/* --- MODALE PREVENTIVO STAMPABILE --- */
+.modal-preventivo-backdrop { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.6); overflow-y: auto; padding: 40px 20px; z-index: 999; }
+.documento-preventivo { background: white; max-width: 850px; margin: 0 auto; border-radius: 8px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); }
+.azioni-preventivo { display: flex; justify-content: space-between; padding: 15px 25px; background: #f1f5f9; border-radius: 8px 8px 0 0; }
+.btn-chiudi { background-color: #64748b; }
+.btn-stampa { background-color: #ea580c; }
+.btn-stampa:hover { background-color: #c2410c; }
+
+.area-foglio { padding: 50px; color: #000; background: white; }
+.header-preventivo { display: flex; flex-direction: column; align-items: center; border-bottom: 3px double #000; padding-bottom: 20px; margin-bottom: 25px; position: relative; }
+.documento-logo { max-height: 70px; margin-bottom: 10px; }
+.header-preventivo h1 { margin: 0; font-size: 1.8rem; font-weight: bold; letter-spacing: 1px; text-align: center; }
+.header-preventivo p { margin: 5px 0 0 0; font-size: 0.9rem; }
+.dati-noleggio-preventivo { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 20px; border-radius: 6px; margin-bottom: 25px; font-size: 0.95rem; }
+.dati-noleggio-preventivo h3 { margin-top: 0; font-size: 1.05rem; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; }
+.dati-noleggio-preventivo p { margin: 6px 0; }
+.tabella-preventivo { width: 100%; border-collapse: collapse; margin: 25px 0; font-size: 0.9rem; }
+.tabella-preventivo th, .tabella-preventivo td { border: 1px solid #000; padding: 12px; text-align: left; }
+.tabella-preventivo th { background-color: #f1f5f9; font-weight: bold; }
+.totale-documento { text-align: right; margin-top: 25px; border-top: 2px solid #000; padding-top: 10px; }
+.totale-documento h2 { margin: 0; font-size: 1.5rem; }
+.condizioni-preventivo { margin-top: 45px; padding-top: 20px; border-top: 1px dashed #94a3b8; font-size: 0.8rem; color: #334155; line-height: 1.4; }
+.condizioni-preventivo h4 { margin-top: 0; font-size: 0.9rem; color: #000; }
+
+/* --- STILI EDIT INLINE (TABELLE) --- */
+.table-input { width: 100%; padding: 6px 10px; border: 1px solid #3b82f6; border-radius: 4px; font-size: 0.85rem; background-color: #f8fafc; }
+.table-input:focus { outline: 2px solid #2563eb; background-color: white; }
+.coord-input { width: 48%; display: inline-block; }
+.coord-input:first-child { margin-right: 4%; }
+.azioni-celle { display: flex; gap: 5px; align-items: center; }
+.btn-modifica-inline { background-color: #f59e0b; font-size: 0.8rem; padding: 5px 10px; }
+.btn-modifica-inline:hover { background-color: #d97706; }
+.btn-salva-inline { background-color: #10b981; font-size: 0.8rem; padding: 5px 10px; }
+.btn-salva-inline:hover { background-color: #059669; }
+.btn-annulla-inline { background-color: #64748b; font-size: 0.8rem; padding: 5px 10px; }
+.btn-annulla-inline:hover { background-color: #475569; }
+td { padding: 8px 12px; vertical-align: middle; }
+
+/* ==========================================================================
+   --- NUOVO LAYOUT E SPECIFICHE GRAFICHE PER LA PAGINA VENDITA ---
+   ========================================================================== */
+.schermata-vendita {
+  background: white;
+  padding: 30px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+}
+.descrizione-pagina {
+  font-size: 0.9rem;
+  color: #64748b;
+  margin-bottom: 25px;
+  line-height: 1.5;
+}
+.blocco-vendita-articoli {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.scheda-vendita-prodotto {
+  display: grid;
+  grid-template-columns: 1.2fr 2fr;
+  background-color: #f8fafc;
+  padding: 20px;
+  border-radius: 8px;
+  border-left: 5px solid #10b981; /* Verde commerciale */
+  gap: 20px;
+  align-items: center;
+}
+.extra-box-vendita {
+  border-left-color: #64748b; /* Grigio Ardesia per gli extra */
+}
+.vendita-info-prodotto h4 {
+  margin: 0 0 6px 0;
+  color: #0f172a;
+  font-size: 1.1rem;
+}
+.vendita-info-prodotto p {
+  margin: 4px 0;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+.testo-costo-base {
+  color: #ef4444; /* Evidenzia il costo base in rosso per riferimento */
+}
+.vendita-inputs-prodotto {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+}
+.vendita-inputs-prodotto label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+  flex: 1;
+}
+.input-vendita {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  width: 100%;
+  background-color: white;
+}
+.input-vendita:focus {
+  outline: 2px solid #10b981;
+}
+.input-vendita.error {
+  border-color: #ef4444;
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+.vendita-prezzo-finale {
+  text-align: right;
+  min-width: 140px;
+}
+.vendita-prezzo-finale p {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #64748b;
+}
+.vendita-prezzo-finale h3 {
+  margin: 4px 0 0 0;
+  color: #10b981;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+.warning-testo {
+  font-size: 0.75rem;
+  color: #ef4444;
+  font-weight: bold;
+  display: block;
+  margin-top: 2px;
+}
+.totale-box-vendita-finale {
+  background-color: #0f172a;
+  color: white;
+  padding: 20px 25px;
+  border-radius: 8px;
+  margin: 30px 0 20px 0;
+  text-align: right;
+}
+.totale-box-vendita-finale h3 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+.totale-box-vendita-finale h3 span {
+  color: #10b981;
+}
+.totale-box-vendita-finale p {
+  margin: 6px 0 0 0;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+/* ==========================================================================
+   --- NUOVI STILI SCHEDA STORICO PREVENTIVI ---
+   ========================================================================== */
+.schermata-storico {
+  background: white;
+  padding: 30px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+}
+
+.filtri-storico {
+  display: flex;
+  gap: 15px;
+  margin-top: 20px;
+  background-color: #f8fafc;
+  padding: 15px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.filtro-group {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.filtro-group label {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #475569;
+  margin-bottom: 6px;
+}
+
+.filtro-group input, .filtro-group select {
+  padding: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.badge-stato {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
+.badge-stato.registrato {
+  background-color: #fef08a;
+  color: #854d0e;
+}
+
+.badge-stato.confermato {
+  background-color: #bbf7d0;
+  color: #166534;
+}
+
+.btn-conferma {
+  background-color: #10b981;
+  color: white;
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  width: 100%;
+}
+.btn-conferma:hover { background-color: #059669; }
+
+.btn-ripristina {
+  background-color: #f59e0b;
+  color: white;
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  width: 100%;
+}
+.btn-ripristina:hover { background-color: #d97706; }
+
+
+
+.nuova-pagina {
+  page-break-before: always; /* Per browser più vecchi */
+  break-before: page;        /* Standard moderno */
+}
+
+.btn-elimina-prev {
+  background-color: #ef4444;
+  color: white;
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  width: 100%;
+}
+.btn-elimina-prev:hover { background-color: #dc2626; }
+
+
+/* --- REGOLE RIGIDE PER LA STAMPA / SALVATAGGIO IN PDF --- */
+@media print {
+  body { background: white; padding: 0; color: black; }
+  .no-print, .main-header, .schermata-inserimento, .schermata-vendita, .schermata-storico { display: none !important; }
+  .modal-preventivo-backdrop { position: relative; background: transparent; padding: 0; overflow: visible; width: auto; height: auto; }
+  .documento-preventivo { box-shadow: none; max-width: 100%; border-radius: 0; }
+  .area-foglio { padding: 0; }
+  th { background-color: #f1f5f9 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .dati-noleggio-preventivo { background-color: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
