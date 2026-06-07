@@ -412,6 +412,26 @@ td { padding: 8px 12px; vertical-align: middle; }
 }
 .btn-elimina-prev:hover { background-color: #dc2626; }
 
+/* Correzione per visibilità input su Mobile */
+input {
+  color: #1e293b !important; /* Grigio scuro, ben leggibile */
+  background-color: #ffffff !important; /* Sfondo bianco puro */
+  -webkit-text-fill-color: #1e293b !important; /* Forza il colore anche su Safari iOS */
+  opacity: 1 !important; /* Evita trasparenze indesiderate */
+  border: 1px solid #cbd5e1 !important;
+}
+
+/* Assicuriamoci che anche quando sono disabilitati o in lettura si vedano */
+input:disabled {
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+}
+
+/* Specifica per la sezione vendita se necessario */
+.vendita-container input {
+  font-weight: 500;
+}
+
 
 /* --- REGOLE RIGIDE PER LA STAMPA / SALVATAGGIO IN PDF --- */
 @media print {
