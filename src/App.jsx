@@ -1312,7 +1312,10 @@ function App() {
                 <h2 style={{ margin: 0 }}>TOTALE FINALE CONTRATTUALE: €{totaleVenditaComplessivo.toFixed(2)} <span style={{ fontSize: '1.2rem', fontWeight: 'normal', color: '#555' }}>+ IVA</span></h2>
               </div>
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', marginTop: '12px', justifyContent: 'flex-end', textAlign: 'left' }}>
+              
+				
+              <div className="nuova-pagina">
+			  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', marginTop: '12px', justifyContent: 'flex-end', textAlign: 'left' }}>
                 <div style={{ background: '#fafafa', borderLeft: '4px solid #0288d1', padding: '10px 14px', fontSize: '0.85rem', flex: '1 1 200px', boxSizing: 'border-box' }}>
                   <span style={{ fontWeight: 'bold', color: '#0288d1', display: 'block', marginBottom: '2px', fontSize: '0.9rem' }}>PAGAMENTO ALLA CONFERMA</span>
                   Versamento caparra confirmatoria pari al 50% del preventivo.
@@ -1322,8 +1325,6 @@ function App() {
                   Saldo tramite rimessa diretta a fine evento.
                 </div>
               </div>
-				
-              <div className="nuova-pagina">
                 <div className="condizioni-preventivo" style={{ marginTop: '35px', fontSize: '0.85rem', lineHeight: '1.4', color: '#444', textAlign: 'left' }}>
                   <div style={{ marginBottom: '20px', textAlign: 'left' }}>
                     <h4 style={{ margin: '0 0 8px 0', color: '#111', borderBottom: '1px solid #ddd', paddingBottom: '3px', fontSize: '0.9rem' }}>EVENTUALI ADDIZIONALI</h4>
