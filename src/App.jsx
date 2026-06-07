@@ -1239,7 +1239,7 @@ function App() {
                 </div>
               )}
 
-              <h3 style={{ textAlign: 'left' }}>Prospetto Economico delle Strutture</h3>
+              <h3 style={{ textAlign: 'left' }}>Prospetto Economico</h3>
               <table className="tabella-preventivo" style={{ width: '100%', textAlign: 'left' }}>
                 <thead>
                   <tr>
@@ -1309,12 +1309,16 @@ function App() {
               </table>
 
               <div className="totale-documento" style={{ marginTop: '20px', padding: '15px', background: '#f5f5f5', textAlign: 'right' }}>
-                <h2 style={{ margin: 0 }}>TOTALE FINALE CONTRATTUALE: €{totaleVenditaComplessivo.toFixed(2)} <span style={{ fontSize: '1.2rem', fontWeight: 'normal', color: '#555' }}>+ IVA</span></h2>
+                <h2 style={{ margin: 0 }}>TOTALE FINALE : €{totaleVenditaComplessivo.toFixed(2)} <span style={{ fontSize: '1.2rem', fontWeight: 'normal', color: '#555' }}>+ IVA</span></h2>
               </div>
 
               
 				
               <div className="nuova-pagina">
+			  
+                <div className="condizioni-preventivo" style={{ marginTop: '35px', fontSize: '0.85rem', lineHeight: '1.4', color: '#444', textAlign: 'left' }}>
+                  
+				  <h4 style={{ margin: '0 0 2px 0', color: '#111', borderBottom: '1px solid #ddd', paddingBottom: '3px', fontSize: '0.9rem' }}>MODALITA DI PAGAMENTO</h4>
 			  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', marginTop: '12px', justifyContent: 'flex-end', textAlign: 'left' }}>
                 <div style={{ background: '#fafafa', borderLeft: '4px solid #0288d1', padding: '10px 14px', fontSize: '0.85rem', flex: '1 1 200px', boxSizing: 'border-box' }}>
                   <span style={{ fontWeight: 'bold', color: '#0288d1', display: 'block', marginBottom: '2px', fontSize: '0.9rem' }}>PAGAMENTO ALLA CONFERMA</span>
@@ -1325,9 +1329,9 @@ function App() {
                   Saldo tramite rimessa diretta a fine evento.
                 </div>
               </div>
-                <div className="condizioni-preventivo" style={{ marginTop: '35px', fontSize: '0.85rem', lineHeight: '1.4', color: '#444', textAlign: 'left' }}>
-                  <div style={{ marginBottom: '20px', textAlign: 'left' }}>
-                    <h4 style={{ margin: '0 0 8px 0', color: '#111', borderBottom: '1px solid #ddd', paddingBottom: '3px', fontSize: '0.9rem' }}>EVENTUALI ADDIZIONALI</h4>
+				  
+				  <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+                    <h4 style={{ margin: '20px 0 8px 0', color: '#111', borderBottom: '1px solid #ddd', paddingBottom: '3px', fontSize: '0.9rem' }}>EVENTUALI ADDIZIONALI</h4>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <div style={{ textAlign: 'left' }}>⚡ <strong>Generatore di corrente:</strong> Posizionabile su richiesta qualora non ci sia elettricità o potenza sufficiente sul posto.</div>
                       <div style={{ textAlign: 'left' }}>🏆 <strong>Arbitraggio:</strong> Disponibile su richiesta servizio di assistenza e direzione per le varie partite.</div>
