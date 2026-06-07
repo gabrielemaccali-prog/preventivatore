@@ -20,7 +20,7 @@ function App() {
   const [loginPass, setLoginPass] = useState("");
   const [currentView, setCurrentView] = useState("calculator"); 
 
-  // --- STATI DEI DATI (ORA INIZIANO VUOTI, VERRANNO CARICATI DAL DB) ---
+  // --- STATI DEI DATI ---
   const [sedi, setSedi] = useState([]);
   const [gonfiabili, setGonfiabili] = useState([]);
   const [extras, setExtras] = useState([]);
@@ -93,7 +93,6 @@ function App() {
 
     const { data: preventiviData } = await supabase.from('preventivi').select('*').order('codice', { ascending: false });
     if (preventiviData) {
-      // Ricostruiamo la struttura per farla combaciare con il front-end
       const prevFormattati = preventiviData.map(p => ({
         id: { codice: p.codice, dettagliLogistici: p.dettagliLogistici },
         dataEmissione: p.dataEmissione,
@@ -107,7 +106,8 @@ function App() {
         stato: p.stato,
         nomeReferente: p.nomeReferente,
         emailReferente: p.emailReferente,
-        costoVivoTotale: parseFloat(p.costoVivoTotale)
+        costoVivoTotale: parseFloat(p.costoVivoTotale),
+        kmAndata: parseFloat(p.kmAndata) // Recupero chilometraggio
       }));
       setPreventiviSalvati(prevFormattati);
     }
@@ -164,17 +164,26 @@ function App() {
     return `${via}${civico}${cap}, ${citta}${prov ? ` (${prov})` : ""}`.trim().replace(/^,/, '').trim();
   };
 
-  // --- LOGICA DI AUTENTICAZIONE ---
-  const handleLogin = (e) => {
+  // --- LOGICA DI AUTENTICAZIONE DA DB SUPABASE ---
+  const handleLogin = async (e) => {
     e.preventDefault();
-    if (loginUser === "admin" && loginPass === "admin") {
-      setUser({ username: "Amministratore", ruolo: "admin" });
-      setCurrentView("admin");
-    } else if (loginUser === "utente" && loginPass === "utente") {
-      setUser({ username: "Operatore", ruolo: "utente" });
-      setCurrentView("calculator");
-    } else {
-      alert("Credenziali errate!");
+    try {
+      const { data, error } = await supabase
+        .from('utenti')
+        .select('*')
+        .eq('username', loginUser)
+        .eq('password', loginPass)
+        .maybeSingle();
+
+      if (data) {
+        setUser({ username: data.username, ruolo: data.ruolo });
+        setCurrentView(data.ruolo === "admin" ? "admin" : "calculator");
+      } else {
+        alert("Credenziali errate o utente non trovato!");
+      }
+    } catch (err) {
+      alert("Errore di connessione al database. Controlla la console.");
+      console.error(err);
     }
   };
 
@@ -323,7 +332,7 @@ function App() {
     html2pdf().set(opt).from(element).save();
   };
 
-  // --- LOGICA DI SALVATAGGIO PREVENTIVO (ORA SU SUPABASE) ---
+  // --- LOGICA DI SALVATAGGIO PREVENTIVO ---
   const handleStampaESalva = async () => {
     const dettagliGonfiabili = serviziSelezionati.map(nome => {
       const sol = soluzioniMigliori[nome];
@@ -345,6 +354,9 @@ function App() {
       return { nome: e.nome, costo: e.prezzo, prezzoVendita: vPrezzo * (1 - vSconto / 100) };
     });
 
+    // Calcolo del kilometraggio totale andata per il database
+    const totaleKmAndata = serviziSelezionati.reduce((acc, nome) => acc + (soluzioniMigliori[nome]?.kmAndata || 0), 0);
+
     const nuovoPreventivoDB = {
       codice: idPreventivo.codice,
       dataEmissione: new Date().toISOString(),
@@ -359,16 +371,15 @@ function App() {
       nomeReferente: nomeRiferimento, 
       emailReferente: indirizzoEmail, 
       costoVivoTotale: totaleComplessivoCostoFlotta, 
+      kmAndata: totaleKmAndata, // Salvataggio kilometraggio
       dettagliLogistici: idPreventivo.dettagliLogistici 
     };
 
-    // Salva in DB Supabase
     const { error } = await supabase.from('preventivi').upsert([nuovoPreventivoDB], { onConflict: 'codice' });
     if (error) {
       console.error("Errore salvataggio DB:", error);
       alert("Errore durante il salvataggio nel Database!");
     } else {
-      // Aggiorna anche la lista UI locale
       fetchData();
       scaricaPreventivoPDF();
     }
@@ -408,6 +419,7 @@ function App() {
       Periodo: item.periodo,
       TotaleVendita: item.totaleVendita.toFixed(2),
       CostoVivoTotale: (item.costoVivoTotale || 0).toFixed(2),
+      KmAndata: (item.kmAndata || 0).toFixed(1),
       Stato: item.stato
     }));
     const worksheet = XLSX.utils.json_to_sheet(datiPerExcel);
@@ -416,7 +428,7 @@ function App() {
     XLSX.writeFile(workbook, "Storico_Preventivi.xlsx");
   };
 
-  // --- FUNZIONI PANEL ADMIN (CON DB SUPABASE) ---
+  // --- FUNZIONI PANEL ADMIN ---
   const addSede = async (e) => {
     e.preventDefault();
     if (!nuovaSede.nome || !nuovaSede.lat || !nuovaSede.lon) return alert("Compila tutti i campi");
@@ -474,6 +486,28 @@ function App() {
   const nomiUniciGonfiabili = Array.from(new Set(gonfiabili.map(g => g.nome)));
   const gonfiabiliDisponibiliInDropdown = nomiUniciGonfiabili.filter(nome => !serviziSelezionati.includes(nome));
 
+  // --- STILI RESPONSIVE INIETTATI VIA JAVASCRIPT ---
+  const mobileStyles = `
+    @media (max-width: 768px) {
+      .main-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+      .header-menu { flex-wrap: wrap; width: 100%; margin-top: 10px; }
+      .nav-btn, .btn-logout { flex: 1 1 auto; text-align: center; }
+      .admin-grid-sezione { display: flex !important; flex-direction: column; gap: 15px; }
+      .scheda-vendita-prodotto { display: flex !important; flex-direction: column; align-items: stretch; }
+      .vendita-inputs-prodotto { flex-direction: column; align-items: stretch; gap: 15px; }
+      .date-grid { flex-direction: column; gap: 10px; }
+      .ricerca-box { flex-direction: column; gap: 8px; }
+      .azioni-preventivo { flex-direction: column; gap: 10px; }
+      .azioni-preventivo > div { flex-direction: column; }
+      .modal-preventivo-backdrop { padding: 10px; }
+      .storico-table { display: block; overflow-x: auto; white-space: nowrap; }
+      .filtri-storico { flex-direction: column; }
+      .filtri-storico .filtro-group { flex: 1 1 100% !important; }
+      .header-preventivo { flex-direction: column; align-items: center; }
+      .header-preventivo > div { width: 100% !important; text-align: center !important; float: none !important; }
+    }
+  `;
+
   if (!user) {
     return (
       <div className="login-container">
@@ -492,6 +526,8 @@ function App() {
 
   return (
     <div className="app-container">
+      <style>{mobileStyles}</style>
+
       <header className="main-header no-print">
         <div className="header-brand" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
           <img src="/logo.png" alt="Logo" style={{ height: '45px', width: 'auto', objectFit: 'contain' }} />
@@ -584,7 +620,7 @@ function App() {
             <div className="admin-form-box-top" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
               <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem' , color: '#0288d1' }}>2. Aggiungi Nuovo Gonfiabile</h3>
               <form onSubmit={addGonfiabile}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '15px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '15px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'end' }}>
                     <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px', color: '#555' }}>Nome Modello</label>
                     <input type="text" placeholder="Es. Scivolo Titanic" value={nuovoGonfiabile.nome} onChange={(e) => setNuovoGonfiabile({...nuovoGonfiabile, nome: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', margin: '0' }} />
@@ -643,7 +679,7 @@ function App() {
                               </select>
                             </td>
                             <td style={{ padding: '10px 12px' }}>
-                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: '6px' }}>
                                 <input type="text" placeholder="👥 Giocatori" className="table-input" value={datiGonfiabileInModifica.giocatori} onChange={(e)=>setDatiGonfiabileInModifica({...datiGonfiabileInModifica, giocatori: e.target.value})} style={{ fontSize: '0.8rem', height: '28px' }} />
                                 <input type="text" placeholder="🎂 Età" className="table-input" value={datiGonfiabileInModifica.etaConsigliata} onChange={(e)=>setDatiGonfiabileInModifica({...datiGonfiabileInModifica, etaConsigliata: e.target.value})} style={{ fontSize: '0.8rem', height: '28px' }} />
                                 <input type="text" placeholder="📐 Dimensioni" className="table-input" value={datiGonfiabileInModifica.dimensioni} onChange={(e)=>setDatiGonfiabileInModifica({...datiGonfiabileInModifica, dimensioni: e.target.value})} style={{ fontSize: '0.8rem', height: '28px' }} />
@@ -999,8 +1035,8 @@ function App() {
       {/* VIEW: STORICO PREVENTIVI */}
       {currentView === "storico" && user.ruolo === "admin" && (
         <div className="schermata-storico no-print">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2>🗂️ Database Storico Preventivi</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <h2 style={{ margin: 0 }}>🗂️ Database Storico Preventivi</h2>
             <button onClick={esportaExcel} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
               📊 Esporta Excel
             </button>
@@ -1038,16 +1074,17 @@ function App() {
             <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '12px', width: '15%' }}>ID / Data</th>
-                  <th style={{ padding: '12px', width: '20%' }}>Destinazione e Contatti</th>
-                  <th style={{ padding: '12px', width: '35%' }}>Dettaglio Articoli</th>
+                  <th style={{ padding: '12px', width: '12%' }}>ID / Data</th>
+                  <th style={{ padding: '12px', width: '18%' }}>Destinazione e Contatti</th>
+                  <th style={{ padding: '12px', width: '25%' }}>Dettaglio Articoli</th>
+                  <th style={{ padding: '12px', width: '15%' }}>Costi e Logistica</th>
                   <th style={{ padding: '12px', width: '15%' }}>Importo / Stato</th>
                   <th style={{ padding: '12px', width: '15%', textAlign: 'center' }}>Azioni</th>
                 </tr>
               </thead>
               <tbody>
                 {preventiviFiltrati.length === 0 ? (
-                  <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessun preventivo trovato con i filtri attuali.</td></tr>
+                  <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessun preventivo trovato con i filtri attuali.</td></tr>
                 ) : (
                   preventiviFiltrati.map((p, index) => (
                     <tr key={`${typeof p.id === 'object' ? p.id.codice : p.id}-${index}`} style={{ borderBottom: '1px solid #eee' }}>
@@ -1070,6 +1107,10 @@ function App() {
                             <li key={`ex-${i}`}>⚙️ {e.nome} (Vendita: €{e.prezzoVendita.toFixed(2)})</li>
                           ))}
                         </ul>
+                      </td>
+                      <td style={{ padding: '12px', fontSize: '0.85rem' }}>
+                        <span style={{ display: 'block', marginBottom: '4px' }}>Vivo: <strong>€{(p.costoVivoTotale || 0).toFixed(2)}</strong></span>
+                        <span style={{ color: '#555' }}>Km Andata: <strong>{p.kmAndata !== undefined ? parseFloat(p.kmAndata).toFixed(1) : "0.0"} km</strong></span>
                       </td>
                       <td style={{ padding: '12px' }}>
                         <strong style={{ fontSize: '1.05rem', color: '#111' }}>€{p.totaleVendita.toFixed(2)}</strong><br/>
@@ -1107,12 +1148,12 @@ function App() {
                 <button className="btn-stampa" onClick={handleStampaESalva}>🖨️ Salva in DB e Stampa PDF</button>
               </div>
 
-              <div style={{ background: '#f0f4f8', padding: '12px', borderRadius: '6px', border: '1px solid #d9e2ec', textAlign: 'left', display: 'flex', gap: '15px' }}>
-                <div style={{ flex: 1 }}>
+              <div style={{ background: '#f0f4f8', padding: '12px', borderRadius: '6px', border: '1px solid #d9e2ec', textAlign: 'left', display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
+                <div style={{ flex: '1 1 200px' }}>
                   <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', fontSize: '0.9rem', color: '#334e68' }}>Nome Referente:</label>
                   <input type="text" value={nomeRiferimento} onChange={(e) => setNomeRiferimento(e.target.value)} style={{ width: '100%', padding: '10px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #bcccdc' }} placeholder="Mario Rossi" />
                 </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: '1 1 200px' }}>
                   <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', fontSize: '0.9rem', color: '#334e68' }}>Indirizzo E-mail:</label>
                   <input type="email" value={indirizzoEmail} onChange={(e) => setIndirizzoEmail(e.target.value)} style={{ width: '100%', padding: '10px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #bcccdc' }} placeholder="email@esempio.com" />
                 </div>
@@ -1231,12 +1272,12 @@ function App() {
                 <h2 style={{ margin: 0 }}>TOTALE FINALE CONTRATTUALE: €{totaleVenditaComplessivo.toFixed(2)} <span style={{ fontSize: '1.2rem', fontWeight: 'normal', color: '#555' }}>+ IVA</span></h2>
               </div>
 
-              <div style={{ display: 'flex', gap: '15px', marginTop: '12px', justifyContent: 'flex-end', textAlign: 'left' }}>
-                <div style={{ background: '#fafafa', borderLeft: '4px solid #0288d1', padding: '10px 14px', fontSize: '0.85rem', width: '260px', boxSizing: 'border-box' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', marginTop: '12px', justifyContent: 'flex-end', textAlign: 'left' }}>
+                <div style={{ background: '#fafafa', borderLeft: '4px solid #0288d1', padding: '10px 14px', fontSize: '0.85rem', flex: '1 1 200px', boxSizing: 'border-box' }}>
                   <span style={{ fontWeight: 'bold', color: '#0288d1', display: 'block', marginBottom: '2px', fontSize: '0.9rem' }}>PAGAMENTO ALLA CONFERMA</span>
                   Versamento caparra confirmatoria pari al 50% del preventivo.
                 </div>
-                <div style={{ background: '#fafafa', borderLeft: '4px solid #2e7d32', padding: '10px 14px', fontSize: '0.85rem', width: '260px', boxSizing: 'border-box' }}>
+                <div style={{ background: '#fafafa', borderLeft: '4px solid #2e7d32', padding: '10px 14px', fontSize: '0.85rem', flex: '1 1 200px', boxSizing: 'border-box' }}>
                   <span style={{ fontWeight: 'bold', color: '#2e7d32', display: 'block', marginBottom: '2px', fontSize: '0.9rem' }}>SALDO DELL'EVENTO</span>
                   Saldo tramite rimessa diretta a fine evento.
                 </div>
