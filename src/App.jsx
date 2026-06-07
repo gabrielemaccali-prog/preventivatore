@@ -107,7 +107,7 @@ function App() {
         nomeReferente: p.nomeReferente,
         emailReferente: p.emailReferente,
         costoVivoTotale: parseFloat(p.costoVivoTotale),
-        kmAndata: parseFloat(p.kmAndata) // Recupero chilometraggio
+        kmAndata: parseFloat(p.kmAndata)
       }));
       setPreventiviSalvati(prevFormattati);
     }
@@ -152,6 +152,11 @@ function App() {
     return diffTime < 0 ? 1 : Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
   };
   const giorniNoleggio = calcolaGiorni();
+
+  // Funzione per l'arrotondamento automatico alla decina superiore
+  const arrotondaAllaDecina = (valore) => {
+    return Math.ceil(valore / 10) * 10;
+  };
 
   const formattaIndirizzoPulito = (luogo) => {
     const addr = luogo.address || {};
@@ -295,30 +300,45 @@ function App() {
     });
   };
 
+  // --- CALCOLI TOTALI E ARROTONDAMENTI ---
   let totaleComplessivoCostiBase = 0;
   serviziSelezionati.forEach(nome => {
-    if (soluzioniMigliori[nome]) totaleComplessivoCostiBase += soluzioniMigliori[nome].totaleOpzione;
+    const sol = soluzioniMigliori[nome];
+    if (sol) totaleComplessivoCostiBase += arrotondaAllaDecina(sol.totaleOpzione);
   });
-  const costoExtraBase = extras.filter(e => extraSelezionati.includes(e.id)).reduce((acc, curr) => acc + curr.prezzo, 0);
+  
+  const costoExtraBase = extras.filter(e => extraSelezionati.includes(e.id)).reduce((acc, curr) => acc + arrotondaAllaDecina(curr.prezzo), 0);
   const totaleComplessivoCostoFlotta = totaleComplessivoCostiBase + costoExtraBase;
 
   let totaleVenditaComplessivo = 0;
   serviziSelezionati.forEach(nome => {
-    const cost = soluzioniMigliori[nome]?.totaleOpzione || 0;
-    const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : (cost * MOLTIPLICATORE_TARGET);
+    const cost = soluzioniMigliori[nome] ? arrotondaAllaDecina(soluzioniMigliori[nome].totaleOpzione) : 0;
+    const defaultPrezzo = arrotondaAllaDecina(cost * MOLTIPLICATORE_TARGET);
+    
+    const vPrezzo = (venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "") 
+      ? parseFloat(venditaGonfiabili[nome].prezzo) 
+      : defaultPrezzo;
+      
     const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
     totaleVenditaComplessivo += vPrezzo * (1 - vSconto / 100);
   });
+
   extras.filter(e => extraSelezionati.includes(e.id)).forEach(ex => {
-    const cost = ex.prezzo;
-    const vPrezzo = venditaExtras[ex.id]?.prezzo !== undefined && venditaExtras[ex.id]?.prezzo !== "" ? parseFloat(venditaExtras[ex.id].prezzo) : cost;
+    const cost = arrotondaAllaDecina(parseFloat(ex.prezzo) || 0);
+    const defaultPrezzo = cost; // Per gli extra, si propone direttamente il costo arrotondato
+    
+    const vPrezzo = (venditaExtras[ex.id]?.prezzo !== undefined && venditaExtras[ex.id]?.prezzo !== "") 
+      ? parseFloat(venditaExtras[ex.id].prezzo) 
+      : defaultPrezzo;
+      
     const vSconto = parseFloat(venditaExtras[ex.id]?.sconto) || 0;
     totaleVenditaComplessivo += vPrezzo * (1 - vSconto / 100);
   });
 
   const differenzaCostoVivo = totaleVenditaComplessivo - totaleComplessivoCostoFlotta;
   const percentualeMargine = totaleComplessivoCostoFlotta > 0 ? (differenzaCostoVivo / totaleComplessivoCostoFlotta) * 100 : 0;
-  const prezzoVenditaTarget = totaleComplessivoCostoFlotta * MOLTIPLICATORE_TARGET;
+  // Arrotonda anche il prezzo di vendita target informativo in fondo
+  const prezzoVenditaTarget = arrotondaAllaDecina(totaleComplessivoCostoFlotta * MOLTIPLICATORE_TARGET);
 
   const scaricaPreventivoPDF = () => {
     const element = document.getElementById('sezione-da-stampare');
@@ -336,22 +356,37 @@ function App() {
   const handleStampaESalva = async () => {
     const dettagliGonfiabili = serviziSelezionati.map(nome => {
       const sol = soluzioniMigliori[nome];
-      const costTotal = sol ? sol.totaleOpzione : 0;
-      const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : (costTotal * MOLTIPLICATORE_TARGET);
+      const costTotal = sol ? arrotondaAllaDecina(sol.totaleOpzione) : 0;
+      const defaultPrezzo = arrotondaAllaDecina(costTotal * MOLTIPLICATORE_TARGET);
+      
+      const vPrezzo = (venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "") 
+        ? parseFloat(venditaGonfiabili[nome].prezzo) 
+        : defaultPrezzo;
       const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
       
       return {
-        nome, costoNoleggio: sol?.costoBaseMoltiplicato || 0,
-        costoLogistica: sol?.costoKmTotale || 0, kmCalcolati: sol?.kmAndata || 0,
+        nome, 
+        costoNoleggio: sol?.costoBaseMoltiplicato || 0,
+        costoLogistica: sol?.costoKmTotale || 0, 
+        kmCalcolati: sol?.kmAndata || 0,
         prezzoVendita: vPrezzo * (1 - vSconto / 100)
       };
     });
 
     const dettagliExtra = extras.filter(e => extraSelezionati.includes(e.id)).map(e => {
-      const costTotal = e.prezzo;
-      const vPrezzo = venditaExtras[e.id]?.prezzo !== undefined && venditaExtras[e.id]?.prezzo !== "" ? parseFloat(venditaExtras[e.id].prezzo) : costTotal;
+      const costTotal = arrotondaAllaDecina(parseFloat(e.prezzo) || 0);
+      const defaultPrezzo = costTotal;
+      
+      const vPrezzo = (venditaExtras[e.id]?.prezzo !== undefined && venditaExtras[e.id]?.prezzo !== "") 
+        ? parseFloat(venditaExtras[e.id].prezzo) 
+        : defaultPrezzo;
       const vSconto = parseFloat(venditaExtras[e.id]?.sconto) || 0;
-      return { nome: e.nome, costo: e.prezzo, prezzoVendita: vPrezzo * (1 - vSconto / 100) };
+      
+      return { 
+        nome: e.nome, 
+        costo: costTotal, 
+        prezzoVendita: vPrezzo * (1 - vSconto / 100) 
+      };
     });
 
     // Calcolo del kilometraggio totale andata per il database
@@ -489,7 +524,6 @@ function App() {
   // --- STILI RESPONSIVE INIETTATI VIA JAVASCRIPT ---
   const mobileStyles = `
     @media (max-width: 768px) {
-      /* Adattamenti generali per header, bottoni e griglie */
       .main-header { flex-direction: column; align-items: flex-start; gap: 10px; }
       .header-menu { flex-wrap: wrap; width: 100%; margin-top: 10px; }
       .nav-btn, .btn-logout { flex: 1 1 auto; text-align: center; }
@@ -506,43 +540,22 @@ function App() {
       .header-preventivo { flex-direction: column; align-items: center; }
       .header-preventivo > div { width: 100% !important; text-align: center !important; float: none !important; }
 
-      /* --- TRASFORMAZIONE TABELLE IN "CARD" PER SMARTPHONE --- */
-      /* Elimina lo scroll orizzontale e impila le celle in verticale */
       table { display: block; width: 100%; border: none !important; }
-      thead { display: none; /* Nasconde l'intestazione orizzontale */ }
+      thead { display: none; }
       tbody { display: block; width: 100%; }
       tr { 
-        display: block; 
-        width: 100%; 
-        margin-bottom: 20px; 
-        border: 1px solid #cbd5e1 !important; 
-        border-radius: 8px; 
-        background: #fff;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+        display: block; width: 100%; margin-bottom: 20px; border: 1px solid #cbd5e1 !important; 
+        border-radius: 8px; background: #fff; box-shadow: 0 4px 8px rgba(0,0,0,0.05);
       }
       td { 
-        display: block; 
-        width: 100%; 
-        text-align: left !important; 
-        border: none !important; 
-        border-bottom: 1px dashed #e2e8f0 !important; 
-        padding: 12px 15px !important;
-        box-sizing: border-box;
+        display: block; width: 100%; text-align: left !important; border: none !important; 
+        border-bottom: 1px dashed #e2e8f0 !important; padding: 12px 15px !important; box-sizing: border-box;
       }
-      /* Rende l'ultima cella (le azioni/bottoni) simile a un "piè di pagina" della scheda */
-      td:last-child { 
-        border-bottom: none !important; 
-        background: #f8fafc; 
-        border-radius: 0 0 8px 8px; 
-      }
+      td:last-child { border-bottom: none !important; background: #f8fafc; border-radius: 0 0 8px 8px; }
       td:last-child > div { width: 100%; display: flex; flex-direction: column; gap: 8px; }
       td:last-child button { width: 100%; }
-      
-      /* Correzioni specifiche per i form di modifica dentro le tabelle */
       .coord-input { width: 100% !important; margin: 0 0 8px 0 !important; }
-      td > div[style*="grid-template-columns"] { 
-        grid-template-columns: 1fr 1fr !important; /* Mostra le specifiche tecniche a 2 colonne anziché 6 */
-      }
+      td > div[style*="grid-template-columns"] { grid-template-columns: 1fr 1fr !important; }
       .admin-table-box, .admin-table-box-full { border: none !important; background: transparent !important; overflow: visible !important; }
     }
   `;
@@ -552,7 +565,7 @@ function App() {
       <div className="login-container">
         <div className="login-card">
           <img src="/logo.png" alt="Logo Azienda" style={{ maxWidth: '140px', display: 'block', margin: '0 auto 15px auto' }} />
-          <h2>Accesso Gestionale</h2>
+          <h2>Accesso Preventivatore</h2>
           <form onSubmit={handleLogin}>
             <input type="text" placeholder="Username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} />
             <input type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} />
@@ -576,21 +589,26 @@ function App() {
           </div>
         </div>
         <div className="header-menu">
+          {/* Mostrato solo per Admin */}
           {user.ruolo === "admin" && (
             <button className={`nav-btn ${currentView === 'admin' ? 'active' : ''}`} onClick={() => setCurrentView("admin")}>⚙️ Configurazione</button>
           )}
+          {/* Mostrato per tutti i ruoli connessi */}
           <button className={`nav-btn ${currentView === 'calculator' ? 'active' : ''}`} onClick={() => setCurrentView("calculator")}>📋 Preventivatore</button>
-          {user.ruolo === "admin" && (
+          
+          {/* Mostrati per Admin e Superutente */}
+          {(user.ruolo === "admin" || user.ruolo === "superutente") && (
             <button className={`nav-btn ${currentView === 'sales' ? 'active' : ''}`} onClick={() => setCurrentView("sales")}>💰 Vendita</button>
           )}
-          {user.ruolo === "admin" && (
+          {(user.ruolo === "admin" || user.ruolo === "superutente") && (
             <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}>🗂️ Storico Preventivi</button>
           )}
+          
           <button className="btn-logout" onClick={handleLogout}>Esci</button>
         </div>
       </header>
 
-      {/* VIEW: ADMIN */}
+      {/* VIEW: ADMIN (Visibile solo per admin vero) */}
       {currentView === "admin" && user.ruolo === "admin" && (
         <div className="schermata-admin no-print" style={{ padding: '20px', fontFamily: 'inherit' }}>
           <h2>Pannello di Controllo Risorse ed Infrastruttura</h2>
@@ -931,15 +949,16 @@ function App() {
               <h3>TOTALE COSTI STIMATO: <span>€{totaleComplessivoCostoFlotta.toFixed(2)}</span></h3>
             </div>
 
-            {user.ruolo === "admin" && (
+            {/* Mostrato a admin e superutente */}
+            {(user.ruolo === "admin" || user.ruolo === "superutente") && (
               <button className="btn-preventivo" onClick={() => setCurrentView("sales")}>➡️ Procedi alla Vendita</button>
             )}
           </div>
         </div>
       )}
 
-      {/* VIEW: PAGINA VENDITA */}
-      {currentView === "sales" && user.ruolo === "admin" && (
+      {/* VIEW: PAGINA VENDITA (Per Admin e Superutente) */}
+      {currentView === "sales" && (user.ruolo === "admin" || user.ruolo === "superutente") && (
         <div className="schermata-vendita no-print">
           {(serviziSelezionati.length === 0 || !destinazione) ? (
             <div style={{ padding: '35px', textAlign: 'center', backgroundColor: '#fff3cd', color: '#856404', borderRadius: '8px', border: '1px solid #ffeeba', margin: '20px 0' }}>
@@ -955,10 +974,10 @@ function App() {
               <div className="blocco-vendita-articoli">
                 {serviziSelezionati.map(nome => {
                   const sol = soluzioniMigliori[nome];
-                  const costoCalcolato = sol ? sol.totaleOpzione : 0;
+                  const costoCalcolato = sol ? arrotondaAllaDecina(sol.totaleOpzione) : 0;
                   
-                  // PRECOMPILAZIONE: Proposta base = Costo * Moltiplicatore Target
-                  const prezzoTargetProposto = costoCalcolato * MOLTIPLICATORE_TARGET;
+                  // PRECOMPILAZIONE: Proposta base = Costo arrotondato * Moltiplicatore Target -> poi arrotondata
+                  const prezzoTargetProposto = arrotondaAllaDecina(costoCalcolato * MOLTIPLICATORE_TARGET);
                   const currentPrezzo = venditaGonfiabili[nome]?.prezzo ?? prezzoTargetProposto.toFixed(2);
                   const currentSconto = venditaGonfiabili[nome]?.sconto ?? "0";
                   
@@ -1005,9 +1024,9 @@ function App() {
                 })}
 
                 {extras.filter(ex => extraSelezionati.includes(ex.id)).map(ex => {
-                  const costoCalcolato = parseFloat(ex.prezzo);
+                  const costoCalcolato = arrotondaAllaDecina(parseFloat(ex.prezzo) || 0);
                   
-                  // PRECOMPILAZIONE: Per gli extra la proposta è il costo vivo base
+                  // PRECOMPILAZIONE: Per gli extra la proposta è il costo vivo arrotondato
                   const currentPrezzo = venditaExtras[ex.id]?.prezzo ?? costoCalcolato.toFixed(2);
                   const currentSconto = venditaExtras[ex.id]?.sconto ?? "0";
                   
@@ -1078,8 +1097,8 @@ function App() {
         </div>
       )}
 
-      {/* VIEW: STORICO PREVENTIVI */}
-      {currentView === "storico" && user.ruolo === "admin" && (
+      {/* VIEW: STORICO PREVENTIVI (Per Admin e Superutente) */}
+      {currentView === "storico" && (user.ruolo === "admin" || user.ruolo === "superutente") && (
         <div className="schermata-storico no-print">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <h2 style={{ margin: 0 }}>🗂️ Database Storico Preventivi</h2>
@@ -1257,8 +1276,9 @@ function App() {
                   {serviziSelezionati.map(nome => {
                     const sol = soluzioniMigliori[nome];
                     if (!sol) return null;
-                    const costTotal = sol.totaleOpzione;
-                    const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : (costTotal * MOLTIPLICATORE_TARGET);
+                    const costTotal = arrotondaAllaDecina(sol.totaleOpzione);
+                    const defaultPrezzo = arrotondaAllaDecina(costTotal * MOLTIPLICATORE_TARGET);
+                    const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : defaultPrezzo;
                     const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
                     const prezzoVenditaFinale = vPrezzo * (1 - vSconto / 100);
 
@@ -1292,7 +1312,7 @@ function App() {
                     );
                   })}
                   {extras.filter(e => extraSelezionati.includes(e.id)).map(e => {
-                    const costTotal = e.prezzo;
+                    const costTotal = arrotondaAllaDecina(parseFloat(e.prezzo) || 0);
                     const vPrezzo = venditaExtras[e.id]?.prezzo !== undefined && venditaExtras[e.id]?.prezzo !== "" ? parseFloat(venditaExtras[e.id].prezzo) : costTotal;
                     const vSconto = parseFloat(venditaExtras[e.id]?.sconto) || 0;
                     const prezzoVenditaFinaleExtra = vPrezzo * (1 - vSconto / 100);
@@ -1318,25 +1338,21 @@ function App() {
                 <h2 style={{ margin: 0 }}>TOTALE FINALE : €{totaleVenditaComplessivo.toFixed(2)} <span style={{ fontSize: '1.2rem', fontWeight: 'normal', color: '#555' }}>+ IVA</span></h2>
               </div>
 
-              
-				
               <div className="nuova-pagina">
-			  
                 <div className="condizioni-preventivo" style={{ marginTop: '35px', fontSize: '0.85rem', lineHeight: '1.4', color: '#444', textAlign: 'left' }}>
+                  <h4 style={{ margin: '0 0 2px 0', color: '#111', borderBottom: '1px solid #ddd', paddingBottom: '3px', fontSize: '0.9rem' }}>MODALITA DI PAGAMENTO</h4>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', marginTop: '12px', justifyContent: 'flex-end', textAlign: 'left' }}>
+                    <div style={{ background: '#fafafa', borderLeft: '4px solid #0288d1', padding: '10px 14px', fontSize: '0.85rem', flex: '1 1 200px', boxSizing: 'border-box' }}>
+                      <span style={{ fontWeight: 'bold', color: '#0288d1', display: 'block', marginBottom: '2px', fontSize: '0.9rem' }}>PAGAMENTO ALLA CONFERMA</span>
+                      Versamento caparra confirmatoria pari al 50% del preventivo.
+                    </div>
+                    <div style={{ background: '#fafafa', borderLeft: '4px solid #2e7d32', padding: '10px 14px', fontSize: '0.85rem', flex: '1 1 200px', boxSizing: 'border-box' }}>
+                      <span style={{ fontWeight: 'bold', color: '#2e7d32', display: 'block', marginBottom: '2px', fontSize: '0.9rem' }}>SALDO DELL'EVENTO</span>
+                      Saldo tramite rimessa diretta a fine evento.
+                    </div>
+                  </div>
                   
-				  <h4 style={{ margin: '0 0 2px 0', color: '#111', borderBottom: '1px solid #ddd', paddingBottom: '3px', fontSize: '0.9rem' }}>MODALITA DI PAGAMENTO</h4>
-			  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', marginTop: '12px', justifyContent: 'flex-end', textAlign: 'left' }}>
-                <div style={{ background: '#fafafa', borderLeft: '4px solid #0288d1', padding: '10px 14px', fontSize: '0.85rem', flex: '1 1 200px', boxSizing: 'border-box' }}>
-                  <span style={{ fontWeight: 'bold', color: '#0288d1', display: 'block', marginBottom: '2px', fontSize: '0.9rem' }}>PAGAMENTO ALLA CONFERMA</span>
-                  Versamento caparra confirmatoria pari al 50% del preventivo.
-                </div>
-                <div style={{ background: '#fafafa', borderLeft: '4px solid #2e7d32', padding: '10px 14px', fontSize: '0.85rem', flex: '1 1 200px', boxSizing: 'border-box' }}>
-                  <span style={{ fontWeight: 'bold', color: '#2e7d32', display: 'block', marginBottom: '2px', fontSize: '0.9rem' }}>SALDO DELL'EVENTO</span>
-                  Saldo tramite rimessa diretta a fine evento.
-                </div>
-              </div>
-				  
-				  <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+                  <div style={{ marginBottom: '20px', textAlign: 'left' }}>
                     <h4 style={{ margin: '20px 0 8px 0', color: '#111', borderBottom: '1px solid #ddd', paddingBottom: '3px', fontSize: '0.9rem' }}>EVENTUALI ADDIZIONALI</h4>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <div style={{ textAlign: 'left' }}>⚡ <strong>Generatore di corrente:</strong> Posizionabile su richiesta qualora non ci sia elettricità o potenza sufficiente sul posto.</div>
