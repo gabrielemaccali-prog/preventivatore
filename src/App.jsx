@@ -487,8 +487,10 @@ function App() {
   const gonfiabiliDisponibiliInDropdown = nomiUniciGonfiabili.filter(nome => !serviziSelezionati.includes(nome));
 
   // --- STILI RESPONSIVE INIETTATI VIA JAVASCRIPT ---
+  // --- STILI RESPONSIVE INIETTATI VIA JAVASCRIPT ---
   const mobileStyles = `
     @media (max-width: 768px) {
+      /* Adattamenti generali per header, bottoni e griglie */
       .main-header { flex-direction: column; align-items: flex-start; gap: 10px; }
       .header-menu { flex-wrap: wrap; width: 100%; margin-top: 10px; }
       .nav-btn, .btn-logout { flex: 1 1 auto; text-align: center; }
@@ -498,13 +500,51 @@ function App() {
       .date-grid { flex-direction: column; gap: 10px; }
       .ricerca-box { flex-direction: column; gap: 8px; }
       .azioni-preventivo { flex-direction: column; gap: 10px; }
-      .azioni-preventivo > div { flex-direction: column; }
+      .azioni-preventivo > div { flex-direction: column; gap: 10px; }
       .modal-preventivo-backdrop { padding: 10px; }
-      .storico-table { display: block; overflow-x: auto; white-space: nowrap; }
       .filtri-storico { flex-direction: column; }
       .filtri-storico .filtro-group { flex: 1 1 100% !important; }
       .header-preventivo { flex-direction: column; align-items: center; }
       .header-preventivo > div { width: 100% !important; text-align: center !important; float: none !important; }
+
+      /* --- TRASFORMAZIONE TABELLE IN "CARD" PER SMARTPHONE --- */
+      /* Elimina lo scroll orizzontale e impila le celle in verticale */
+      table { display: block; width: 100%; border: none !important; }
+      thead { display: none; /* Nasconde l'intestazione orizzontale */ }
+      tbody { display: block; width: 100%; }
+      tr { 
+        display: block; 
+        width: 100%; 
+        margin-bottom: 20px; 
+        border: 1px solid #cbd5e1 !important; 
+        border-radius: 8px; 
+        background: #fff;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+      }
+      td { 
+        display: block; 
+        width: 100%; 
+        text-align: left !important; 
+        border: none !important; 
+        border-bottom: 1px dashed #e2e8f0 !important; 
+        padding: 12px 15px !important;
+        box-sizing: border-box;
+      }
+      /* Rende l'ultima cella (le azioni/bottoni) simile a un "piè di pagina" della scheda */
+      td:last-child { 
+        border-bottom: none !important; 
+        background: #f8fafc; 
+        border-radius: 0 0 8px 8px; 
+      }
+      td:last-child > div { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+      td:last-child button { width: 100%; }
+      
+      /* Correzioni specifiche per i form di modifica dentro le tabelle */
+      .coord-input { width: 100% !important; margin: 0 0 8px 0 !important; }
+      td > div[style*="grid-template-columns"] { 
+        grid-template-columns: 1fr 1fr !important; /* Mostra le specifiche tecniche a 2 colonne anziché 6 */
+      }
+      .admin-table-box, .admin-table-box-full { border: none !important; background: transparent !important; overflow: visible !important; }
     }
   `;
 
