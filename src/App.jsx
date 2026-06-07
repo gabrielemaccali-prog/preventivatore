@@ -305,7 +305,7 @@ function App() {
   let totaleVenditaComplessivo = 0;
   serviziSelezionati.forEach(nome => {
     const cost = soluzioniMigliori[nome]?.totaleOpzione || 0;
-    const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : cost;
+    const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : (cost * MOLTIPLICATORE_TARGET);
     const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
     totaleVenditaComplessivo += vPrezzo * (1 - vSconto / 100);
   });
@@ -337,7 +337,7 @@ function App() {
     const dettagliGonfiabili = serviziSelezionati.map(nome => {
       const sol = soluzioniMigliori[nome];
       const costTotal = sol ? sol.totaleOpzione : 0;
-      const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : costTotal;
+      const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : (costTotal * MOLTIPLICATORE_TARGET);
       const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
       
       return {
@@ -487,7 +487,6 @@ function App() {
   const gonfiabiliDisponibiliInDropdown = nomiUniciGonfiabili.filter(nome => !serviziSelezionati.includes(nome));
 
   // --- STILI RESPONSIVE INIETTATI VIA JAVASCRIPT ---
-  // --- STILI RESPONSIVE INIETTATI VIA JAVASCRIPT ---
   const mobileStyles = `
     @media (max-width: 768px) {
       /* Adattamenti generali per header, bottoni e griglie */
@@ -572,7 +571,7 @@ function App() {
         <div className="header-brand" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
           <img src="/logo.png" alt="Logo" style={{ height: '45px', width: 'auto', objectFit: 'contain' }} />
           <div>
-            <h1>LogiGonfiabili v2.6</h1>
+            <h1>Preventivatore</h1>
             <p>Connesso come: <strong>{user.username}</strong></p>
           </div>
         </div>
@@ -957,10 +956,13 @@ function App() {
                 {serviziSelezionati.map(nome => {
                   const sol = soluzioniMigliori[nome];
                   const costoCalcolato = sol ? sol.totaleOpzione : 0;
-                  const currentPrezzo = venditaGonfiabili[nome]?.prezzo ?? "";
+                  
+                  // PRECOMPILAZIONE: Proposta base = Costo * Moltiplicatore Target
+                  const prezzoTargetProposto = costoCalcolato * MOLTIPLICATORE_TARGET;
+                  const currentPrezzo = venditaGonfiabili[nome]?.prezzo ?? prezzoTargetProposto.toFixed(2);
                   const currentSconto = venditaGonfiabili[nome]?.sconto ?? "0";
                   
-                  const prezzoEffettivo = currentPrezzo !== "" ? parseFloat(currentPrezzo) : costoCalcolato;
+                  const prezzoEffettivo = currentPrezzo !== "" ? parseFloat(currentPrezzo) : prezzoTargetProposto;
                   const prezzoScontato = prezzoEffettivo * (1 - (parseFloat(currentSconto) || 0) / 100);
                   const isUnderCost = currentPrezzo !== "" && parseFloat(currentPrezzo) < costoCalcolato;
 
@@ -975,7 +977,8 @@ function App() {
                           Prezzo Vendita (€):
                           <input 
                             type="number" 
-                            placeholder={costoCalcolato.toFixed(2)} 
+                            step="any"
+                            placeholder={prezzoTargetProposto.toFixed(2)} 
                             value={currentPrezzo}
                             className={isUnderCost ? "input-vendita error" : "input-vendita"}
                             onChange={(e) => setVenditaGonfiabili(prev => ({ ...prev, [nome]: { ...prev[nome], prezzo: e.target.value } }))}
@@ -1003,7 +1006,9 @@ function App() {
 
                 {extras.filter(ex => extraSelezionati.includes(ex.id)).map(ex => {
                   const costoCalcolato = parseFloat(ex.prezzo);
-                  const currentPrezzo = venditaExtras[ex.id]?.prezzo ?? "";
+                  
+                  // PRECOMPILAZIONE: Per gli extra la proposta è il costo vivo base
+                  const currentPrezzo = venditaExtras[ex.id]?.prezzo ?? costoCalcolato.toFixed(2);
                   const currentSconto = venditaExtras[ex.id]?.sconto ?? "0";
                   
                   const prezzoEffettivo = currentPrezzo !== "" ? parseFloat(currentPrezzo) : costoCalcolato;
@@ -1021,6 +1026,7 @@ function App() {
                           Prezzo Vendita (€):
                           <input 
                             type="number" 
+                            step="any"
                             placeholder={costoCalcolato.toFixed(2)} 
                             value={currentPrezzo}
                             className={isUnderCost ? "input-vendita error" : "input-vendita"}
@@ -1252,7 +1258,7 @@ function App() {
                     const sol = soluzioniMigliori[nome];
                     if (!sol) return null;
                     const costTotal = sol.totaleOpzione;
-                    const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : costTotal;
+                    const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : (costTotal * MOLTIPLICATORE_TARGET);
                     const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
                     const prezzoVenditaFinale = vPrezzo * (1 - vSconto / 100);
 
