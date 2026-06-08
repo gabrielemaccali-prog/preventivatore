@@ -445,18 +445,28 @@ function App() {
 
   // --- ESPORTAZIONE EXCEL ---
   const esportaExcel = () => {
-    const datiPerExcel = preventiviFiltrati.map(item => ({
-      Codice: typeof item.id === 'object' ? item.id.codice : item.id,
-      DataEmissione: formattaDataIT(item.dataEmissione),
-      Referente: item.nomeReferente || "",
-      Email: item.emailReferente || "",
-      Destinazione: item.destinazione,
-      Periodo: item.periodo,
-      TotaleVendita: item.totaleVendita.toFixed(2),
-      CostoVivoTotale: (item.costoVivoTotale || 0).toFixed(2),
-      KmAndata: (item.kmAndata || 0).toFixed(1),
-      Stato: item.stato
-    }));
+    const datiPerExcel = preventiviFiltrati.map(item => {
+      // Compongo un dettaglio testuale dei costi vivi per il file Excel per maggiore completezza
+      const dettaglioCostiVivi = [
+        ...(item.gonfiabili || []).map(g => `${g.nome} (Costo: €${(g.costoNoleggio || 0).toFixed(2)}, Km: ${(g.kmCalcolati || 0).toFixed(1)})`),
+        ...(item.extras || []).map(e => `${e.nome} (Costo: €${(e.costo || 0).toFixed(2)})`)
+      ].join(' | ');
+
+      return {
+        Codice: typeof item.id === 'object' ? item.id.codice : item.id,
+        DataEmissione: formattaDataIT(item.dataEmissione),
+        Referente: item.nomeReferente || "",
+        Email: item.emailReferente || "",
+        Destinazione: item.destinazione,
+        Periodo: item.periodo,
+        TotaleVendita: item.totaleVendita.toFixed(2),
+        DettaglioCostiVivi: dettaglioCostiVivi,
+        CostoVivoTotale: (item.costoVivoTotale || 0).toFixed(2),
+        KmAndata: (item.kmAndata || 0).toFixed(1),
+        Stato: item.stato
+      };
+    });
+    
     const worksheet = XLSX.utils.json_to_sheet(datiPerExcel);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Storico Preventivi");
@@ -989,6 +999,10 @@ function App() {
                     <div key={nome} className="scheda-vendita-prodotto">
                       <div className="vendita-info-prodotto">
                         <h4>🎈 {nome}</h4>
+                        {/* 1. AGGIUNTO DETTAGLIO SEDE DI PARTENZA */}
+                        <p style={{ margin: '4px 0', fontSize: '0.9rem', color: '#555' }}>
+                          Sede di partenza: <strong>{sol?.partenza?.nome || "Non definita"}</strong>
+                        </p>
                         <p>Costo Vivo di Base: <strong className="testo-costo-base">€{costoCalcolato.toFixed(2)}</strong></p>
                       </div>
                       <div className="vendita-inputs-prodotto">
@@ -1142,9 +1156,12 @@ function App() {
                   <th style={{ padding: '12px', width: '12%' }}>ID / Data</th>
                   <th style={{ padding: '12px', width: '18%' }}>Destinazione e Contatti</th>
                   <th style={{ padding: '12px', width: '25%' }}>Dettaglio Articoli</th>
-                  <th style={{ padding: '12px', width: '15%' }}>Costi e Logistica</th>
-                  <th style={{ padding: '12px', width: '15%' }}>Importo / Stato</th>
-                  <th style={{ padding: '12px', width: '15%', textAlign: 'center' }}>Azioni</th>
+                  
+                  {/* 2. HEADER CAMBIATO IN DETTAGLIO COSTI VIVI */}
+                  <th style={{ padding: '12px', width: '20%' }}>Dettaglio Costi Vivi</th>
+                  
+                  <th style={{ padding: '12px', width: '12%' }}>Importo / Stato</th>
+                  <th style={{ padding: '12px', width: '13%', textAlign: 'center' }}>Azioni</th>
                 </tr>
               </thead>
               <tbody>
@@ -1173,10 +1190,27 @@ function App() {
                           ))}
                         </ul>
                       </td>
-                      <td style={{ padding: '12px', fontSize: '0.85rem' }}>
-                        <span style={{ display: 'block', marginBottom: '4px' }}>Vivo: <strong>€{(p.costoVivoTotale || 0).toFixed(2)}</strong></span>
-                        <span style={{ color: '#555' }}>Km Andata: <strong>{p.kmAndata !== undefined ? parseFloat(p.kmAndata).toFixed(1) : "0.0"} km</strong></span>
+                      
+                      {/* 2. ELENCO PUNTATO CON STESSO FORMATO PER I COSTI VIVI */}
+                      <td style={{ padding: '12px', fontSize: '0.8rem' }}>
+                        <ul style={{ margin: 0, paddingLeft: '15px', color: '#555' }}>
+                          {p.gonfiabili && p.gonfiabili.map((g, i) => (
+                            <li key={i} style={{ marginBottom: '4px' }}>
+                              <strong>{g.nome}</strong><br/>
+                              Costo: €{(g.costoNoleggio || 0).toFixed(2)} | Km andata: {(g.kmCalcolati || 0).toFixed(1)} km
+                            </li>
+                          ))}
+                          {p.extras && p.extras.map((e, i) => (
+                            <li key={`ex-${i}`} style={{ marginBottom: '4px' }}>
+                              ⚙️ <strong>{e.nome}</strong> (Costo vivo: €{(e.costo || 0).toFixed(2)})
+                            </li>
+                          ))}
+                        </ul>
+                        <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px dashed #ccc' }}>
+                          Totale Vivo: <strong>€{(p.costoVivoTotale || 0).toFixed(2)}</strong>
+                        </div>
                       </td>
+
                       <td style={{ padding: '12px' }}>
                         <strong style={{ fontSize: '1.05rem', color: '#111' }}>€{p.totaleVendita.toFixed(2)}</strong><br/>
                         <span className={`badge-stato ${(p.stato || "").toLowerCase()}`}>{p.stato}</span>
@@ -1288,10 +1322,10 @@ function App() {
                     return (
                       <tr key={nome}>
                         <td style={{ textAlign: 'left' }}>
-                          <div style={{ marginBottom: haParametri ? '4px' : '0' }}><strong>{nome}</strong> (Comprensivo di trasporto, installazione e assistenza)</div>
+                          <div style={{ marginBottom: haParametri ? '4px' : '0' }}><strong>{nome}</strong> </div>
                           
                           {haParametri && (
-                            <div style={{ fontSize: '0.8rem', color: '#666', lineHeight: '1.5', marginBottom: '4px' }}>
+                            <div style={{ fontSize: '0.6rem',  color: '#666', lineHeight: '1.5', marginBottom: '4px' }}>
                               {gonfiabileCorrente.giocatori && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Giocatori:</strong> {gonfiabileCorrente.giocatori}</span>}
                               {gonfiabileCorrente.etaConsigliata && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Età Consigliata:</strong> {gonfiabileCorrente.etaConsigliata}</span>}
                               {gonfiabileCorrente.dimensioni && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Dimensioni:</strong> {gonfiabileCorrente.dimensioni}</span>}
@@ -1355,21 +1389,38 @@ function App() {
                   <div style={{ marginBottom: '20px', textAlign: 'left' }}>
                     <h4 style={{ margin: '20px 0 8px 0', color: '#111', borderBottom: '1px solid #ddd', paddingBottom: '3px', fontSize: '0.9rem' }}>EVENTUALI ADDIZIONALI</h4>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <div style={{ textAlign: 'left' }}>⚡ <strong>Generatore di corrente:</strong> Posizionabile su richiesta qualora non ci sia elettricità o potenza sufficiente sul posto.</div>
-                      <div style={{ textAlign: 'left' }}>🏆 <strong>Arbitraggio:</strong> Disponibile su richiesta servizio di assistenza e direzione per le varie partite.</div>
-                      <div style={{ textAlign: 'left' }}>🎨 <strong>Personalizzazione:</strong> Tutti i giochi in struttura sono interamente personalizzabili.</div>
+                      <div style={{ textAlign: 'left' , margin: '10px 0 0 0'}}>⚡ <strong>Generatore di corrente:</strong> Posizionabile su richiesta qualora non ci sia elettricità o non fosse disponibile la potenza sufficiente sul posto.</div>
+                      <div style={{ textAlign: 'left' , margin: '10px 0 0 0' }}>🏆 <strong>Arbitraggio:</strong> Disponibile su richiesta servizio di assistenza e direzione per le varie partite.</div>
+                      <div style={{ textAlign: 'left' , margin: '10px 0 0 0' }}>🎨 <strong>Personalizzazione:</strong> Tutti i giochi in struttura sono interamente personalizzabili.</div>
                     </div>
                   </div>
 
                   <div style={{ textAlign: 'left' }}>
                     <h4 style={{ margin: '0 0 8px 0', color: '#111', borderBottom: '1px solid #ddd', paddingBottom: '3px', fontSize: '0.9rem' }}>CONDIZIONI GENERALI</h4>
-                    <ul style={{ margin: 0, paddingLeft: '18px', listStyleType: 'square', textAlign: 'left' }}>
-                      <li style={{ marginBottom: '6px', textAlign: 'left' }}>I giochi e i prezzi proposti sopra sono soggetti a verifica disponibilità al momento delle conferma.</li>
-                      <li style={{ marginBottom: '6px', textAlign: 'left' }}>La location di allestimento dei giochi deve essere accessibile con nostro automezzo, automobile o furgone tipologia Ducato, e prevedere nelle vicinanze il parcheggio gratuito dello stesso mezzo. I prezzi includono la consegna al piano terra.</li>
-                      <li style={{ marginBottom: '6px', textAlign: 'left' }}>Avremo necessità di avere accessibilità a tutte le informazioni inerenti le condizioni dell'area di gioco, pertanto ci riserviamo di chiedere, al momento dell'accettazione di questo preventivo, qualche fotografia del luogo per aiutare a valutare la fattibilità della manifestazione. Inoltre potrebbe rendersi necessario un sopralluogo preliminare (a nostro carico).</li>
-                      <li style={{ marginBottom: '6px', textAlign: 'left' }}>Al fine di un corretto calcolo delle tempistiche per la manifestazione è opportuno aggiungere il tempo di montaggio del gioco sia prima dell'inizio dell'evento che alla fine. Se per esempio avessimo indicato un'ora di montaggio, avremo necessità di presentarci con un'ora di anticipo dall'orario di inizio dell'evento, e avremo necessità dell'ora successiva a conclusione dello stesso.</li>
-                      <li style={{ marginBottom: '2px', textAlign: 'left' }}>Tutti i costi relativi a pratiche con il fine di permettere lo svolgimento del gioco su suolo pubblico sono a carico del committente, come autorizzazioni, permessi, marche da bollo, ecc.</li>
-					  <li style={{ marginBottom: '2px', textAlign: 'left' }}>Eventuale documentazione accessoria, va richiesta con almeno 15 gg di preavviso rispetto la data evento, la documentazione può essere soggetta a pagamento.</li>
+                    <ul style={{ margintop: 0, paddingLeft: '18px', listStyleType: 'square', textAlign: 'left' }}>
+                      <li style={{ marginBottom: '6px', textAlign: 'left' }}>
+  I giochi e i prezzi proposti sopra sono soggetti a <strong>verifica della disponibilità al momento della conferma</strong>.
+</li>
+
+<li style={{ marginBottom: '6px', textAlign: 'left' }}>
+  La <strong>location di allestimento dei giochi deve essere facilmente accessibile</strong> con i nostri automezzi (automobile o furgone tipo Ducato) e prevedere un parcheggio gratuito nelle immediate vicinanze. I prezzi includono esclusivamente la consegna al piano terra.
+</li>
+
+<li style={{ marginBottom: '6px', textAlign: 'left' }}>
+  Al fine di valutare la fattibilità della manifestazione, ci riserviamo il diritto di richiedere, al momento dell'accettazione del preventivo, <strong>documentazione fotografica dell'area di gioco</strong>. Qualora necessario, potrebbe essere richiesto un sopralluogo preliminare.
+</li>
+
+<li style={{ marginBottom: '6px', textAlign: 'left' }}>
+  Per una corretta gestione delle tempistiche, al calcolo della durata dell'evento va <strong>aggiunto il tempo di montaggio e smontaggio</strong>. Ad esempio, se è indicata un'ora di montaggio, il nostro personale arriverà con un'ora di anticipo rispetto all'inizio dell'evento e rimarrà per l'ora successiva alla conclusione dello stesso.
+</li>
+
+<li style={{ marginBottom: '2px', textAlign: 'left' }}>
+  Tutti i costi e gli adempimenti relativi a <strong>pratiche per lo svolgimento del gioco su suolo pubblico</strong> (autorizzazioni, permessi, marche da bollo, ecc.) sono a totale carico del committente.
+</li>
+
+<li style={{ marginBottom: '2px', textAlign: 'left' }}>
+  L'eventuale richiesta di <strong>documentazione accessoria</strong> deve essere inoltrata con un <strong>preavviso di almeno 15 giorni</strong> rispetto alla data dell'evento. Tale documentazione potrebbe essere soggetta a costi aggiuntivi.
+</li>
                     </ul>
                   </div>
                 </div>
