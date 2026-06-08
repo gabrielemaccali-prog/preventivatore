@@ -1369,6 +1369,7 @@ function App() {
                       <li style={{ marginBottom: '6px', textAlign: 'left' }}>Avremo necessità di avere accessibilità a tutte le informazioni inerenti le condizioni dell'area di gioco, pertanto ci riserviamo di chiedere, al momento dell'accettazione di questo preventivo, qualche fotografia del luogo per aiutare a valutare la fattibilità della manifestazione. Inoltre potrebbe rendersi necessario un sopralluogo preliminare (a nostro carico).</li>
                       <li style={{ marginBottom: '6px', textAlign: 'left' }}>Al fine di un corretto calcolo delle tempistiche per la manifestazione è opportuno aggiungere il tempo di montaggio del gioco sia prima dell'inizio dell'evento che alla fine. Se per esempio avessimo indicato un'ora di montaggio, avremo necessità di presentarci con un'ora di anticipo dall'orario di inizio dell'evento, e avremo necessità dell'ora successiva a conclusione dello stesso.</li>
                       <li style={{ marginBottom: '2px', textAlign: 'left' }}>Tutti i costi relativi a pratiche con il fine di permettere lo svolgimento del gioco su suolo pubblico sono a carico del committente, come autorizzazioni, permessi, marche da bollo, ecc.</li>
+					  <li style={{ marginBottom: '2px', textAlign: 'left' }}>Eventuale documentazione accessoria, va richiesta con almeno 15 gg di preavviso rispetto la data evento, la documentazione può essere soggetta a pagamento.</li>
                     </ul>
                   </div>
                 </div>
