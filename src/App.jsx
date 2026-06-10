@@ -64,8 +64,13 @@ function App() {
   const [idPreventivo, setIdPreventivo] = useState({ codice: "", dettagliLogistici: null });
 
   // --- STATI PER LA PAGINA VENDITA ---
-  const [venditaGonfiabili, setVenditaGonfiabili] = useState({}); 
-  const [venditaExtras, setVenditaExtras] = useState({});           
+  const [venditaGonfiabili, setVenditaGonfiabili] = useState({});
+  const [venditaExtras, setVenditaExtras] = useState({});
+  const [mostraComeOpzioni, setMostraComeOpzioni] = useState(false);
+  const [mostraGiocoOfferta, setMostraGiocoOfferta] = useState(false);
+  const [giocoOffertaSelezionato, setGiocoOffertaSelezionato] = useState("");
+  const [soluzioneGiocoOfferta, setSoluzioneGiocoOfferta] = useState(null);
+  const [venditaGiocoOfferta, setVenditaGiocoOfferta] = useState({ prezzo: "", sconto: "0" });
 
   // --- STATI PER I FILTRI DELLO STORICO ---
   const [filtroId, setFiltroId] = useState("");
@@ -158,6 +163,14 @@ function App() {
     return Math.ceil(valore / 10) * 10;
   };
 
+  // Per i gonfiabili con sede di partenza "BFM - Milano" non si applica il moltiplicatore target: si propongono al costo
+  const isPartenzaBFMMilano = (partenza) => {
+    const nomeSede = (partenza?.nome || "").toLowerCase();
+    return nomeSede.includes("bfm") && nomeSede.includes("milano");
+  };
+
+  const moltiplicatoreTargetPer = (partenza) => isPartenzaBFMMilano(partenza) ? 1 : MOLTIPLICATORE_TARGET;
+
   const formattaIndirizzoPulito = (luogo) => {
     const addr = luogo.address || {};
     const via = addr.road || addr.pedestrian || addr.suburb || "";
@@ -200,6 +213,11 @@ function App() {
     setDestinazione(null);
     setVenditaGonfiabili({});
     setVenditaExtras({});
+    setMostraComeOpzioni(false);
+    setMostraGiocoOfferta(false);
+    setGiocoOffertaSelezionato("");
+    setSoluzioneGiocoOfferta(null);
+    setVenditaGiocoOfferta({ prezzo: "", sconto: "0" });
     setCurrentView("calculator");
   };
 
@@ -261,6 +279,53 @@ function App() {
     }
   }, [serviziSelezionati, giorniNoleggio, unSoloTrasporto, gonfiabili, sedi]);
 
+  // --- GONFIABILI DISPONIBILI PRESSO LA SEDE "BFM - Milano" PER IL GIOCO IN OFFERTA ---
+  const gonfiabiliBFMMilano = gonfiabili.filter(g => {
+    const sede = sedi.find(s => s.id === g.locationId);
+    return sede && sede.nome.toLowerCase().includes("bfm") && sede.nome.toLowerCase().includes("milano");
+  });
+
+  // --- CALCOLO COSTO/LOGISTICA DEL GIOCO IN OFFERTA ---
+  useEffect(() => {
+    const calcolaGiocoOfferta = async () => {
+      if (!mostraGiocoOfferta || !giocoOffertaSelezionato || !destinazione) {
+        setSoluzioneGiocoOfferta(null);
+        return;
+      }
+      const istanza = gonfiabiliBFMMilano.find(g => g.nome === giocoOffertaSelezionato);
+      const sedePartenza = sedi.find(s => s.id === istanza?.locationId);
+      if (!istanza || !sedePartenza) {
+        setSoluzioneGiocoOfferta(null);
+        return;
+      }
+      try {
+        const url = `https://router.project-osrm.org/route/v1/driving/${sedePartenza.lon},${sedePartenza.lat};${destinazione.lon},${destinazione.lat}?overview=false`;
+        const response = await fetch(url);
+        const data = await response.json();
+        if (data.code === "Ok") {
+          const kmAndata = data.routes[0].distance / 1000;
+          const moltiplicatoreTrasporto = unSoloTrasporto ? 1 : giorniNoleggio;
+          const costoKmTotale = (kmAndata * 2) * COSTO_AL_KM * moltiplicatoreTrasporto;
+          const costoBaseMoltiplicato = istanza.prezzo * giorniNoleggio;
+          setSoluzioneGiocoOfferta({
+            prodotto: istanza,
+            partenza: sedePartenza,
+            kmAndata,
+            costoKmTotale,
+            costoBaseMoltiplicato,
+            totaleOpzione: costoBaseMoltiplicato + costoKmTotale
+          });
+        } else {
+          setSoluzioneGiocoOfferta(null);
+        }
+      } catch (error) {
+        console.error(error);
+        setSoluzioneGiocoOfferta(null);
+      }
+    };
+    calcolaGiocoOfferta();
+  }, [mostraGiocoOfferta, giocoOffertaSelezionato, destinazione, giorniNoleggio, unSoloTrasporto, gonfiabili, sedi]);
+
   const cercaIndirizzo = async () => {
     if (!queryIndirizzo) return;
     try {
@@ -313,7 +378,7 @@ function App() {
   let totaleVenditaComplessivo = 0;
   serviziSelezionati.forEach(nome => {
     const cost = soluzioniMigliori[nome] ? arrotondaAllaDecina(soluzioniMigliori[nome].totaleOpzione) : 0;
-    const defaultPrezzo = arrotondaAllaDecina(cost * MOLTIPLICATORE_TARGET);
+    const defaultPrezzo = arrotondaAllaDecina(cost * moltiplicatoreTargetPer(soluzioniMigliori[nome]?.partenza));
     
     const vPrezzo = (venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "") 
       ? parseFloat(venditaGonfiabili[nome].prezzo) 
@@ -357,7 +422,7 @@ function App() {
     const dettagliGonfiabili = serviziSelezionati.map(nome => {
       const sol = soluzioniMigliori[nome];
       const costTotal = sol ? arrotondaAllaDecina(sol.totaleOpzione) : 0;
-      const defaultPrezzo = arrotondaAllaDecina(costTotal * MOLTIPLICATORE_TARGET);
+      const defaultPrezzo = arrotondaAllaDecina(costTotal * moltiplicatoreTargetPer(sol?.partenza));
       
       const vPrezzo = (venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "") 
         ? parseFloat(venditaGonfiabili[nome].prezzo) 
@@ -987,7 +1052,7 @@ function App() {
                   const costoCalcolato = sol ? arrotondaAllaDecina(sol.totaleOpzione) : 0;
                   
                   // PRECOMPILAZIONE: Proposta base = Costo arrotondato * Moltiplicatore Target -> poi arrotondata
-                  const prezzoTargetProposto = arrotondaAllaDecina(costoCalcolato * MOLTIPLICATORE_TARGET);
+                  const prezzoTargetProposto = arrotondaAllaDecina(costoCalcolato * moltiplicatoreTargetPer(sol?.partenza));
                   const currentPrezzo = venditaGonfiabili[nome]?.prezzo ?? prezzoTargetProposto.toFixed(2);
                   const currentSconto = venditaGonfiabili[nome]?.sconto ?? "0";
                   
@@ -1087,9 +1152,11 @@ function App() {
                 })}
               </div>
 
-              <div className="totale-box-vendita-finale">
-                <h3>TOTALE COMMERCIALE DI VENDITA: <span>€{totaleVenditaComplessivo.toFixed(2)}</span></h3>
-              </div>
+              {!mostraComeOpzioni && (
+                <div className="totale-box-vendita-finale">
+                  <h3>TOTALE COMMERCIALE DI VENDITA: <span>€{totaleVenditaComplessivo.toFixed(2)}</span></h3>
+                </div>
+              )}
 
               <div style={{ textAlign: 'right', margin: '5px 0', padding: '10px 20px', background: '#e3f2fd', borderRadius: '6px', borderRight: '5px solid #1976d2' }}>
                 <p style={{ margin: 0, fontSize: '1.05rem', color: '#1565c0' }}>
@@ -1103,6 +1170,93 @@ function App() {
                     {differenzaCostoVivo >= 0 ? '+' : ''}{differenzaCostoVivo.toFixed(2)} € ({percentualeMargine.toFixed(1)}%)
                   </strong>
                 </p>
+              </div>
+
+              <div style={{ margin: '15px 0', padding: '10px 20px', background: '#f9f9f9', borderRadius: '6px', borderLeft: '5px solid #6a1b9a' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={mostraGiocoOfferta} onChange={(e) => setMostraGiocoOfferta(e.target.checked)} />
+                  Mostra gioco in offerta
+                </label>
+
+                {mostraGiocoOfferta && (
+                  <div style={{ marginTop: '12px' }}>
+                    <label style={{ display: 'block', marginBottom: '10px' }}>
+                      Seleziona gonfiabile (Sede BFM - Milano):
+                      <select
+                        value={giocoOffertaSelezionato}
+                        onChange={(e) => setGiocoOffertaSelezionato(e.target.value)}
+                        style={{ display: 'block', marginTop: '6px', width: '100%', padding: '8px' }}
+                      >
+                        <option value="">-- Seleziona un gonfiabile --</option>
+                        {gonfiabiliBFMMilano.map(g => (
+                          <option key={g.id} value={g.nome}>{g.nome}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {giocoOffertaSelezionato && (() => {
+                      const costoCalcolato = soluzioneGiocoOfferta ? arrotondaAllaDecina(soluzioneGiocoOfferta.totaleOpzione) : 0;
+                      const prezzoTargetProposto = costoCalcolato;
+                      const currentPrezzo = venditaGiocoOfferta.prezzo ?? prezzoTargetProposto.toFixed(2);
+                      const currentSconto = venditaGiocoOfferta.sconto ?? "0";
+                      const prezzoEffettivo = currentPrezzo !== "" ? parseFloat(currentPrezzo) : prezzoTargetProposto;
+                      const prezzoScontato = prezzoEffettivo * (1 - (parseFloat(currentSconto) || 0) / 100);
+                      const isUnderCost = currentPrezzo !== "" && parseFloat(currentPrezzo) < costoCalcolato;
+
+                      return (
+                        <div className="scheda-vendita-prodotto">
+                          <div className="vendita-info-prodotto">
+                            <h4>🎈 {giocoOffertaSelezionato}</h4>
+                            <p style={{ margin: '4px 0', fontSize: '0.9rem', color: '#555' }}>
+                              Sede di partenza: <strong>{soluzioneGiocoOfferta?.partenza?.nome || "Non definita"}</strong>
+                            </p>
+                            <p>Costo Vivo di Base: <strong className="testo-costo-base">€{costoCalcolato.toFixed(2)}</strong></p>
+                          </div>
+                          <div className="vendita-inputs-prodotto">
+                            <label>
+                              Prezzo Vendita (€):
+                              <input
+                                type="number"
+                                step="any"
+                                placeholder={prezzoTargetProposto.toFixed(2)}
+                                value={currentPrezzo}
+                                className={isUnderCost ? "input-vendita error" : "input-vendita"}
+                                onChange={(e) => setVenditaGiocoOfferta(prev => ({ ...prev, prezzo: e.target.value }))}
+                              />
+                            </label>
+                            <label>
+                              Sconto (%):
+                              <input
+                                type="number"
+                                min="0" max="100"
+                                value={currentSconto}
+                                className="input-vendita"
+                                onChange={(e) => setVenditaGiocoOfferta(prev => ({ ...prev, sconto: e.target.value }))}
+                              />
+                            </label>
+                            <div className="vendita-prezzo-finale">
+                              <p>Prezzo Finale:</p>
+                              <h3>€{prezzoScontato.toFixed(2)}</h3>
+                              {isUnderCost && <span className="warning-testo">Sotto costo!</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ margin: '15px 0', padding: '10px 20px', background: '#f9f9f9', borderRadius: '6px', borderLeft: '5px solid #1565c0' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={mostraComeOpzioni} onChange={(e) => setMostraComeOpzioni(e.target.checked)} />
+                  Visualizza come opzioni di vendita
+                </label>
+                {mostraComeOpzioni && (
+                  <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: '#666' }}>
+                    I gonfiabili verranno proposti come opzioni separate tra cui scegliere, senza un totale commerciale complessivo.
+                  </p>
+                )}
               </div>
 
               <button className="btn-preventivo" onClick={() => setMostraPreventivo(true)}>📋 Elabora Documento di Offerta</button>
@@ -1247,12 +1401,12 @@ function App() {
                 <button className="btn-stampa" onClick={handleStampaESalva}>🖨️ Salva in DB e Stampa PDF</button>
               </div>
 
-              <div style={{ background: '#f0f4f8', padding: '12px', borderRadius: '6px', border: '1px solid #d9e2ec', textAlign: 'left', display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
-                <div style={{ flex: '1 1 200px' }}>
+              <div style={{ background: '#f0f4f8', padding: '12px', borderRadius: '6px', border: '1px solid #d9e2ec', textAlign: 'left', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '15px' }}>
+                <div style={{ flex: '1 1 200px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                   <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', fontSize: '0.9rem', color: '#334e68' }}>Nome Referente:</label>
                   <input type="text" value={nomeRiferimento} onChange={(e) => setNomeRiferimento(e.target.value)} style={{ width: '100%', padding: '10px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #bcccdc' }} placeholder="Mario Rossi" />
                 </div>
-                <div style={{ flex: '1 1 200px' }}>
+                <div style={{ flex: '1 1 200px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                   <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', fontSize: '0.9rem', color: '#334e68' }}>Indirizzo E-mail:</label>
                   <input type="email" value={indirizzoEmail} onChange={(e) => setIndirizzoEmail(e.target.value)} style={{ width: '100%', padding: '10px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #bcccdc' }} placeholder="email@esempio.com" />
                 </div>
@@ -1292,13 +1446,98 @@ function App() {
               </div>
 
               {notePreventivo && notePreventivo.trim() !== "" && (
-                <div className="note-documento" style={{ marginBottom: '20px', padding: '12px 15px', background: '#fffde7', borderLeft: '4px solid #fbc02d', textAlign: 'left' }}>
-                  <h4 style={{ margin: '0 0 6px 0', color: '#555', fontSize: '0.9rem', textTransform: 'uppercase' }}>Note del Fornitore</h4>
+                <div className="note-documento" style={{ marginBottom: '20px', padding: '12px 15px', background: '#fffde7', borderLeft: '4px solid #fbc02d', textAlign: 'left' }}>               
+					<h4 style={{ margin: '0 0 6px 0', color: '#555', fontSize: '0.9rem', textTransform: 'uppercase' }}>Note del Fornitore</h4>
                   <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', color: '#333', lineHeight: '1.4' }}>{notePreventivo}</div>
                 </div>
               )}
 
               <h3 style={{ textAlign: 'left' }}>Prospetto Economico</h3>
+
+              {mostraComeOpzioni ? (
+                <>
+                  <p style={{ margin: '0 0 15px 0', fontSize: '0.9rem', color: '#555', fontStyle: 'italic' }}>
+                    Di seguito le proposte tra cui è possibile scegliere:
+                  </p>
+                  {serviziSelezionati.map(nome => {
+                    const sol = soluzioniMigliori[nome];
+                    if (!sol) return null;
+                    const costTotal = arrotondaAllaDecina(sol.totaleOpzione);
+                    const defaultPrezzo = arrotondaAllaDecina(costTotal * moltiplicatoreTargetPer(sol?.partenza));
+                    const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : defaultPrezzo;
+                    const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
+                    const prezzoVenditaFinale = vPrezzo * (1 - vSconto / 100);
+
+                    const gonfiabileCorrente = gonfiabili.find(g => g.nome === nome) || {};
+                    const haParametri = gonfiabileCorrente.giocatori || gonfiabileCorrente.etaConsigliata || gonfiabileCorrente.dimensioni || gonfiabileCorrente.superficie || gonfiabileCorrente.alimentazione || gonfiabileCorrente.tempoMontaggio;
+
+                    return (
+                      <div key={nome} style={{ border: '1px solid #ddd', borderRadius: '6px', marginBottom: '15px', overflow: 'hidden' }}>
+                        <div style={{ background: '#f5f5f5', padding: '8px 15px', borderBottom: '1px solid #ddd' }}>
+                          <strong>Opzione: {nome}</strong>
+                        </div>
+                        <table className="tabella-preventivo" style={{ width: '100%', textAlign: 'left', margin: 0 }}>
+                          <tbody>
+                            <tr>
+                              <td style={{ textAlign: 'left' }}>
+                                <div style={{ marginBottom: haParametri ? '4px' : '0' }}><strong>{nome}</strong> </div>
+
+                                {haParametri && (
+                                  <div style={{ fontSize: '0.6rem', color: '#666', lineHeight: '1.5', marginBottom: '4px' }}>
+                                    {gonfiabileCorrente.giocatori && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Giocatori:</strong> {gonfiabileCorrente.giocatori}</span>}
+                                    {gonfiabileCorrente.etaConsigliata && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Età Consigliata:</strong> {gonfiabileCorrente.etaConsigliata}</span>}
+                                    {gonfiabileCorrente.dimensioni && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Dimensioni:</strong> {gonfiabileCorrente.dimensioni}</span>}
+                                    {gonfiabileCorrente.superficie && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Superficie:</strong> {gonfiabileCorrente.superficie}</span>}
+                                    {gonfiabileCorrente.alimentazione && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Alimentazione:</strong> {gonfiabileCorrente.alimentazione}</span>}
+                                    {gonfiabileCorrente.tempoMontaggio && <span style={{ display: 'inline-block' }}><strong>Tempo Montaggio:</strong> {gonfiabileCorrente.tempoMontaggio}</span>}
+                                  </div>
+                                )}
+
+                                {vSconto > 0 && (
+                                  <div style={{ fontSize: '0.85rem', color: '#c62828', fontStyle: 'italic', marginTop: '3px' }}>
+                                    Prezzo di listino: €{vPrezzo.toFixed(2)} - Sconto commerciale applicato: {vSconto}%
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ width: '180px', textAlign: 'right', verticalAlign: 'middle' }}><strong>€{prezzoVenditaFinale.toFixed(2)}</strong> <span style={{ fontSize: '0.8rem', fontWeight: 'normal', color: '#555' }}>+ IVA</span></td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })}
+
+                  {extraSelezionati.length > 0 && (
+                    <>
+                      <h4 style={{ textAlign: 'left', marginTop: '20px' }}>Servizi Accessori (inclusi in tutte le opzioni)</h4>
+                      <table className="tabella-preventivo" style={{ width: '100%', textAlign: 'left' }}>
+                        <tbody>
+                          {extras.filter(e => extraSelezionati.includes(e.id)).map(e => {
+                            const costTotal = arrotondaAllaDecina(parseFloat(e.prezzo) || 0);
+                            const vPrezzo = venditaExtras[e.id]?.prezzo !== undefined && venditaExtras[e.id]?.prezzo !== "" ? parseFloat(venditaExtras[e.id].prezzo) : costTotal;
+                            const vSconto = parseFloat(venditaExtras[e.id]?.sconto) || 0;
+                            const prezzoVenditaFinaleExtra = vPrezzo * (1 - vSconto / 100);
+
+                            return (
+                              <tr key={e.id}>
+                                <td style={{ textAlign: 'left' }}>
+                                  <div><strong>{e.nome}</strong> (Servizio Accessorio Opzionale)</div>
+                                  {vSconto > 0 && (
+                                    <div style={{ fontSize: '0.85rem', color: '#c62828', fontStyle: 'italic', marginTop: '3px' }}>
+                                      Prezzo base: €{parseFloat(vPrezzo).toFixed(2)} - Sconto applicato: {vSconto}%
+                                    </div>
+                                  )}
+                                </td>
+                                <td style={{ width: '180px', textAlign: 'right', verticalAlign: 'middle' }}><strong>€{prezzoVenditaFinaleExtra.toFixed(2)}</strong></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </>
+                  )}
+                </>
+              ) : (
               <table className="tabella-preventivo" style={{ width: '100%', textAlign: 'left' }}>
                 <thead>
                   <tr>
@@ -1311,7 +1550,7 @@ function App() {
                     const sol = soluzioniMigliori[nome];
                     if (!sol) return null;
                     const costTotal = arrotondaAllaDecina(sol.totaleOpzione);
-                    const defaultPrezzo = arrotondaAllaDecina(costTotal * MOLTIPLICATORE_TARGET);
+                    const defaultPrezzo = arrotondaAllaDecina(costTotal * moltiplicatoreTargetPer(sol?.partenza));
                     const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : defaultPrezzo;
                     const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
                     const prezzoVenditaFinale = vPrezzo * (1 - vSconto / 100);
@@ -1367,10 +1606,63 @@ function App() {
                   })}
                 </tbody>
               </table>
+              )}
 
-              <div className="totale-documento" style={{ marginTop: '20px', padding: '15px', background: '#f5f5f5', textAlign: 'right' }}>
-                <h2 style={{ margin: 0 }}>TOTALE FINALE : €{totaleVenditaComplessivo.toFixed(2)} <span style={{ fontSize: '1.2rem', fontWeight: 'normal', color: '#555' }}>+ IVA</span></h2>
-              </div>
+              {!mostraComeOpzioni && (
+                <div className="totale-documento" style={{ marginTop: '20px', padding: '15px', background: '#f5f5f5', textAlign: 'right' }}>
+                  <h2 style={{ margin: 0 }}>TOTALE FINALE : €{totaleVenditaComplessivo.toFixed(2)} <span style={{ fontSize: '1.2rem', fontWeight: 'normal', color: '#555' }}>+ IVA</span></h2>
+                </div>
+              )}
+
+              {mostraGiocoOfferta && giocoOffertaSelezionato && soluzioneGiocoOfferta && (() => {
+                const costoCalcolatoGO = arrotondaAllaDecina(soluzioneGiocoOfferta.totaleOpzione);
+                const defaultPrezzoGO = costoCalcolatoGO;
+                const vPrezzoGO = venditaGiocoOfferta.prezzo !== undefined && venditaGiocoOfferta.prezzo !== "" ? parseFloat(venditaGiocoOfferta.prezzo) : defaultPrezzoGO;
+                const vScontoGO = parseFloat(venditaGiocoOfferta.sconto) || 0;
+                const prezzoVenditaFinaleGO = vPrezzoGO * (1 - vScontoGO / 100);
+
+                const gonfiabileGO = gonfiabili.find(g => g.nome === giocoOffertaSelezionato) || {};
+                const haParametriGO = gonfiabileGO.giocatori || gonfiabileGO.etaConsigliata || gonfiabileGO.dimensioni || gonfiabileGO.superficie || gonfiabileGO.alimentazione || gonfiabileGO.tempoMontaggio;
+
+                return (
+                  <div style={{ marginTop: '20px' }}>
+                    <h3 style={{ textAlign: 'left' }}>Offerta</h3>
+                    <table className="tabella-preventivo" style={{ width: '100%', textAlign: 'left' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: 'left' }}>Articolo / Descrizione Servizio</th>
+                          <th style={{ width: '180px', textAlign: 'right' }}>Imponibile</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td style={{ textAlign: 'left' }}>
+                            <div style={{ marginBottom: haParametriGO ? '4px' : '0' }}><strong>{giocoOffertaSelezionato}</strong> </div>
+
+                            {haParametriGO && (
+                              <div style={{ fontSize: '0.6rem', color: '#666', lineHeight: '1.5', marginBottom: '4px' }}>
+                                {gonfiabileGO.giocatori && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Giocatori:</strong> {gonfiabileGO.giocatori}</span>}
+                                {gonfiabileGO.etaConsigliata && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Età Consigliata:</strong> {gonfiabileGO.etaConsigliata}</span>}
+                                {gonfiabileGO.dimensioni && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Dimensioni:</strong> {gonfiabileGO.dimensioni}</span>}
+                                {gonfiabileGO.superficie && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Superficie:</strong> {gonfiabileGO.superficie}</span>}
+                                {gonfiabileGO.alimentazione && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Alimentazione:</strong> {gonfiabileGO.alimentazione}</span>}
+                                {gonfiabileGO.tempoMontaggio && <span style={{ display: 'inline-block' }}><strong>Tempo Montaggio:</strong> {gonfiabileGO.tempoMontaggio}</span>}
+                              </div>
+                            )}
+
+                            {vScontoGO > 0 && (
+                              <div style={{ fontSize: '0.85rem', color: '#c62828', fontStyle: 'italic', marginTop: '3px' }}>
+                                Prezzo di listino: €{vPrezzoGO.toFixed(2)} - Sconto commerciale applicato: {vScontoGO}%
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ textAlign: 'right', verticalAlign: 'middle' }}><strong>€{prezzoVenditaFinaleGO.toFixed(2)}</strong></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
 
               <div className="nuova-pagina">
                 <div className="condizioni-preventivo" style={{ marginTop: '35px', fontSize: '0.85rem', lineHeight: '1.4', color: '#444', textAlign: 'left' }}>
@@ -1401,7 +1693,9 @@ function App() {
                       <li style={{ marginBottom: '6px', textAlign: 'left' }}>
   I giochi e i prezzi proposti sopra sono soggetti a <strong>verifica della disponibilità al momento della conferma</strong>.
 </li>
-
+<li style={{ marginBottom: '6px', textAlign: 'left' }}>
+  I prezzi presenti in questa offerta fanno riferimento ad un noleggio di una <strong> durata pari a 6 ore</strong>.
+</li>
 <li style={{ marginBottom: '6px', textAlign: 'left' }}>
   La <strong>location di allestimento dei giochi deve essere facilmente accessibile</strong> con i nostri automezzi (automobile o furgone tipo Ducato) e prevedere un parcheggio gratuito nelle immediate vicinanze. I prezzi includono esclusivamente la consegna al piano terra.
 </li>
