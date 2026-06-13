@@ -123,25 +123,45 @@ function App() {
     setIdPreventivo({ codice: "", dettagliLogistici: null });
   }, [serviziSelezionati, destinazione, dataInizio, dataFine, extraSelezionati]);
 
-  // Generazione codice preventivo
+  // Avvia un nuovo preventivo: azzera tutti i dati e torna al preventivatore
+  const nuovoPreventivo = () => {
+    setServiziSelezionati([]);
+    setDataInizio("");
+    setDataFine("");
+    setUnSoloTrasporto(false);
+    setExtraSelezionati([]);
+    setQueryIndirizzo("");
+    setRisultatiRicerca([]);
+    setDestinazione(null);
+    setSoluzioniMigliori({});
+    setMostraPreventivo(false);
+    setNotePreventivo("");
+    setIdPreventivo({ codice: "", dettagliLogistici: null });
+    setVenditaGonfiabili({});
+    setVenditaExtras({});
+    setMostraComeOpzioni(false);
+    setMostraGiocoOfferta(false);
+    setGiocoOffertaSelezionato("");
+    setSoluzioneGiocoOfferta(null);
+    setVenditaGiocoOfferta({ prezzo: "", sconto: "0" });
+    setNomeRiferimento("");
+    setIndirizzoEmail("");
+    setCurrentView("calculator");
+  };
+
+  // Preparazione dettagli logistici all'apertura della modale.
+  // Il codice NON viene generato dal client: lo assegna il database al salvataggio.
   useEffect(() => {
-    if (mostraPreventivo && !idPreventivo.codice) {
-      const counterCorrente = parseInt(localStorage.getItem("counter_preventivi") || "1001");
-      
+    if (mostraPreventivo && !idPreventivo.dettagliLogistici) {
       const datiLogistici = serviziSelezionati.map(nome => ({
         nome,
         kmAndata: soluzioniMigliori[nome]?.kmAndata,
         costoVivoTotale: soluzioniMigliori[nome]?.totaleOpzione
       }));
 
-      setIdPreventivo({ 
-        codice: `PRV-2026-${counterCorrente}`,
-        dettagliLogistici: datiLogistici 
-      });
-      
-      localStorage.setItem("counter_preventivi", (counterCorrente + 1).toString());
+      setIdPreventivo(prev => ({ ...prev, dettagliLogistici: datiLogistici }));
     }
-  }, [mostraPreventivo, idPreventivo.codice]);
+  }, [mostraPreventivo, idPreventivo.dettagliLogistici]);
 
   const formattaDataIT = (dataStr) => {
     if (!dataStr) return "N/D";
@@ -405,11 +425,11 @@ function App() {
   // Arrotonda anche il prezzo di vendita target informativo in fondo
   const prezzoVenditaTarget = arrotondaAllaDecina(totaleComplessivoCostoFlotta * MOLTIPLICATORE_TARGET);
 
-  const scaricaPreventivoPDF = () => {
+  const scaricaPreventivoPDF = (codiceFile) => {
     const element = document.getElementById('sezione-da-stampare');
     const opt = {
       margin: 10,
-      filename: `${idPreventivo.codice}.pdf`, 
+      filename: `${codiceFile || idPreventivo.codice}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2 },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
@@ -457,8 +477,8 @@ function App() {
     // Calcolo del kilometraggio totale andata per il database
     const totaleKmAndata = serviziSelezionati.reduce((acc, nome) => acc + (soluzioniMigliori[nome]?.kmAndata || 0), 0);
 
+    // Il codice NON viene inviato: lo genera il database (anno corrente + progressivo).
     const nuovoPreventivoDB = {
-      codice: idPreventivo.codice,
       dataEmissione: new Date().toISOString(),
       destinazione: destinazione?.nome || "N/D",
       periodo: `Dal ${formattaDataIT(dataInizio)} al ${formattaDataIT(dataFine)}`,
@@ -468,21 +488,62 @@ function App() {
       totaleVendita: totaleVenditaComplessivo,
       note: notePreventivo,
       stato: "Registrato",
-      nomeReferente: nomeRiferimento, 
-      emailReferente: indirizzoEmail, 
-      costoVivoTotale: totaleComplessivoCostoFlotta, 
+      nomeReferente: nomeRiferimento,
+      emailReferente: indirizzoEmail,
+      costoVivoTotale: totaleComplessivoCostoFlotta,
       kmAndata: totaleKmAndata, // Salvataggio kilometraggio
-      dettagliLogistici: idPreventivo.dettagliLogistici 
+      dettagliLogistici: idPreventivo.dettagliLogistici
     };
 
-    const { error } = await supabase.from('preventivi').upsert([nuovoPreventivoDB], { onConflict: 'codice' });
-    if (error) {
-      console.error("Errore salvataggio DB:", error);
-      alert("Errore durante il salvataggio nel Database!");
+    let codiceFinale = idPreventivo.codice;
+
+    if (!codiceFinale) {
+      // Primo salvataggio: inserimento (il DB assegna il codice tramite trigger)
+      const { error } = await supabase
+        .from('preventivi')
+        .insert([nuovoPreventivoDB]);
+
+      if (error) {
+        console.error("Errore salvataggio DB:", error);
+        alert("Errore durante il salvataggio nel Database!");
+        return;
+      }
+
+      // Rileggo il codice appena generato (il più recente in ordine decrescente)
+      const { data: ultimo, error: errLettura } = await supabase
+        .from('preventivi')
+        .select('codice')
+        .order('codice', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (errLettura || !ultimo) {
+        console.error("Errore lettura codice generato:", errLettura);
+        alert("Preventivo salvato, ma impossibile recuperare il numero documento.");
+        fetchData();
+        return;
+      }
+
+      codiceFinale = ultimo.codice;
+      setIdPreventivo(prev => ({ ...prev, codice: codiceFinale }));
+      // Attendo che il numero definitivo compaia nel documento prima di generare il PDF
+      await new Promise(resolve => setTimeout(resolve, 200));
     } else {
-      fetchData();
-      scaricaPreventivoPDF();
+      // Risalvataggio dello stesso preventivo: aggiorno il record esistente
+      const { error } = await supabase
+        .from('preventivi')
+        .update(nuovoPreventivoDB)
+        .eq('codice', codiceFinale);
+
+      if (error) {
+        console.error("Errore salvataggio DB:", error);
+        alert("Errore durante il salvataggio nel Database!");
+        return;
+      }
     }
+
+    fetchData();
+    scaricaPreventivoPDF(codiceFinale);
   };
 
   const eliminaPreventivo = async (idPrev) => {
@@ -1260,6 +1321,7 @@ function App() {
               </div>
 
               <button className="btn-preventivo" onClick={() => setMostraPreventivo(true)}>📋 Elabora Documento di Offerta</button>
+              <button className="btn-chiudi" style={{ float: 'none', display: 'block', marginTop: '12px' }} onClick={nuovoPreventivo}>🆕 Nuovo Preventivo</button>
             </>
           )}
         </div>
@@ -1398,7 +1460,10 @@ function App() {
             <div className="no-print azioni-preventivo" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <button className="btn-chiudi" onClick={() => setMostraPreventivo(false)}>← Modifica Prezzi</button>
-                <button className="btn-stampa" onClick={handleStampaESalva}>🖨️ Salva in DB e Stampa PDF</button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button className="btn-stampa" onClick={handleStampaESalva}>🖨️ Salva in DB e Stampa PDF</button>
+                  <button className="btn-chiudi" style={{ float: 'none' }} onClick={nuovoPreventivo}>🆕 Nuovo Preventivo</button>
+                </div>
               </div>
 
               <div style={{ background: '#f0f4f8', padding: '12px', borderRadius: '6px', border: '1px solid #d9e2ec', textAlign: 'left', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '15px' }}>
@@ -1427,7 +1492,7 @@ function App() {
                 </div>
                 <div style={{ float: 'right', width: '70%', textAlign: 'right' }}>
                   <h1 style={{ margin: '0 0 20px 0', textAlign: 'right' }}>PREVENTIVO DI NOLEGGIO</h1>
-                  <p style={{ margin: '2px 0', color: '#333' }}>Documento N°: <strong>{idPreventivo.codice}</strong></p>
+                  <p style={{ margin: '2px 0', color: '#333' }}>Documento N°: <strong>{idPreventivo.codice || `PRV-${new Date().getFullYear()}-XXXX`}</strong></p>
                   
                   {nomeRiferimento && <p style={{ margin: '2px 0', color: '#333', fontSize: '0.95rem' }}>Alla cortese attenzione di: <strong>{nomeRiferimento}</strong></p>}
                   {indirizzoEmail && <p style={{ margin: '2px 0', color: '#333', fontSize: '0.95rem' }}>E-mail referente: <strong>{indirizzoEmail}</strong></p>}
