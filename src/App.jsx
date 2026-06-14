@@ -692,7 +692,7 @@ function App() {
       td:last-child button { width: 100%; }
       .coord-input { width: 100% !important; margin: 0 0 8px 0 !important; }
       td > div[style*="grid-template-columns"] { grid-template-columns: 1fr 1fr !important; }
-      .admin-table-box, .admin-table-box-full { border: none !important; background: transparent !important; overflow: visible !important; }
+      .admin-table-box, .admin-table-box-full { border: none !important; background: transparent !important; overflow: visible !important; max-height: none !important; }
     }
   `;
 
