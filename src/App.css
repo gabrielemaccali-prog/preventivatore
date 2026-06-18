@@ -403,6 +403,14 @@ td { padding: 8px 12px; vertical-align: middle; }
   break-before: page;        /* Standard moderno */
 }
 
+/* Evita che righe e blocchi del documento PDF vengano spezzati tra le pagine */
+.tabella-preventivo tr,
+.tabella-preventivo thead,
+.pdf-evita-taglio {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
 .btn-elimina-prev {
   background-color: #ef4444;
   color: white;

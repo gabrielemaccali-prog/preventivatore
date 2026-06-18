@@ -10,7 +10,7 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // --- CONFIGURAZIONI INTERNE ---
-const COSTO_AL_KM = 1.20;
+const COSTO_AL_KM = 1.20; // Valore di fallback se una sede non ha un €/km configurato
 const MOLTIPLICATORE_TARGET = 1.5;
 
 function App() {
@@ -30,7 +30,7 @@ function App() {
   const [indirizzoEmail, setIndirizzoEmail] = useState("");
 
   // --- STATI DEL FORM DI INSERIMENTO ---
-  const [nuovaSede, setNuovaSede] = useState({ nome: "", lat: "", lon: "" });
+  const [nuovaSede, setNuovaSede] = useState({ nome: "", lat: "", lon: "", costoKm: "" });
   const [nuovoGonfiabile, setNuovoGonfiabile] = useState({ 
     nome: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", 
     dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: ""
@@ -39,7 +39,7 @@ function App() {
 
   // --- STATI DI MODIFICA IN LINEA ---
   const [idSedeInModifica, setIdSedeInModifica] = useState(null);
-  const [datiSedeInModifica, setDatiSedeInModifica] = useState({ nome: "", lat: "", lon: "" });
+  const [datiSedeInModifica, setDatiSedeInModifica] = useState({ nome: "", lat: "", lon: "", costoKm: "" });
   const [idGonfiabileInModifica, setIdGonfiabileInModifica] = useState(null);
   const [datiGonfiabileInModifica, setDatiGonfiabileInModifica] = useState({ 
     nome: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", 
@@ -49,7 +49,8 @@ function App() {
   const [datiExtraInModifica, setDatiExtraInModifica] = useState({ nome: "", prezzo: "" });
 
   // --- STATI DEL PREVENTIVATORE ---
-  const [serviziSelezionati, setServiziSelezionati] = useState([]); 
+  const [serviziSelezionati, setServiziSelezionati] = useState([]);
+  const [quantitaGonfiabili, setQuantitaGonfiabili] = useState({}); // quantità di pezzi per ciascun gonfiabile (chiave = nome)
   const [dataInizio, setDataInizio] = useState("");
   const [dataFine, setDataFine] = useState("");
   const [unSoloTrasporto, setUnSoloTrasporto] = useState(false);
@@ -126,6 +127,7 @@ function App() {
   // Avvia un nuovo preventivo: azzera tutti i dati e torna al preventivatore
   const nuovoPreventivo = () => {
     setServiziSelezionati([]);
+    setQuantitaGonfiabili({});
     setDataInizio("");
     setDataFine("");
     setUnSoloTrasporto(false);
@@ -155,6 +157,7 @@ function App() {
     if (mostraPreventivo && !idPreventivo.dettagliLogistici) {
       const datiLogistici = serviziSelezionati.map(nome => ({
         nome,
+        quantita: quantitaGonfiabili[nome] || 1,
         kmAndata: soluzioniMigliori[nome]?.kmAndata,
         costoVivoTotale: soluzioniMigliori[nome]?.totaleOpzione
       }));
@@ -230,6 +233,7 @@ function App() {
     setLoginUser("");
     setLoginPass("");
     setServiziSelezionati([]);
+    setQuantitaGonfiabili({});
     setDestinazione(null);
     setVenditaGonfiabili({});
     setVenditaExtras({});
@@ -264,15 +268,19 @@ function App() {
           if (data.code === "Ok") {
             const kmAndata = data.routes[0].distance / 1000;
             const moltiplicatoreTrasporto = unSoloTrasporto ? 1 : giorniNoleggio;
-            const costoKmTotale = (kmAndata * 2) * COSTO_AL_KM * moltiplicatoreTrasporto;
-            const costoBaseMoltiplicato = istanza.prezzo * giorniNoleggio;
-            
+            const costoKmSede = parseFloat(sedePartenza.costoKm) || COSTO_AL_KM;
+            const costoKmTotale = (kmAndata * 2) * costoKmSede * moltiplicatoreTrasporto;
+            // La quantità moltiplica SOLO il prezzo base (i trasporti restano invariati)
+            const quantita = quantitaGonfiabili[nomeGonfiabile] || 1;
+            const costoBaseMoltiplicato = istanza.prezzo * giorniNoleggio * quantita;
+
             return {
               prodotto: istanza,
               partenza: sedePartenza,
               kmAndata: kmAndata,
               costoKmTotale: costoKmTotale,
               costoBaseMoltiplicato: costoBaseMoltiplicato,
+              quantita: quantita,
               totaleOpzione: costoBaseMoltiplicato + costoKmTotale
             };
           }
@@ -297,7 +305,7 @@ function App() {
     if (destinazione) {
       ricalcolaTuttiIPercorsi(serviziSelezionati, destinazione);
     }
-  }, [serviziSelezionati, giorniNoleggio, unSoloTrasporto, gonfiabili, sedi]);
+  }, [serviziSelezionati, quantitaGonfiabili, giorniNoleggio, unSoloTrasporto, gonfiabili, sedi]);
 
   // --- GONFIABILI DISPONIBILI PRESSO LA SEDE "BFM - Milano" PER IL GIOCO IN OFFERTA ---
   const gonfiabiliBFMMilano = gonfiabili.filter(g => {
@@ -325,7 +333,8 @@ function App() {
         if (data.code === "Ok") {
           const kmAndata = data.routes[0].distance / 1000;
           const moltiplicatoreTrasporto = unSoloTrasporto ? 1 : giorniNoleggio;
-          const costoKmTotale = (kmAndata * 2) * COSTO_AL_KM * moltiplicatoreTrasporto;
+          const costoKmSede = parseFloat(sedePartenza.costoKm) || COSTO_AL_KM;
+          const costoKmTotale = (kmAndata * 2) * costoKmSede * moltiplicatoreTrasporto;
           const costoBaseMoltiplicato = istanza.prezzo * giorniNoleggio;
           setSoluzioneGiocoOfferta({
             prodotto: istanza,
@@ -368,7 +377,13 @@ function App() {
     if (!nome) return;
     if (!serviziSelezionati.includes(nome)) {
       setServiziSelezionati(prev => [...prev, nome]);
+      setQuantitaGonfiabili(prev => ({ ...prev, [nome]: prev[nome] || 1 }));
     }
+  };
+
+  const cambiaQuantitaGonfiabile = (nome, valore) => {
+    const q = Math.max(1, parseInt(valore) || 1);
+    setQuantitaGonfiabili(prev => ({ ...prev, [nome]: q }));
   };
 
   const rimuoviNomeGonfiabile = (nome) => {
@@ -379,6 +394,11 @@ function App() {
       return clone;
     });
     setVenditaGonfiabili(prev => {
+      const clone = { ...prev };
+      delete clone[nome];
+      return clone;
+    });
+    setQuantitaGonfiabili(prev => {
       const clone = { ...prev };
       delete clone[nome];
       return clone;
@@ -432,7 +452,9 @@ function App() {
       filename: `${codiceFile || idPreventivo.codice}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2 },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      // Evita che righe/tabelle/blocchi vengano spezzati tra una pagina e l'altra
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.pdf-evita-taglio'] }
     };
     html2pdf().set(opt).from(element).save();
   };
@@ -450,9 +472,10 @@ function App() {
       const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
       
       return {
-        nome, 
+        nome,
+        quantita: quantitaGonfiabili[nome] || 1,
         costoNoleggio: sol?.costoBaseMoltiplicato || 0,
-        costoLogistica: sol?.costoKmTotale || 0, 
+        costoLogistica: sol?.costoKmTotale || 0,
         kmCalcolati: sol?.kmAndata || 0,
         prezzoVendita: vPrezzo * (1 - vSconto / 100)
       };
@@ -603,9 +626,9 @@ function App() {
   const addSede = async (e) => {
     e.preventDefault();
     if (!nuovaSede.nome || !nuovaSede.lat || !nuovaSede.lon) return alert("Compila tutti i campi");
-    const newSede = { id: "loc_" + Date.now(), nome: nuovaSede.nome, lat: parseFloat(nuovaSede.lat), lon: parseFloat(nuovaSede.lon) };
+    const newSede = { id: "loc_" + Date.now(), nome: nuovaSede.nome, lat: parseFloat(nuovaSede.lat), lon: parseFloat(nuovaSede.lon), costoKm: parseFloat(nuovaSede.costoKm) || COSTO_AL_KM };
     const { error } = await supabase.from('sedi').insert([newSede]);
-    if (!error) { setNuovaSede({ nome: "", lat: "", lon: "" }); fetchData(); }
+    if (!error) { setNuovaSede({ nome: "", lat: "", lon: "", costoKm: "" }); fetchData(); }
   };
 
   const addGonfiabile = async (e) => {
@@ -632,7 +655,7 @@ function App() {
   };
 
   const salvaModificaSede = async () => {
-    await supabase.from('sedi').update({ nome: datiSedeInModifica.nome, lat: parseFloat(datiSedeInModifica.lat), lon: parseFloat(datiSedeInModifica.lon) }).eq('id', idSedeInModifica);
+    await supabase.from('sedi').update({ nome: datiSedeInModifica.nome, lat: parseFloat(datiSedeInModifica.lat), lon: parseFloat(datiSedeInModifica.lon), costoKm: parseFloat(datiSedeInModifica.costoKm) || COSTO_AL_KM }).eq('id', idSedeInModifica);
     setIdSedeInModifica(null); fetchData();
   };
 
@@ -758,6 +781,7 @@ function App() {
                 <input type="text" placeholder="Nome Sede" value={nuovaSede.nome} onChange={(e) => setNuovaSede({...nuovaSede, nome: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
                 <input type="number" step="any" placeholder="Latitudine" value={nuovaSede.lat} onChange={(e) => setNuovaSede({...nuovaSede, lat: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
                 <input type="number" step="any" placeholder="Longitudine" value={nuovaSede.lon} onChange={(e) => setNuovaSede({...nuovaSede, lon: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                <input type="number" step="any" placeholder="Costo €/km (es. 1.20)" value={nuovaSede.costoKm} onChange={(e) => setNuovaSede({...nuovaSede, costoKm: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
                 <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem', marginTop: '5px' }}>Salva Sede</button>
               </form>
             </div>
@@ -767,6 +791,7 @@ function App() {
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                     <th style={{ padding: '10px 12px', color: '#444' }}>Nome Sede</th>
                     <th style={{ padding: '10px 12px', color: '#444' }}>Coordinate</th>
+                    <th style={{ padding: '10px 12px', color: '#444' }}>€/km</th>
                     <th style={{ padding: '10px 12px', textAlign: 'center', color: '#444', width: '130px' }}>Azioni</th>
                   </tr>
                 </thead>
@@ -780,6 +805,9 @@ function App() {
                             <input type="number" step="any" className="table-input coord-input" value={datiSedeInModifica.lat} onChange={(e)=>setDatiSedeInModifica({...datiSedeInModifica, lat: e.target.value})} style={{ width: '48%', marginRight: '4%', fontSize: '0.85rem', height: '30px' }} />
                             <input type="number" step="any" className="table-input coord-input" value={datiSedeInModifica.lon} onChange={(e)=>setDatiSedeInModifica({...datiSedeInModifica, lon: e.target.value})} style={{ width: '48%', fontSize: '0.85rem', height: '30px' }} />
                           </td>
+                          <td style={{ padding: '10px 12px' }}>
+                            <input type="number" step="any" className="table-input" value={datiSedeInModifica.costoKm} onChange={(e)=>setDatiSedeInModifica({...datiSedeInModifica, costoKm: e.target.value})} style={{ width: '100%', fontSize: '0.85rem', height: '30px' }} />
+                          </td>
                           <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                               <button className="btn-salva-inline" onClick={salvaModificaSede} style={{ fontSize: '0.8rem', padding: '4px 8px' }}>Salva</button>
@@ -791,9 +819,10 @@ function App() {
                         <>
                           <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{s.nome}</td>
                           <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#555' }}>{parseFloat(s.lat).toFixed(4)}, {parseFloat(s.lon).toFixed(4)}</td>
+                          <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#555' }}>€{(parseFloat(s.costoKm) || COSTO_AL_KM).toFixed(2)}</td>
                           <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                             <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                              <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => { setIdSedeInModifica(s.id); setDatiSedeInModifica({ nome: s.nome, lat: s.lat, lon: s.lon }); }}>Modifica</button>
+                              <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => { setIdSedeInModifica(s.id); setDatiSedeInModifica({ nome: s.nome, lat: s.lat, lon: s.lon, costoKm: s.costoKm ?? "" }); }}>Modifica</button>
                               <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviSede(s.id)}>Elimina</button>
                             </div>
                           </td>
@@ -1015,7 +1044,20 @@ function App() {
                   {serviziSelezionati.map(nome => (
                     <li key={nome} className="item-scelto">
                       <span>🎈 {nome}</span>
-                      <button className="btn-rimuovi" onClick={() => rimuoviNomeGonfiabile(nome)}>Rimuovi</button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: '#475569', fontWeight: 600 }}>
+                          Qtà:
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={quantitaGonfiabili[nome] || 1}
+                            onChange={(e) => cambiaQuantitaGonfiabile(nome, e.target.value)}
+                            style={{ width: '64px', padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.9rem' }}
+                          />
+                        </label>
+                        <button className="btn-rimuovi" onClick={() => rimuoviNomeGonfiabile(nome)}>Rimuovi</button>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -1063,7 +1105,8 @@ function App() {
                     {sol ? (
                       <div className="voci-prezzo">
                         <p>Magazzino: <em>{sol.partenza.nome}</em></p>
-                        <p>• Noleggio: <span>€{sol.costoBaseMoltiplicato.toFixed(2)}</span></p>
+                        <p>Quantità: <span>{sol.quantita || 1} pz</span></p>
+                        <p>• Noleggio ({sol.quantita || 1} × €{parseFloat(sol.prodotto.prezzo).toFixed(2)} × {giorniNoleggio}gg): <span>€{sol.costoBaseMoltiplicato.toFixed(2)}</span></p>
                         <p>• Logistica: ({sol.kmAndata.toFixed(1)} km):<span>€{sol.costoKmTotale.toFixed(2)}</span></p>
                         <p className="subtotale-prodotto">Subtotale: <strong>€{sol.totaleOpzione.toFixed(2)}</strong></p>
                       </div>
@@ -1128,6 +1171,9 @@ function App() {
                         {/* 1. AGGIUNTO DETTAGLIO SEDE DI PARTENZA */}
                         <p style={{ margin: '4px 0', fontSize: '0.9rem', color: '#555' }}>
                           Sede di partenza: <strong>{sol?.partenza?.nome || "Non definita"}</strong>
+                        </p>
+                        <p style={{ margin: '4px 0', fontSize: '0.9rem', color: '#555' }}>
+                          Quantità: <strong>{quantitaGonfiabili[nome] || 1} pz</strong>
                         </p>
                         <p>Costo Vivo di Base: <strong className="testo-costo-base">€{costoCalcolato.toFixed(2)}</strong></p>
                       </div>
@@ -1399,7 +1445,7 @@ function App() {
                       <td style={{ padding: '12px', fontSize: '0.8rem' }}>
                         <ul style={{ margin: 0, paddingLeft: '15px', color: '#555' }}>
                           {p.gonfiabili && p.gonfiabili.map((g, i) => (
-                            <li key={i}><strong>{g.nome}</strong> (Vendita: €{g.prezzoVendita.toFixed(2)})</li>
+                            <li key={i}><strong>{g.nome}</strong>{(g.quantita || 1) > 1 ? ` ×${g.quantita}` : ''} (Vendita: €{g.prezzoVendita.toFixed(2)})</li>
                           ))}
                           {p.extras && p.extras.map((e, i) => (
                             <li key={`ex-${i}`}>⚙️ {e.nome} (Vendita: €{e.prezzoVendita.toFixed(2)})</li>
@@ -1537,7 +1583,7 @@ function App() {
                     const haParametri = gonfiabileCorrente.giocatori || gonfiabileCorrente.etaConsigliata || gonfiabileCorrente.dimensioni || gonfiabileCorrente.superficie || gonfiabileCorrente.alimentazione || gonfiabileCorrente.tempoMontaggio;
 
                     return (
-                      <div key={nome} style={{ border: '1px solid #ddd', borderRadius: '6px', marginBottom: '15px', overflow: 'hidden' }}>
+                      <div key={nome} className="pdf-evita-taglio" style={{ border: '1px solid #ddd', borderRadius: '6px', marginBottom: '15px', overflow: 'hidden' }}>
                         <div style={{ background: '#f5f5f5', padding: '8px 15px', borderBottom: '1px solid #ddd' }}>
                           <strong>Opzione: {nome}</strong>
                         </div>
@@ -1545,7 +1591,7 @@ function App() {
                           <tbody>
                             <tr>
                               <td style={{ textAlign: 'left' }}>
-                                <div style={{ marginBottom: haParametri ? '4px' : '0' }}><strong>{nome}</strong> </div>
+                                <div style={{ marginBottom: haParametri ? '4px' : '0' }}><strong>{nome}</strong> {(quantitaGonfiabili[nome] || 1) > 1 && <span style={{ fontWeight: 'normal' }}>— Quantità: {quantitaGonfiabili[nome]} pz</span>}</div>
 
                                 {haParametri && (
                                   <div style={{ fontSize: '0.6rem', color: '#666', lineHeight: '1.5', marginBottom: '4px' }}>
@@ -1626,8 +1672,8 @@ function App() {
                     return (
                       <tr key={nome}>
                         <td style={{ textAlign: 'left' }}>
-                          <div style={{ marginBottom: haParametri ? '4px' : '0' }}><strong>{nome}</strong> </div>
-                          
+                          <div style={{ marginBottom: haParametri ? '4px' : '0' }}><strong>{nome}</strong> {(quantitaGonfiabili[nome] || 1) > 1 && <span style={{ fontWeight: 'normal' }}>— Quantità: {quantitaGonfiabili[nome]} pz</span>}</div>
+
                           {haParametri && (
                             <div style={{ fontSize: '0.6rem',  color: '#666', lineHeight: '1.5', marginBottom: '4px' }}>
                               {gonfiabileCorrente.giocatori && <span style={{ marginRight: '12px', display: 'inline-block' }}><strong>Giocatori:</strong> {gonfiabileCorrente.giocatori}</span>}
@@ -1690,7 +1736,7 @@ function App() {
                 const haParametriGO = gonfiabileGO.giocatori || gonfiabileGO.etaConsigliata || gonfiabileGO.dimensioni || gonfiabileGO.superficie || gonfiabileGO.alimentazione || gonfiabileGO.tempoMontaggio;
 
                 return (
-                  <div style={{ marginTop: '20px' }}>
+                  <div className="pdf-evita-taglio" style={{ marginTop: '20px' }}>
                     <h3 style={{ textAlign: 'left' }}>Offerta</h3>
                     <table className="tabella-preventivo" style={{ width: '100%', textAlign: 'left' }}>
                       <thead>
