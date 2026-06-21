@@ -50,19 +50,22 @@
   }
 }
 
+html {
+  /* Riserva sempre lo spazio della scrollbar: evita che la larghezza "salti"
+     cambiando scheda quando il contenuto è più o meno alto */
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
 body {
   margin: 0;
 }
 
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
+  width: 100%;
+  margin: 0;
+  text-align: left;
   min-height: 100svh;
-  display: flex;
-  flex-direction: column;
   box-sizing: border-box;
 }
 

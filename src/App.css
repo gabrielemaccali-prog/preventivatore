@@ -66,6 +66,57 @@ body {
 .main-header p { margin: 2px 0 0 0; font-size: 0.85rem; color: #64748b; }
 .header-menu { display: flex; gap: 10px; align-items: center; }
 
+/* --- MENU MODULI: HAMBURGER + SIDEBAR --- */
+.btn-hamburger {
+  background-color: #e2e8f0;
+  color: #0f172a;
+  font-size: 1.3rem;
+  line-height: 1;
+  padding: 8px 14px;
+  border-radius: 8px;
+}
+.btn-hamburger:hover { background-color: #cbd5e1; }
+
+.sidebar-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  z-index: 1000;
+}
+.sidebar-moduli {
+  position: fixed; top: 0; left: 0;
+  width: 270px; height: 100vh;
+  background: #0f172a; color: #f8fafc;
+  box-shadow: 4px 0 16px rgba(0,0,0,0.25);
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  z-index: 1001;
+  display: flex; flex-direction: column;
+}
+.sidebar-moduli.aperta { transform: translateX(0); }
+.sidebar-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px; border-bottom: 1px solid #1e293b; background: #fff;
+}
+.sidebar-chiudi {
+  background: transparent; color: #475569; font-size: 1.2rem; padding: 4px 10px;
+}
+.sidebar-chiudi:hover { background: #e2e8f0; }
+.sidebar-nav { display: flex; flex-direction: column; padding: 15px; gap: 8px; }
+.sidebar-voce {
+  background: #1e293b; color: #cbd5e1; text-align: left;
+  padding: 14px 16px; border-radius: 8px; font-size: 1rem; font-weight: 600;
+}
+.sidebar-voce:hover { background: #334155; color: #fff; }
+.sidebar-voce.active { background: #2563eb; color: #fff; }
+.sidebar-icona { margin-right: 8px; }
+
+/* --- SOTTO-NAVIGAZIONE INTERNA AL MODULO --- */
+.modulo-subnav {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  background: white; padding: 12px 18px; border-radius: 10px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); margin-bottom: 25px;
+}
+
 .nav-btn { background-color: #e2e8f0; color: #475569; }
 .nav-btn.active { background-color: #0f172a; color: white; }
 .btn-logout { background-color: #ef4444; font-size: 0.9rem; padding: 8px 15px; }
