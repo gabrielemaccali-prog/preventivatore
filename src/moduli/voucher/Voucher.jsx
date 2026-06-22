@@ -1,17 +1,22 @@
 import { useState, useEffect } from 'react'
 import html2pdf from 'html2pdf.js';
 import { supabase } from '../../lib/supabaseClient';
-import { formattaDataIT } from '../../lib/utils';
+import { formattaDataIT, formattaIndirizzoPulito } from '../../lib/utils';
 
 const FORM_VUOTO = {
   nominativo: "", dedica: "", pacchettoId: "", pacchettoNome: "",
   importo: "", testoOfferta: "",
-  fattNome: "", fattCognome: "", fattIndirizzo: "", fattCF: "",
+  fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
   stato: "incompleto", dataEmissione: ""
 };
 
-// Verifica presenza di TUTTI i dati di fatturazione
-const fatturazioneCompletaDi = (f) => !!(f.fattNome && f.fattCognome && f.fattIndirizzo && f.fattCF);
+// Validazione formato Codice Fiscale italiano (persona fisica): 16 caratteri alfanumerici
+const CF_REGEX = /^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$/;
+const validaCF = (cf) => CF_REGEX.test((cf || "").trim().toUpperCase());
+
+// Verifica presenza dei dati di fatturazione (con CF valido)
+const fatturazioneCompletaDi = (f) =>
+  !!(f.fattNome && f.fattCognome && f.fattIndirizzo && f.fattCitta && validaCF(f.fattCF));
 
 // Lo stato dipende dalla presenza dei dati di fatturazione (a meno che sia già "usato")
 const calcolaStato = (f, statoPrecedente) => {
@@ -42,6 +47,10 @@ function Voucher({ user }) {
   const [form, setForm] = useState(FORM_VUOTO);
   const [codiceInModifica, setCodiceInModifica] = useState(null); // null = creazione, valorizzato = modifica
   const [codiceGenerato, setCodiceGenerato] = useState("");        // codice definitivo dopo il salvataggio
+
+  // --- RICERCA INDIRIZZO FATTURAZIONE ---
+  const [queryIndirizzo, setQueryIndirizzo] = useState("");
+  const [risultatiRicerca, setRisultatiRicerca] = useState([]);
 
   // --- STAMPA PDF ---
   const [datiPDF, setDatiPDF] = useState(null);
@@ -112,6 +121,37 @@ function Voucher({ user }) {
     setForm(FORM_VUOTO);
     setCodiceInModifica(null);
     setCodiceGenerato("");
+    setQueryIndirizzo("");
+    setRisultatiRicerca([]);
+  };
+
+  // --- RICERCA INDIRIZZO (Nominatim, come nel preventivatore) ---
+  const cercaIndirizzoFatt = async () => {
+    if (!queryIndirizzo) return;
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryIndirizzo)}&addressdetails=1&countrycodes=it&limit=5`);
+      const data = await response.json();
+      setRisultatiRicerca(data);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const selezionaIndirizzoFatt = (luogo) => {
+    const a = luogo.address || {};
+    const via = a.road || a.pedestrian || a.suburb || "";
+    const civico = a.house_number ? ` ${a.house_number}` : "";
+    let prov = a.county || "";
+    prov = prov.replace("Provincia di ", "").replace("Città Metropolitana di ", "");
+    setForm(prev => ({
+      ...prev,
+      fattIndirizzo: `${via}${civico}`.trim(),
+      fattCap: a.postcode || "",
+      fattCitta: a.city || a.town || a.village || "",
+      fattProvincia: prov
+    }));
+    setRisultatiRicerca([]);
+    setQueryIndirizzo("");
   };
 
   // Legge l'ultimo codice dell'anno corrente dal DB e ritorna il successivo (reset annuale da 1001)
@@ -135,6 +175,7 @@ function Voucher({ user }) {
   const salvaVoucher = async () => {
     if (!form.nominativo.trim()) return alert("Il nominativo di intestazione è obbligatorio.");
     if (!form.pacchettoId && form.importo === "") return alert("Seleziona un pacchetto gioco.");
+    if (form.fattCF && !validaCF(form.fattCF)) return alert("Il Codice Fiscale inserito non è valido (formato non corretto).");
 
     const stato = calcolaStato(form, codiceInModifica ? form.stato : "incompleto");
 
@@ -147,7 +188,10 @@ function Voucher({ user }) {
       fattNome: form.fattNome,
       fattCognome: form.fattCognome,
       fattIndirizzo: form.fattIndirizzo,
-      fattCF: form.fattCF,
+      fattCap: form.fattCap,
+      fattCitta: form.fattCitta,
+      fattProvincia: form.fattProvincia,
+      fattCF: (form.fattCF || "").toUpperCase(),
       stato
     };
 
@@ -188,6 +232,9 @@ function Voucher({ user }) {
       fattNome: v.fattNome || "",
       fattCognome: v.fattCognome || "",
       fattIndirizzo: v.fattIndirizzo || "",
+      fattCap: v.fattCap || "",
+      fattCitta: v.fattCitta || "",
+      fattProvincia: v.fattProvincia || "",
       fattCF: v.fattCF || "",
       stato: v.stato || "incompleto",
       dataEmissione: v.dataEmissione || ""
@@ -382,14 +429,57 @@ function Voucher({ user }) {
                 <input type="text" value={form.fattCognome} onChange={(e) => setForm({ ...form, fattCognome: e.target.value })} />
               </label>
             </div>
-            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem', margin: '12px 0' }}>
-              Indirizzo di residenza
-              <input type="text" value={form.fattIndirizzo} onChange={(e) => setForm({ ...form, fattIndirizzo: e.target.value })} />
-            </label>
-            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem' }}>
+            <div style={{ margin: '12px 0' }}>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem', marginBottom: '5px' }}>Cerca indirizzo di residenza</label>
+              <div className="ricerca-box">
+                <input type="text" placeholder="Scrivi via, civico, città..." value={queryIndirizzo} onChange={(e) => setQueryIndirizzo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), cercaIndirizzoFatt())} />
+                <button type="button" onClick={cercaIndirizzoFatt}>Cerca</button>
+              </div>
+              {risultatiRicerca.length > 0 && (
+                <ul className="risultati-ricerca">
+                  {risultatiRicerca.map(luogo => (
+                    <li key={luogo.place_id} onClick={() => selezionaIndirizzoFatt(luogo)}>{formattaIndirizzoPulito(luogo)}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
+              <label style={{ flex: '2 1 240px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
+                Indirizzo (via e civico)
+                <input type="text" value={form.fattIndirizzo} onChange={(e) => setForm({ ...form, fattIndirizzo: e.target.value })} />
+              </label>
+              <label style={{ flex: '1 1 100px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
+                CAP
+                <input type="text" value={form.fattCap} onChange={(e) => setForm({ ...form, fattCap: e.target.value })} />
+              </label>
+            </div>
+            <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
+              <label style={{ flex: '2 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
+                Città
+                <input type="text" value={form.fattCitta} onChange={(e) => setForm({ ...form, fattCitta: e.target.value })} />
+              </label>
+              <label style={{ flex: '1 1 100px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
+                Provincia
+                <input type="text" value={form.fattProvincia} onChange={(e) => setForm({ ...form, fattProvincia: e.target.value })} />
+              </label>
+            </div>
+
+            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem', marginTop: '12px' }}>
               Codice Fiscale
-              <input type="text" value={form.fattCF} onChange={(e) => setForm({ ...form, fattCF: e.target.value })} />
+              <input
+                type="text"
+                value={form.fattCF}
+                maxLength={16}
+                onChange={(e) => setForm({ ...form, fattCF: e.target.value.toUpperCase() })}
+                style={form.fattCF && !validaCF(form.fattCF) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined}
+              />
             </label>
+            {form.fattCF && !validaCF(form.fattCF) && (
+              <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', color: '#c62828' }}>
+                ⚠️ Codice Fiscale non valido (16 caratteri, es. RSSMRA85M01H501Z).
+              </p>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '10px' }}>
