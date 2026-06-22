@@ -56,6 +56,7 @@ function Preventivatore({ user }) {
   const [loadingCalcolo, setLoadingCalcolo] = useState(false);
   const [soluzioniMigliori, setSoluzioniMigliori] = useState({}); 
   const [mostraPreventivo, setMostraPreventivo] = useState(false);
+  const [modalitaModifica, setModalitaModifica] = useState(false); // true quando si sta modificando/ristampando un preventivo salvato
   const [notePreventivo, setNotePreventivo] = useState("");
   const [idPreventivo, setIdPreventivo] = useState({ codice: "", dettagliLogistici: null });
 
@@ -114,8 +115,9 @@ function Preventivatore({ user }) {
     }
   };
 
-  // Reset del Preventivo
+  // Reset del Preventivo (non durante la modifica di un preventivo salvato)
   useEffect(() => {
+    if (modalitaModifica) return;
     setIdPreventivo({ codice: "", dettagliLogistici: null });
   }, [serviziSelezionati, destinazione, dataInizio, dataFine, extraSelezionati]);
 
@@ -143,7 +145,79 @@ function Preventivatore({ user }) {
     setVenditaGiocoOfferta({ prezzo: "", sconto: "0" });
     setNomeRiferimento("");
     setIndirizzoEmail("");
+    setModalitaModifica(false);
     setCurrentView("calculator");
+  };
+
+  // Converte il testo "Dal gg/mm/aaaa al gg/mm/aaaa" nelle due date ISO (yyyy-mm-dd)
+  const estraiDateDaPeriodo = (periodo) => {
+    const m = (periodo || "").match(/(\d{2})\/(\d{2})\/(\d{4}).*?(\d{2})\/(\d{2})\/(\d{4})/);
+    if (!m) return { inizio: "", fine: "" };
+    return { inizio: `${m[3]}-${m[2]}-${m[1]}`, fine: `${m[6]}-${m[5]}-${m[4]}` };
+  };
+
+  // Ricostruisce lo stato di lavoro a partire da un preventivo salvato (per modifica o ristampa)
+  const caricaPreventivo = (p) => {
+    const codice = typeof p.id === 'object' ? p.id.codice : p.id;
+    const gonf = p.gonfiabili || [];
+    const ex = p.extras || [];
+
+    // Soluzioni logistiche ricostruite dai costi salvati (niente ricalcolo OSRM)
+    const soluzioni = {};
+    const quantita = {};
+    const vendita = {};
+    gonf.forEach(g => {
+      const costoBase = parseFloat(g.costoNoleggio) || 0;
+      const costoKm = parseFloat(g.costoLogistica) || 0;
+      soluzioni[g.nome] = {
+        prodotto: gonfiabili.find(x => x.nome === g.nome) || { prezzo: 0 },
+        partenza: { nome: "—" },
+        kmAndata: parseFloat(g.kmCalcolati) || 0,
+        costoKmTotale: costoKm,
+        costoBaseMoltiplicato: costoBase,
+        quantita: g.quantita || 1,
+        totaleOpzione: costoBase + costoKm
+      };
+      quantita[g.nome] = g.quantita || 1;
+      vendita[g.nome] = { prezzo: String(g.prezzoVendita ?? ""), sconto: "0" };
+    });
+
+    // Extra: rimappa per nome verso gli id correnti
+    const idsExtra = [];
+    const venditaEx = {};
+    ex.forEach(e => {
+      const trovato = extras.find(x => x.nome === e.nome);
+      if (trovato) {
+        idsExtra.push(trovato.id);
+        venditaEx[trovato.id] = { prezzo: String(e.prezzoVendita ?? ""), sconto: "0" };
+      }
+    });
+
+    const { inizio, fine } = estraiDateDaPeriodo(p.periodo);
+
+    setModalitaModifica(true);
+    setServiziSelezionati(gonf.map(g => g.nome));
+    setQuantitaGonfiabili(quantita);
+    setSoluzioniMigliori(soluzioni);
+    setVenditaGonfiabili(vendita);
+    setExtraSelezionati(idsExtra);
+    setVenditaExtras(venditaEx);
+    setDataInizio(inizio);
+    setDataFine(fine);
+    setDestinazione({ nome: p.destinazione });
+    setNomeRiferimento(p.nomeReferente || "");
+    setIndirizzoEmail(p.emailReferente || "");
+    setNotePreventivo(p.note || "");
+    setMostraComeOpzioni(false);
+    setMostraGiocoOfferta(false);
+    setIdPreventivo({ codice, dettagliLogistici: (typeof p.id === 'object' ? p.id.dettagliLogistici : null) });
+    return codice;
+  };
+
+  const modificaPreventivo = (p) => {
+    caricaPreventivo(p);
+    setMostraPreventivo(false);
+    setCurrentView("sales");
   };
 
   // Preparazione dettagli logistici all'apertura della modale.
@@ -220,6 +294,7 @@ function Preventivatore({ user }) {
   };
 
   useEffect(() => {
+    if (modalitaModifica) return; // in modifica usiamo i costi salvati, niente ricalcolo
     if (destinazione) {
       ricalcolaTuttiIPercorsi(serviziSelezionati, destinazione);
     }
@@ -1370,6 +1445,7 @@ function Preventivatore({ user }) {
                       </td>
                       <td style={{ padding: '12px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center' }}>
+                          <button className="btn-modifica-inline" style={{ width: '100%' }} onClick={() => modificaPreventivo(p)}>✏️ Modifica</button>
                           {p.stato === "Registrato" && (
                             <button className="btn-conferma" onClick={() => cambiaStatoPreventivo(typeof p.id === 'object' ? p.id.codice : p.id, "Confermato")}>✔️ Conferma</button>
                           )}
