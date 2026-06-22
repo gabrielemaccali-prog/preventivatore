@@ -2,6 +2,7 @@ import { useState } from 'react'
 import './App.css'
 import { supabase } from './lib/supabaseClient';
 import Preventivatore from './moduli/preventivatore/Preventivatore';
+import Voucher from './moduli/voucher/Voucher';
 
 // --- ELENCO DEI MODULI DISPONIBILI ---
 const MODULI = [
@@ -111,12 +112,7 @@ function App() {
       {/* --- MODULO ATTIVO --- */}
       {currentModule === "preventivatore" && <Preventivatore user={user} />}
 
-      {currentModule === "voucher" && (
-        <div className="schermata-inserimento no-print" style={{ textAlign: 'center', padding: '50px 30px' }}>
-          <h2>🎟️ Modulo Voucher</h2>
-          <p className="descrizione-pagina">Questo modulo è in fase di sviluppo.</p>
-        </div>
-      )}
+      {currentModule === "voucher" && <Voucher user={user} />}
     </div>
   )
 }

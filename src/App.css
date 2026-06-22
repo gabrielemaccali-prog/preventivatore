@@ -117,6 +117,33 @@ body {
   box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); margin-bottom: 25px;
 }
 
+/* Su mobile le sezioni admin (form + tabella) vanno impilate: form sopra, elenco sotto.
+   Regola globale valida per tutti i moduli (preventivatore e voucher). */
+@media (max-width: 768px) {
+  .admin-grid-sezione { display: grid; grid-template-columns: 1fr !important; gap: 15px; }
+  .admin-table-box { max-height: none !important; }
+
+  /* Storico (preventivi e voucher): filtri impilati e tabella trasformata in schede */
+  .filtri-storico { flex-direction: column; }
+  .filtri-storico .filtro-group { flex: 1 1 100% !important; }
+  .schermata-storico .admin-table-box-full { overflow: visible !important; }
+  .schermata-storico table { display: block; width: 100%; }
+  .schermata-storico thead { display: none; }
+  .schermata-storico tbody { display: block; width: 100%; }
+  .schermata-storico tr {
+    display: block; width: 100%; margin-bottom: 16px;
+    border: 1px solid #cbd5e1; border-radius: 8px; background: #fff;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05); box-sizing: border-box;
+  }
+  .schermata-storico td {
+    display: block; width: 100%; text-align: left !important;
+    border: none; border-bottom: 1px dashed #e2e8f0;
+    padding: 10px 14px !important; box-sizing: border-box;
+  }
+  .schermata-storico td:last-child { border-bottom: none; background: #f8fafc; border-radius: 0 0 8px 8px; }
+  .schermata-storico td:last-child > div { width: 100%; }
+}
+
 .nav-btn { background-color: #e2e8f0; color: #475569; }
 .nav-btn.active { background-color: #0f172a; color: white; }
 .btn-logout { background-color: #ef4444; font-size: 0.9rem; padding: 8px 15px; }
@@ -218,6 +245,7 @@ button:hover { background-color: #1d4ed8; }
 .btn-chiudi { background-color: #64748b; }
 .btn-stampa { background-color: #ea580c; }
 .btn-stampa:hover { background-color: #c2410c; }
+.btn-stampa:disabled { background-color: #cbd5e1; color: #64748b; cursor: not-allowed; }
 
 .area-foglio { padding: 50px; color: #000; background: white; }
 .header-preventivo { display: flex; flex-direction: column; align-items: center; border-bottom: 3px double #000; padding-bottom: 20px; margin-bottom: 25px; position: relative; }
@@ -427,6 +455,87 @@ td { padding: 8px 12px; vertical-align: middle; }
 .badge-stato.confermato {
   background-color: #bbf7d0;
   color: #166534;
+}
+
+/* Stati voucher */
+.badge-stato.incompleto { background-color: #fed7aa; color: #9a3412; }
+.badge-stato.emesso { background-color: #bbf7d0; color: #166534; }
+.badge-stato.usato { background-color: #e2e8f0; color: #475569; }
+
+/* ==========================================================================
+   --- TEMPLATE PDF VOUCHER (layout ricostruito in HTML) ---
+   ========================================================================== */
+.voucher-foglio {
+  width: 1123px;   /* A4 landscape @ ~96dpi */
+  height: 794px;
+  background-color: #ffffff;
+  background-size: cover;
+  background-position: 70% 30%;
+  background-repeat: no-repeat;
+  color: #0f172a;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  overflow: hidden;
+}
+.voucher-info-col {
+  width: 40%; height: 90%; box-sizing: border-box;
+  margin-right: 48px;
+  padding: 28px 32px; text-align: center;
+  background-color: rgba(255, 255, 255, 0.82); /* pannello dati semi-trasparente */
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  display: flex; flex-direction: column; align-items: center;
+}
+.voucher-header {
+  display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 10px;
+}
+.voucher-logo { height: 52px; width: auto; }
+.voucher-title {
+  margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 2px;
+  color: #0288d1; text-transform: uppercase;
+}
+.voucher-label {
+  font-size: 12px; letter-spacing: 3px; color: #64748b; text-transform: uppercase; margin-bottom: 4px;
+}
+.voucher-nominativo {
+  font-size: 28px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #0f172a;
+}
+.voucher-dedica {
+  margin-top: 6px; font-size: 16px; font-style: italic; color: #334155;
+}
+.voucher-offerta-box {
+  margin: 16px auto; padding: 14px 22px; max-width: 100%;
+  background: #f0f9ff; border: 2px dashed #0288d1; border-radius: 12px;
+}
+.voucher-testo-offerta {
+  font-size: 20px; font-weight: 700; line-height: 1.3; color: #0f172a;
+}
+.voucher-importo {
+  margin-top: 8px; font-size: 23px; font-weight: 800; color: #0288d1;
+}
+.voucher-non-cumulabile {
+  font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #c62828; margin-bottom: 14px;
+}
+.voucher-codice {
+  display: inline-block; padding: 10px 24px; margin-bottom: 16px;
+  background: #0f172a; color: #fff; border-radius: 8px;
+  font-size: 18px; font-weight: 700; letter-spacing: 2px;
+}
+.voucher-validita {
+  font-size: 13px; font-weight: 600; color: #c62828; margin-bottom: 16px;
+}
+.voucher-istruzioni {
+  text-align: left; max-width: 100%; margin: 0 auto 14px auto;
+  font-size: 13.5px; line-height: 1.45; color: #334155; padding-left: 20px;
+}
+.voucher-istruzioni li { margin-bottom: 7px; }
+.voucher-contatti {
+  font-size: 14px; color: #0f172a; line-height: 1.6;
+  border-top: 1px solid #e2e8f0; padding-top: 12px; margin-top: auto; width: 100%;
 }
 
 .btn-conferma {
