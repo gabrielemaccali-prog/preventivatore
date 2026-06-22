@@ -10,9 +10,40 @@ const FORM_VUOTO = {
   stato: "incompleto", dataEmissione: ""
 };
 
-// Validazione formato Codice Fiscale italiano (persona fisica): 16 caratteri alfanumerici
-const CF_REGEX = /^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$/;
-const validaCF = (cf) => CF_REGEX.test((cf || "").trim().toUpperCase());
+// Validazione Codice Fiscale italiano (persona fisica) con verifica del carattere di controllo.
+const CF_VALORI_DISPARI = {
+  '0': 1, '1': 0, '2': 5, '3': 7, '4': 9, '5': 13, '6': 15, '7': 17, '8': 19, '9': 21,
+  'A': 1, 'B': 0, 'C': 5, 'D': 7, 'E': 9, 'F': 13, 'G': 15, 'H': 17, 'I': 19, 'J': 21,
+  'K': 2, 'L': 4, 'M': 18, 'N': 20, 'O': 11, 'P': 3, 'Q': 6, 'R': 8, 'S': 12, 'T': 14,
+  'U': 16, 'V': 10, 'W': 22, 'X': 25, 'Y': 24, 'Z': 23
+};
+const CF_VALORI_PARI = {
+  '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+  'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9,
+  'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19,
+  'U': 20, 'V': 21, 'W': 22, 'X': 23, 'Y': 24, 'Z': 25
+};
+
+const validaCF = (cfRaw) => {
+  const cf = (cfRaw || "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{15}[A-Z]$/.test(cf)) return false;
+  let somma = 0;
+  for (let i = 0; i < 15; i++) {
+    // posizioni 1-based: dispari (indice pari) -> tabella dispari, pari (indice dispari) -> tabella pari
+    somma += (i % 2 === 0) ? CF_VALORI_DISPARI[cf[i]] : CF_VALORI_PARI[cf[i]];
+  }
+  const carattereControllo = String.fromCharCode('A'.charCodeAt(0) + (somma % 26));
+  return carattereControllo === cf[15];
+};
+
+// Ritorna un messaggio d'errore specifico (o null se valido / vuoto)
+const erroreCF = (cfRaw) => {
+  const cf = (cfRaw || "").trim().toUpperCase();
+  if (!cf) return null;
+  if (!/^[A-Z0-9]{15}[A-Z]$/.test(cf)) return "Formato non valido: il CF deve essere di 16 caratteri (es. RSSMRA85M01H501Z).";
+  if (!validaCF(cf)) return "Carattere di controllo errato: il Codice Fiscale non è valido.";
+  return null;
+};
 
 // Verifica presenza dei dati di fatturazione (con CF valido)
 const fatturazioneCompletaDi = (f) =>
@@ -175,7 +206,8 @@ function Voucher({ user }) {
   const salvaVoucher = async () => {
     if (!form.nominativo.trim()) return alert("Il nominativo di intestazione è obbligatorio.");
     if (!form.pacchettoId && form.importo === "") return alert("Seleziona un pacchetto gioco.");
-    if (form.fattCF && !validaCF(form.fattCF)) return alert("Il Codice Fiscale inserito non è valido (formato non corretto).");
+    const erroreCodiceFiscale = erroreCF(form.fattCF);
+    if (erroreCodiceFiscale) return alert(erroreCodiceFiscale);
 
     const stato = calcolaStato(form, codiceInModifica ? form.stato : "incompleto");
 
@@ -472,12 +504,12 @@ function Voucher({ user }) {
                 value={form.fattCF}
                 maxLength={16}
                 onChange={(e) => setForm({ ...form, fattCF: e.target.value.toUpperCase() })}
-                style={form.fattCF && !validaCF(form.fattCF) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined}
+                style={erroreCF(form.fattCF) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined}
               />
             </label>
-            {form.fattCF && !validaCF(form.fattCF) && (
+            {erroreCF(form.fattCF) && (
               <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', color: '#c62828' }}>
-                ⚠️ Codice Fiscale non valido (16 caratteri, es. RSSMRA85M01H501Z).
+                ⚠️ {erroreCF(form.fattCF)}
               </p>
             )}
           </div>
