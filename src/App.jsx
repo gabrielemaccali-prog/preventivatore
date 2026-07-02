@@ -3,12 +3,20 @@ import './App.css'
 import { supabase } from './lib/supabaseClient';
 import Preventivatore from './moduli/preventivatore/Preventivatore';
 import Voucher from './moduli/voucher/Voucher';
+import Prenotazioni from './moduli/prenotazioni/Prenotazioni';
+
+// I moduli sperimentali sono visibili solo in sviluppo locale (non nella build online),
+// a meno che non si imposti VITE_SPERIMENTALE=true nell'ambiente.
+const MODULI_SPERIMENTALI = import.meta.env.DEV || import.meta.env.VITE_SPERIMENTALE === 'true';
 
 // --- ELENCO DEI MODULI DISPONIBILI ---
-const MODULI = [
+const TUTTI_I_MODULI = [
   { id: 'preventivatore', label: 'Preventivatore', icon: '🎈' },
   { id: 'voucher', label: 'Voucher', icon: '🎟️' },
+  { id: 'prenotazioni', label: 'Prenotazioni', icon: '📅', sperimentale: true },
 ];
+
+const MODULI = TUTTI_I_MODULI.filter(m => !m.sperimentale || MODULI_SPERIMENTALI);
 
 function App() {
   // --- AUTENTICAZIONE ---
@@ -113,6 +121,8 @@ function App() {
       {currentModule === "preventivatore" && <Preventivatore user={user} />}
 
       {currentModule === "voucher" && <Voucher user={user} />}
+
+      {currentModule === "prenotazioni" && MODULI_SPERIMENTALI && <Prenotazioni user={user} />}
     </div>
   )
 }

@@ -29,6 +29,21 @@ export const isPartenzaBFMMilano = (partenza) => {
 
 export const moltiplicatoreTargetPer = (partenza) => isPartenzaBFMMilano(partenza) ? 1 : MOLTIPLICATORE_TARGET;
 
+// Scompone un risultato Nominatim nei singoli campi indirizzo
+export const parseIndirizzo = (luogo) => {
+  const a = luogo.address || {};
+  const via = a.road || a.pedestrian || a.suburb || "";
+  const civico = a.house_number ? ` ${a.house_number}` : "";
+  let prov = a.county || "";
+  prov = prov.replace("Provincia di ", "").replace("Città Metropolitana di ", "");
+  return {
+    indirizzo: `${via}${civico}`.trim(),
+    cap: a.postcode || "",
+    citta: a.city || a.town || a.village || "",
+    provincia: prov
+  };
+};
+
 // Compone un indirizzo leggibile dai dati grezzi di Nominatim
 export const formattaIndirizzoPulito = (luogo) => {
   const addr = luogo.address || {};
