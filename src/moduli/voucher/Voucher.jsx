@@ -71,6 +71,8 @@ function Voucher({ user }) {
 
   // --- CONFIGURATORE PACCHETTI ---
   const [nuovoPacchetto, setNuovoPacchetto] = useState({ nome: "", importo: "", descrizione: "" });
+  const [showListaPacchettiCfg, setShowListaPacchettiCfg] = useState(true);
+  const [showFormPacchettoCfg, setShowFormPacchettoCfg] = useState(false);
   const [idPacchettoInModifica, setIdPacchettoInModifica] = useState(null);
   const [datiPacchettoInModifica, setDatiPacchettoInModifica] = useState({ nome: "", importo: "", descrizione: "" });
 
@@ -117,7 +119,7 @@ function Voucher({ user }) {
       descrizione: nuovoPacchetto.descrizione
     };
     const { error } = await supabase.from('pacchetti').insert([nuovo]);
-    if (!error) { setNuovoPacchetto({ nome: "", importo: "", descrizione: "" }); fetchPacchetti(); }
+    if (!error) { setNuovoPacchetto({ nome: "", importo: "", descrizione: "" }); setShowFormPacchettoCfg(false); fetchPacchetti(); }
     else { console.error(error); alert("Errore salvataggio pacchetto"); }
   };
 
@@ -355,18 +357,14 @@ function Voucher({ user }) {
           <h2>Configuratore Pacchetti Gioco</h2>
           <p className="descrizione-pagina">Definisci i pacchetti: importo e descrizione (testo che apparirà sul voucher).</p>
 
-          <div className="admin-grid-sezione">
-            <div className="admin-form-box" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Aggiungi Pacchetto</h3>
-              <form onSubmit={addPacchetto} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <input type="text" placeholder="Nome pacchetto" value={nuovoPacchetto.nome} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, nome: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <input type="number" step="any" placeholder="Importo (€)" value={nuovoPacchetto.importo} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, importo: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <textarea placeholder="Descrizione / testo offerta da stampare" value={nuovoPacchetto.descrizione} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, descrizione: e.target.value })} rows="3" style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', resize: 'vertical', fontFamily: 'inherit' }} />
-                <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>Salva Pacchetto</button>
-              </form>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0' }}>
+              <h3 style={{ margin: 0 }}>Pacchetti ({pacchetti.length})</h3>
+              <button className="nav-btn" style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem', background: '#e2e8f0', color: '#334155' }} onClick={() => setShowListaPacchettiCfg(v => !v)}>{showListaPacchettiCfg ? '▼ Nascondi elenco' : '▶ Mostra elenco'}</button>
             </div>
 
-            <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', overflowX: 'auto' }}>
+            {showListaPacchettiCfg && (
+            <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -410,6 +408,23 @@ function Voucher({ user }) {
                 </tbody>
               </table>
             </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '18px 0 12px 0' }}>
+              <button className="btn-preventivo" style={{ width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' }} onClick={() => setShowFormPacchettoCfg(v => !v)}>➕ Nuovo pacchetto</button>
+            </div>
+
+            {showFormPacchettoCfg && (
+              <div className="admin-form-box" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+                <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Aggiungi Pacchetto</h3>
+                <form onSubmit={addPacchetto} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <input type="text" placeholder="Nome pacchetto" value={nuovoPacchetto.nome} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, nome: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <input type="number" step="any" placeholder="Importo (€)" value={nuovoPacchetto.importo} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, importo: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <textarea placeholder="Descrizione / testo offerta da stampare" value={nuovoPacchetto.descrizione} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, descrizione: e.target.value })} rows="3" style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', resize: 'vertical', fontFamily: 'inherit' }} />
+                  <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>Salva Pacchetto</button>
+                </form>
+              </div>
+            )}
           </div>
         </div>
       )}

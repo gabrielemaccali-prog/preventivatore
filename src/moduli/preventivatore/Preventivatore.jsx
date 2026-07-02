@@ -32,6 +32,15 @@ function Preventivatore({ user }) {
   });
   const [nuovoExtra, setNuovoExtra] = useState({ nome: "", prezzo: "" });
 
+  // --- STATI LAYOUT CONFIGURATORE (sotto-schede, elenchi collassabili, form) ---
+  const [configTabAdmin, setConfigTabAdmin] = useState("sedi"); // sedi | gonfiabili | extra
+  const [showListaSedi, setShowListaSedi] = useState(true);
+  const [showListaGonfiabili, setShowListaGonfiabili] = useState(true);
+  const [showListaExtra, setShowListaExtra] = useState(true);
+  const [showFormSede, setShowFormSede] = useState(false);
+  const [showFormGonfiabile, setShowFormGonfiabile] = useState(false);
+  const [showFormExtra, setShowFormExtra] = useState(false);
+
   // --- STATI DI MODIFICA IN LINEA ---
   const [idSedeInModifica, setIdSedeInModifica] = useState(null);
   const [datiSedeInModifica, setDatiSedeInModifica] = useState({ nome: "", lat: "", lon: "", costoKm: "" });
@@ -109,7 +118,11 @@ function Preventivatore({ user }) {
         nomeReferente: p.nomeReferente,
         emailReferente: p.emailReferente,
         costoVivoTotale: parseFloat(p.costoVivoTotale),
-        kmAndata: parseFloat(p.kmAndata)
+        kmAndata: parseFloat(p.kmAndata),
+        unSoloTrasporto: p.unSoloTrasporto,
+        mostraComeOpzioni: p.mostraComeOpzioni,
+        mostraGiocoOfferta: p.mostraGiocoOfferta,
+        giocoOfferta: p.giocoOfferta
       }));
       setPreventiviSalvati(prevFormattati);
     }
@@ -171,7 +184,7 @@ function Preventivatore({ user }) {
       const costoKm = parseFloat(g.costoLogistica) || 0;
       soluzioni[g.nome] = {
         prodotto: gonfiabili.find(x => x.nome === g.nome) || { prezzo: 0 },
-        partenza: { nome: "—" },
+        partenza: { nome: g.sedePartenza || "—" },
         kmAndata: parseFloat(g.kmCalcolati) || 0,
         costoKmTotale: costoKm,
         costoBaseMoltiplicato: costoBase,
@@ -208,8 +221,29 @@ function Preventivatore({ user }) {
     setNomeRiferimento(p.nomeReferente || "");
     setIndirizzoEmail(p.emailReferente || "");
     setNotePreventivo(p.note || "");
-    setMostraComeOpzioni(false);
-    setMostraGiocoOfferta(false);
+    setUnSoloTrasporto(!!p.unSoloTrasporto);
+    setMostraComeOpzioni(!!p.mostraComeOpzioni);
+
+    // Ripristino del gioco in offerta dallo snapshot salvato
+    if (p.mostraGiocoOfferta && p.giocoOfferta) {
+      const go = p.giocoOfferta;
+      setMostraGiocoOfferta(true);
+      setGiocoOffertaSelezionato(go.nome || "");
+      setSoluzioneGiocoOfferta({
+        prodotto: gonfiabili.find(g => g.nome === go.nome) || { prezzo: 0 },
+        partenza: { nome: "BFM - Milano" },
+        kmAndata: go.kmAndata || 0,
+        costoKmTotale: go.costoLogistica || 0,
+        costoBaseMoltiplicato: go.costoBase || 0,
+        totaleOpzione: (go.costoBase || 0) + (go.costoLogistica || 0)
+      });
+      setVenditaGiocoOfferta({ prezzo: String(go.prezzo ?? ""), sconto: String(go.sconto ?? "0") });
+    } else {
+      setMostraGiocoOfferta(false);
+      setGiocoOffertaSelezionato("");
+      setSoluzioneGiocoOfferta(null);
+    }
+
     setIdPreventivo({ codice, dettagliLogistici: (typeof p.id === 'object' ? p.id.dettagliLogistici : null) });
     return codice;
   };
@@ -308,6 +342,7 @@ function Preventivatore({ user }) {
 
   // --- CALCOLO COSTO/LOGISTICA DEL GIOCO IN OFFERTA ---
   useEffect(() => {
+    if (modalitaModifica) return; // in modifica usiamo lo snapshot salvato del gioco offerta
     const calcolaGiocoOfferta = async () => {
       if (!mostraGiocoOfferta || !giocoOffertaSelezionato || !destinazione) {
         setSoluzioneGiocoOfferta(null);
@@ -467,6 +502,7 @@ function Preventivatore({ user }) {
       return {
         nome,
         quantita: quantitaGonfiabili[nome] || 1,
+        sedePartenza: sol?.partenza?.nome || "",
         costoNoleggio: sol?.costoBaseMoltiplicato || 0,
         costoLogistica: sol?.costoKmTotale || 0,
         kmCalcolati: sol?.kmAndata || 0,
@@ -493,6 +529,24 @@ function Preventivatore({ user }) {
     // Calcolo del kilometraggio totale andata per il database
     const totaleKmAndata = serviziSelezionati.reduce((acc, nome) => acc + (soluzioniMigliori[nome]?.kmAndata || 0), 0);
 
+    // Snapshot del gioco in offerta (se attivo)
+    let giocoOffertaSnap = null;
+    if (mostraGiocoOfferta && giocoOffertaSelezionato && soluzioneGiocoOfferta) {
+      const costoCalcolatoGO = arrotondaAllaDecina(soluzioneGiocoOfferta.totaleOpzione);
+      const vPrezzoGO = (venditaGiocoOfferta.prezzo !== undefined && venditaGiocoOfferta.prezzo !== "") ? parseFloat(venditaGiocoOfferta.prezzo) : costoCalcolatoGO;
+      const vScontoGO = parseFloat(venditaGiocoOfferta.sconto) || 0;
+      giocoOffertaSnap = {
+        nome: giocoOffertaSelezionato,
+        costoBase: soluzioneGiocoOfferta.costoBaseMoltiplicato || 0,
+        costoLogistica: soluzioneGiocoOfferta.costoKmTotale || 0,
+        kmAndata: soluzioneGiocoOfferta.kmAndata || 0,
+        costoVivo: costoCalcolatoGO,
+        prezzo: vPrezzoGO,
+        sconto: vScontoGO,
+        prezzoVendita: vPrezzoGO * (1 - vScontoGO / 100)
+      };
+    }
+
     // Il codice NON viene inviato: lo genera il database (anno corrente + progressivo).
     const nuovoPreventivoDB = {
       dataEmissione: new Date().toISOString(),
@@ -508,7 +562,11 @@ function Preventivatore({ user }) {
       emailReferente: indirizzoEmail,
       costoVivoTotale: totaleComplessivoCostoFlotta,
       kmAndata: totaleKmAndata, // Salvataggio kilometraggio
-      dettagliLogistici: idPreventivo.dettagliLogistici
+      dettagliLogistici: idPreventivo.dettagliLogistici,
+      unSoloTrasporto: unSoloTrasporto,
+      mostraComeOpzioni: mostraComeOpzioni,
+      mostraGiocoOfferta: mostraGiocoOfferta,
+      giocoOfferta: giocoOffertaSnap
     };
 
     let codiceFinale = idPreventivo.codice;
@@ -621,7 +679,7 @@ function Preventivatore({ user }) {
     if (!nuovaSede.nome || !nuovaSede.lat || !nuovaSede.lon) return alert("Compila tutti i campi");
     const newSede = { id: "loc_" + Date.now(), nome: nuovaSede.nome, lat: parseFloat(nuovaSede.lat), lon: parseFloat(nuovaSede.lon), costoKm: parseFloat(nuovaSede.costoKm) || COSTO_AL_KM };
     const { error } = await supabase.from('sedi').insert([newSede]);
-    if (!error) { setNuovaSede({ nome: "", lat: "", lon: "", costoKm: "" }); fetchData(); }
+    if (!error) { setNuovaSede({ nome: "", lat: "", lon: "", costoKm: "" }); setShowFormSede(false); fetchData(); }
   };
 
   const addGonfiabile = async (e) => {
@@ -635,7 +693,8 @@ function Preventivatore({ user }) {
     const { error } = await supabase.from('gonfiabili').insert([newG]);
     if (!error) { 
       setNuovoGonfiabile({ nome: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: "" });
-      fetchData(); 
+      setShowFormGonfiabile(false);
+      fetchData();
     }
   };
 
@@ -644,7 +703,7 @@ function Preventivatore({ user }) {
     if (!nuovoExtra.nome || !nuovoExtra.prezzo) return alert("Compila tutti i campi");
     const newE = { id: "e_" + Date.now(), nome: nuovoExtra.nome, prezzo: parseFloat(nuovoExtra.prezzo) };
     const { error } = await supabase.from('extras').insert([newE]);
-    if (!error) { setNuovoExtra({ nome: "", prezzo: "" }); fetchData(); }
+    if (!error) { setNuovoExtra({ nome: "", prezzo: "" }); setShowFormExtra(false); fetchData(); }
   };
 
   const salvaModificaSede = async () => {
@@ -737,21 +796,23 @@ function Preventivatore({ user }) {
       {currentView === "admin" && user.ruolo === "admin" && (
         <div className="schermata-admin no-print" style={{ padding: '20px', fontFamily: 'inherit' }}>
           <h2>Pannello di Controllo Risorse ed Infrastruttura</h2>
-          <hr style={{ border: 'none', borderTop: '1px solid #ddd', margin: '20px 0' }} />
-          
+
+          <div className="modulo-subnav" style={{ marginTop: '15px' }}>
+            <button className={`nav-btn ${configTabAdmin === 'sedi' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('sedi')}>📍 Sedi</button>
+            <button className={`nav-btn ${configTabAdmin === 'gonfiabili' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('gonfiabili')}>🎈 Gonfiabili</button>
+            <button className={`nav-btn ${configTabAdmin === 'extra' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('extra')}>⚙️ Extra</button>
+          </div>
+
           {/* 1. SEZIONE SEDE / MAGAZZINO */}
-          <div className="admin-grid-sezione" style={{ marginBottom: '25px' }}>
-            <div className="admin-form-box" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>1. Aggiungi Sede / Magazzino</h3>
-              <form onSubmit={addSede} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <input type="text" placeholder="Nome Sede" value={nuovaSede.nome} onChange={(e) => setNuovaSede({...nuovaSede, nome: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <input type="number" step="any" placeholder="Latitudine" value={nuovaSede.lat} onChange={(e) => setNuovaSede({...nuovaSede, lat: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <input type="number" step="any" placeholder="Longitudine" value={nuovaSede.lon} onChange={(e) => setNuovaSede({...nuovaSede, lon: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <input type="number" step="any" placeholder="Costo €/km (es. 1.20)" value={nuovaSede.costoKm} onChange={(e) => setNuovaSede({...nuovaSede, costoKm: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem', marginTop: '5px' }}>Salva Sede</button>
-              </form>
+          {configTabAdmin === 'sedi' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0' }}>
+              <h3 style={{ margin: 0 }}>Sedi / Magazzini ({sedi.length})</h3>
+              <button className="nav-btn" style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem', background: '#e2e8f0', color: '#334155' }} onClick={() => setShowListaSedi(v => !v)}>{showListaSedi ? '▼ Nascondi elenco' : '▶ Mostra elenco'}</button>
             </div>
-            <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', overflowX: 'auto' }}>
+
+            {showListaSedi && (
+            <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -799,14 +860,38 @@ function Preventivatore({ user }) {
                 </tbody>
               </table>
             </div>
-          </div>
+            )}
 
-          <hr style={{ border: 'none', borderTop: '1px solid #e0e0e0', margin: '25px 0' }} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '18px 0 12px 0' }}>
+              <button className="btn-preventivo" style={{ width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' }} onClick={() => setShowFormSede(v => !v)}>➕ Nuova sede</button>
+            </div>
+
+            {showFormSede && (
+              <div className="admin-form-box" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+                <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Aggiungi Sede / Magazzino</h3>
+                <form onSubmit={addSede} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <input type="text" placeholder="Nome Sede" value={nuovaSede.nome} onChange={(e) => setNuovaSede({...nuovaSede, nome: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <input type="number" step="any" placeholder="Latitudine" value={nuovaSede.lat} onChange={(e) => setNuovaSede({...nuovaSede, lat: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <input type="number" step="any" placeholder="Longitudine" value={nuovaSede.lon} onChange={(e) => setNuovaSede({...nuovaSede, lon: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <input type="number" step="any" placeholder="Costo €/km (es. 1.20)" value={nuovaSede.costoKm} onChange={(e) => setNuovaSede({...nuovaSede, costoKm: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem', marginTop: '5px' }}>Salva Sede</button>
+                </form>
+              </div>
+            )}
+          </div>
+          )}
 
           {/* 2. SEZIONE GONFIABILI */}
-          <div className="admin-sezione-fullwidth" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div className="admin-form-box-top" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem' , color: '#0288d1' }}>2. Aggiungi Nuovo Gonfiabile</h3>
+          {configTabAdmin === 'gonfiabili' && (
+          <div className="admin-sezione-fullwidth" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <div style={{ order: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>Gonfiabili ({gonfiabili.length})</h3>
+              <button className="nav-btn" style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem', background: '#e2e8f0', color: '#334155' }} onClick={() => setShowListaGonfiabili(v => !v)}>{showListaGonfiabili ? '▼ Nascondi elenco' : '▶ Mostra elenco'}</button>
+            </div>
+
+            {showFormGonfiabile && (
+            <div className="admin-form-box-top" style={{ order: 3, background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem' , color: '#0288d1' }}>Aggiungi Nuovo Gonfiabile</h3>
               <form onSubmit={addGonfiabile}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '15px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'end' }}>
@@ -839,8 +924,14 @@ function Preventivatore({ user }) {
                 <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>Salva Gonfiabile</button>
               </form>
             </div>
+            )}
 
-            <div className="admin-table-box-full" style={{ width: '100%', overflowX: 'auto', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
+            <div style={{ order: 2, display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn-preventivo" style={{ width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' }} onClick={() => setShowFormGonfiabile(v => !v)}>➕ Nuovo gonfiabile</button>
+            </div>
+
+            {showListaGonfiabili && (
+            <div className="admin-table-box-full" style={{ order: 1, width: '100%', overflowX: 'auto', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -923,21 +1014,20 @@ function Preventivatore({ user }) {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
-
-          <hr style={{ border: 'none', borderTop: '1px solid #e0e0e0', margin: '25px 0' }} />
+          )}
 
           {/* 3. SEZIONE SERVIZI EXTRA */}
-          <div className="admin-grid-sezione">
-            <div className="admin-form-box" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>3. Configura Servizio Extra</h3>
-              <form onSubmit={addExtra} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <input type="text" placeholder="Nome Servizio" value={nuovoExtra.nome} onChange={(e) => setNuovoExtra({...nuovoExtra, nome: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <input type="number" step="any" placeholder="Prezzo (€)" value={nuovoExtra.prezzo} onChange={(e) => setNuovoExtra({...nuovoExtra, prezzo: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem', marginTop: '5px' }}>Salva Extra</button>
-              </form>
+          {configTabAdmin === 'extra' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0' }}>
+              <h3 style={{ margin: 0 }}>Servizi Extra ({extras.length})</h3>
+              <button className="nav-btn" style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem', background: '#e2e8f0', color: '#334155' }} onClick={() => setShowListaExtra(v => !v)}>{showListaExtra ? '▼ Nascondi elenco' : '▶ Mostra elenco'}</button>
             </div>
-            <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', overflowX: 'auto' }}>
+
+            {showListaExtra && (
+            <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -977,7 +1067,24 @@ function Preventivatore({ user }) {
                 </tbody>
               </table>
             </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '18px 0 12px 0' }}>
+              <button className="btn-preventivo" style={{ width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' }} onClick={() => setShowFormExtra(v => !v)}>➕ Nuovo extra</button>
+            </div>
+
+            {showFormExtra && (
+              <div className="admin-form-box" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+                <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Configura Servizio Extra</h3>
+                <form onSubmit={addExtra} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <input type="text" placeholder="Nome Servizio" value={nuovoExtra.nome} onChange={(e) => setNuovoExtra({...nuovoExtra, nome: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <input type="number" step="any" placeholder="Prezzo (€)" value={nuovoExtra.prezzo} onChange={(e) => setNuovoExtra({...nuovoExtra, prezzo: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem', marginTop: '5px' }}>Salva Extra</button>
+                </form>
+              </div>
+            )}
           </div>
+          )}
         </div>
       )}
 
@@ -1381,26 +1488,23 @@ function Preventivatore({ user }) {
             <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '12px', width: '12%' }}>ID / Data</th>
-                  <th style={{ padding: '12px', width: '18%' }}>Destinazione e Contatti</th>
-                  <th style={{ padding: '12px', width: '25%' }}>Dettaglio Articoli</th>
-                  
-                  {/* 2. HEADER CAMBIATO IN DETTAGLIO COSTI VIVI */}
-                  <th style={{ padding: '12px', width: '20%' }}>Dettaglio Costi Vivi</th>
-                  
-                  <th style={{ padding: '12px', width: '12%' }}>Importo / Stato</th>
-                  <th style={{ padding: '12px', width: '13%', textAlign: 'center' }}>Azioni</th>
+                  <th style={{ padding: '12px', width: '16%' }}>ID / Data</th>
+                  <th style={{ padding: '12px', width: '30%' }}>Destinazione e Contatti</th>
+                  <th style={{ padding: '12px', width: '22%' }}>Totali</th>
+                  <th style={{ padding: '12px', width: '12%' }}>Flag</th>
+                  <th style={{ padding: '12px', width: '20%', textAlign: 'center' }}>Azioni</th>
                 </tr>
               </thead>
               <tbody>
                 {preventiviFiltrati.length === 0 ? (
-                  <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessun preventivo trovato con i filtri attuali.</td></tr>
+                  <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessun preventivo trovato con i filtri attuali.</td></tr>
                 ) : (
                   preventiviFiltrati.map((p, index) => (
                     <tr key={`${typeof p.id === 'object' ? p.id.codice : p.id}-${index}`} style={{ borderBottom: '1px solid #eee' }}>
                       <td style={{ padding: '12px' }}>
                         <strong>{typeof p.id === 'object' ? p.id.codice : p.id}</strong><br/>
-                        <span style={{ color: '#777', fontSize: '0.8rem' }}>{formattaDataIT(p.dataEmissione)}</span>
+                        <span style={{ color: '#777', fontSize: '0.8rem' }}>{formattaDataIT(p.dataEmissione)}</span><br/>
+                        <span className={`badge-stato ${(p.stato || "").toLowerCase()}`} style={{ marginTop: '6px' }}>{p.stato}</span>
                       </td>
                       <td style={{ padding: '12px', color: '#444' }}>
                         📍 {p.destinazione} <br/>
@@ -1408,51 +1512,30 @@ function Preventivatore({ user }) {
                         {p.nomeReferente && <span style={{ fontSize: '0.8rem', color: '#111' }}>👤 {p.nomeReferente}</span>}<br/>
                         {p.emailReferente && <span style={{ fontSize: '0.8rem', color: '#111' }}>📧 {p.emailReferente}</span>}
                       </td>
-                      <td style={{ padding: '12px', fontSize: '0.8rem' }}>
-                        <ul style={{ margin: 0, paddingLeft: '15px', color: '#555' }}>
-                          {p.gonfiabili && p.gonfiabili.map((g, i) => (
-                            <li key={i}><strong>{g.nome}</strong>{(g.quantita || 1) > 1 ? ` ×${g.quantita}` : ''} (Vendita: €{g.prezzoVendita.toFixed(2)})</li>
-                          ))}
-                          {p.extras && p.extras.map((e, i) => (
-                            <li key={`ex-${i}`}>⚙️ {e.nome} (Vendita: €{e.prezzoVendita.toFixed(2)})</li>
-                          ))}
-                        </ul>
-                      </td>
-                      
-                      {/* 2. ELENCO PUNTATO CON STESSO FORMATO PER I COSTI VIVI */}
-                      <td style={{ padding: '12px', fontSize: '0.8rem' }}>
-                        <ul style={{ margin: 0, paddingLeft: '15px', color: '#555' }}>
-                          {p.gonfiabili && p.gonfiabili.map((g, i) => (
-                            <li key={i} style={{ marginBottom: '4px' }}>
-                              <strong>{g.nome}</strong><br/>
-                              Costo: €{(g.costoNoleggio || 0).toFixed(2)} | Km andata: {(g.kmCalcolati || 0).toFixed(1)} km
-                            </li>
-                          ))}
-                          {p.extras && p.extras.map((e, i) => (
-                            <li key={`ex-${i}`} style={{ marginBottom: '4px' }}>
-                              ⚙️ <strong>{e.nome}</strong> (Costo vivo: €{(e.costo || 0).toFixed(2)})
-                            </li>
-                          ))}
-                        </ul>
-                        <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px dashed #ccc' }}>
-                          Totale Vivo: <strong>€{(p.costoVivoTotale || 0).toFixed(2)}</strong>
-                        </div>
+                      <td style={{ padding: '12px', fontSize: '0.9rem' }}>
+                        <div style={{ marginBottom: '4px' }}>Totale Costi: <strong style={{ color: '#c62828' }}>€{(p.costoVivoTotale || 0).toFixed(2)}</strong></div>
+                        <div>Totale Vendita: <strong style={{ color: '#2e7d32', fontSize: '1.05rem' }}>€{p.totaleVendita.toFixed(2)}</strong></div>
                       </td>
 
                       <td style={{ padding: '12px' }}>
-                        <strong style={{ fontSize: '1.05rem', color: '#111' }}>€{p.totaleVendita.toFixed(2)}</strong><br/>
-                        <span className={`badge-stato ${(p.stato || "").toLowerCase()}`}>{p.stato}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                          {p.mostraGiocoOfferta && <span style={{ fontSize: '0.72rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: '#ede9fe', color: '#6a1b9a' }}>🎁 Offerta</span>}
+                          {p.mostraComeOpzioni && <span style={{ fontSize: '0.72rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: '#e3f2fd', color: '#1565c0' }}>📑 Opzioni</span>}
+                          {!p.mostraGiocoOfferta && !p.mostraComeOpzioni && <span style={{ fontSize: '0.8rem', color: '#999' }}>—</span>}
+                        </div>
                       </td>
                       <td style={{ padding: '12px', textAlign: 'center' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center' }}>
-                          <button className="btn-modifica-inline" style={{ width: '100%' }} onClick={() => modificaPreventivo(p)}>✏️ Modifica</button>
+                        <div style={{ display: 'flex', flexDirection: 'row', gap: '6px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+                          <button className="btn-modifica-inline" title="Apri" style={{ padding: '6px 9px' }} onClick={() => modificaPreventivo(p)}>📂</button>
                           {p.stato === "Registrato" && (
-                            <button className="btn-conferma" onClick={() => cambiaStatoPreventivo(typeof p.id === 'object' ? p.id.codice : p.id, "Confermato")}>✔️ Conferma</button>
+                            <button className="btn-conferma" title="Conferma" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPreventivo(typeof p.id === 'object' ? p.id.codice : p.id, "Confermato")}>✔️</button>
                           )}
                           {p.stato === "Confermato" && (
-                            <button className="btn-ripristina" onClick={() => cambiaStatoPreventivo(typeof p.id === 'object' ? p.id.codice : p.id, "Registrato")}>↩️ Riporta Registrato</button>
+                            <button className="btn-ripristina" title="Riporta a Registrato" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPreventivo(typeof p.id === 'object' ? p.id.codice : p.id, "Registrato")}>↩️</button>
                           )}
-                          <button className="btn-elimina-prev" onClick={() => eliminaPreventivo(typeof p.id === 'object' ? p.id.codice : p.id)}>🗑️ Elimina</button>
+                          {user.ruolo === "admin" && (
+                            <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => eliminaPreventivo(typeof p.id === 'object' ? p.id.codice : p.id)}>🗑️</button>
+                          )}
                         </div>
                       </td>
                     </tr>
