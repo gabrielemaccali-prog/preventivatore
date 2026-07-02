@@ -110,6 +110,38 @@ body {
 .sidebar-voce.active { background: #2563eb; color: #fff; }
 .sidebar-icona { margin-right: 8px; }
 
+/* --- FORM COMPATTO PRENOTAZIONI --- */
+.form-pren .sezione { margin-bottom: 22px; }
+.form-pren h2 { font-size: 1rem; margin: 0 0 10px 0; }
+.form-pren .date-grid,
+.form-pren .pren-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.form-pren input:not([type="checkbox"]):not([type="radio"]),
+.form-pren select {
+  height: 38px; padding: 6px 10px; font-size: 0.9rem;
+  border: 1px solid #cbd5e1; border-radius: 6px;
+  box-sizing: border-box; width: 100%; margin: 0;
+}
+.form-pren input[type="checkbox"],
+.form-pren input[type="radio"] { width: auto; height: auto; margin: 0; }
+.form-pren .chip-operatore {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 20px; cursor: pointer; font-size: 0.85rem;
+  border: 1px solid #cbd5e1; background: #fff; color: #334155; user-select: none;
+}
+.form-pren .chip-operatore.sel { border-color: #10b981; background: #ecfdf5; color: #065f46; font-weight: 600; }
+.form-pren textarea {
+  padding: 8px 10px; font-size: 0.9rem; border: 1px solid #cbd5e1;
+  border-radius: 6px; box-sizing: border-box; width: 100%; resize: vertical;
+}
+.form-pren .span2 { grid-column: span 2; }
+.form-pren .full { grid-column: 1 / -1; }
+.form-pren .valore { padding: 8px 0; font-size: 0.9rem; color: #334155; }
+
 /* --- SOTTO-NAVIGAZIONE INTERNA AL MODULO --- */
 .modulo-subnav {
   display: flex; gap: 10px; flex-wrap: wrap;
@@ -456,6 +488,11 @@ td { padding: 8px 12px; vertical-align: middle; }
   background-color: #bbf7d0;
   color: #166534;
 }
+
+/* Stati prenotazioni */
+.badge-stato.forse { background-color: #fed7aa; color: #9a3412; }
+.badge-stato.conf { background-color: #bbf7d0; color: #166534; }
+.badge-stato.chiusa { background-color: #e2e8f0; color: #475569; }
 
 /* Stati voucher */
 .badge-stato.incompleto { background-color: #fed7aa; color: #9a3412; }
