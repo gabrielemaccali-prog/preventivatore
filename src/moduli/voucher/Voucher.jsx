@@ -600,14 +600,16 @@ function Voucher({ user }) {
                       <span className={`badge-stato ${v.stato}`}>{v.stato}</span>
                     </td>
                     <td style={{ padding: '12px', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center' }}>
-                        <button className="btn-modifica-inline" style={{ width: '100%' }} onClick={() => caricaVoucherInForm(v)}>✏️ Modifica</button>
+                      <div style={{ display: 'flex', flexDirection: 'row', gap: '6px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+                        <button className="btn-modifica-inline" title="Apri" style={{ padding: '6px 9px' }} onClick={() => caricaVoucherInForm(v)}>📂</button>
                         {v.stato !== "usato" ? (
-                          <button className="btn-conferma" onClick={() => cambiaStatoVoucher(v, "usato")}>✔️ Segna usato</button>
+                          <button className="btn-conferma" title="Segna usato" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoVoucher(v, "usato")}>✔️</button>
                         ) : (
-                          <button className="btn-ripristina" onClick={() => cambiaStatoVoucher(v, "auto")}>↩️ Riattiva</button>
+                          <button className="btn-ripristina" title="Riattiva" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoVoucher(v, "auto")}>↩️</button>
                         )}
-                        <button className="btn-elimina-prev" onClick={() => eliminaVoucher(v.codice)}>🗑️ Elimina</button>
+                        {user.ruolo === "admin" && (
+                          <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => eliminaVoucher(v.codice)}>🗑️</button>
+                        )}
                       </div>
                     </td>
                   </tr>
