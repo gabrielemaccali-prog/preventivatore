@@ -16,7 +16,7 @@ const CAMPO_VUOTO = { nome: "", indirizzo: "", cap: "", citta: "", provincia: ""
 const PREN_VUOTA = {
   data: "", pacchettoId: "", oraInizio: "", oraFine: "",
   nominativo: "", email: "", telefono: "",
-  campoId: "", locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
+  campoId: "", campoPrenotato: false, locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
   operatoriIds: [], sconto: "0", prezzoManuale: "",
   tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [],
   fattTipo: "privato",
@@ -205,7 +205,7 @@ function Prenotazioni({ user }) {
       data: p.data || "", pacchettoId: p.pacchettoId || "",
       oraInizio: p.oraInizio || "", oraFine: p.oraFine || "",
       nominativo: p.nominativo || "", email: p.email || "", telefono: p.telefono || "",
-      campoId: p.campoId || "",
+      campoId: p.campoId || "", campoPrenotato: !!p.campoPrenotato,
       locationIndirizzo: p.locationIndirizzo || "", locationCap: p.locationCap || "", locationCitta: p.locationCitta || "", locationProvincia: p.locationProvincia || "",
       operatoriIds: (p.operatori || []).map(o => o.id),
       sconto: String(p.sconto ?? "0"), prezzoManuale,
@@ -221,6 +221,12 @@ function Prenotazioni({ user }) {
 
   const cambiaStatoPren = async (id, nuovoStato) => {
     await supabase.from('prenotazioni').update({ stato: nuovoStato }).eq('id', id);
+    fetchTutto();
+  };
+  const toggleCampoPrenotato = async (p) => {
+    const nuovo = !p.campoPrenotato;
+    await supabase.from('prenotazioni').update({ campoPrenotato: nuovo }).eq('id', p.id);
+    setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, campoPrenotato: nuovo } : prev);
     fetchTutto();
   };
   const eliminaPrenotazione = async (id) => {
@@ -318,7 +324,7 @@ function Prenotazioni({ user }) {
       data: f.data, pacchettoId: f.pacchettoId, pacchettoNome: pac.nome || "",
       durataOre, oraInizio: f.oraInizio, oraFine: durataFissa ? null : f.oraFine,
       nominativo: f.nominativo, email: f.email, telefono: f.telefono,
-      campoId: campo ? campo.id : null, campoNome: campo ? campo.nome : null,
+      campoId: campo ? campo.id : null, campoNome: campo ? campo.nome : null, campoPrenotato: f.campoPrenotato,
       locationIndirizzo: campo ? null : f.locationIndirizzo, locationCap: campo ? null : f.locationCap,
       locationCitta: campo ? null : f.locationCitta, locationProvincia: campo ? null : f.locationProvincia,
       operatori: operatoriSnap, sconto,
@@ -489,6 +495,7 @@ function Prenotazioni({ user }) {
         <button className={`nav-btn ${currentView === 'nuova' ? 'active' : ''}`} onClick={() => setCurrentView("nuova")}>➕ Nuova Prenotazione</button>
         <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}>🗂️ Storico</button>
         <button className={`nav-btn ${currentView === 'calendario' ? 'active' : ''}`} onClick={() => setCurrentView("calendario")}>📅 Calendario</button>
+        <button className={`nav-btn ${currentView === 'costi' ? 'active' : ''}`} onClick={() => setCurrentView("costi")}>💰 Costi/Ricavi</button>
       </nav>
 
       {/* ===================== CONFIGURATORE ===================== */}
@@ -866,6 +873,10 @@ function Prenotazioni({ user }) {
                   </select>
                 </label>
 
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, marginBottom: '12px', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={formPren.campoPrenotato} onChange={(e) => setF({ campoPrenotato: e.target.checked })} /> 🔒 Campo prenotato
+                </label>
+
                 {campoSel && pac?.prevedeRinfresco && (
                   <div className="pren-row" style={{ marginBottom: '12px' }}>
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Rinfresco *
@@ -1145,11 +1156,20 @@ function Prenotazioni({ user }) {
 
         const Chip = ({ p }) => {
           const c = coloreStato(p.stato);
-          const centroCosto = campi.find(x => x.id === p.campoId)?.centroCosto || '';
-          const titolo = [p.stato, p.nominativo, centroCosto].filter(Boolean).join(' · ');
+          const campoTxt = p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—';
+          const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
+          const hasOp = p.operatori && p.operatori.length > 0;
           return (
-            <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${titolo}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.72rem', padding: '2px 5px', borderRadius: '4px', marginBottom: '3px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-              {p.oraInizio ? <strong>{p.oraInizio} </strong> : ''}{titolo}
+            <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${p.stato} · ${p.nominativo} · ${campoTxt} · ${p.pacchettoNome || ''} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', marginBottom: '3px', lineHeight: 1.25 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4px' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.oraInizio ? <strong>{p.oraInizio} </strong> : ''}{p.nominativo}</span>
+                <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ color: pagColore }}>●</span>{' '}
+                  <span title={hasOp ? 'operatori assegnati' : 'nessun operatore'}>{hasOp ? '🧑‍🔧' : '🚫'}</span>{' '}
+                  <span title={p.campoPrenotato ? 'campo prenotato' : 'campo da prenotare'}>{p.campoPrenotato ? '🔒' : '🔓'}</span>
+                </span>
+              </div>
+              <div style={{ fontSize: '0.66rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{p.stato} · 🏟️{campoTxt} · 🎮{p.pacchettoNome || '—'}</div>
             </div>
           );
         };
@@ -1260,6 +1280,7 @@ function Prenotazioni({ user }) {
                                     {p.operatori && p.operatori.length > 0 && <div style={{ fontSize: '0.78rem' }}>🧑‍🔧 {p.operatori.map(o => o.nome).join(', ')}</div>}
                                     {p.telefono && <div style={{ fontSize: '0.78rem' }}>📞 {p.telefono}</div>}
                                     {p.note && <div style={{ fontSize: '0.76rem', fontStyle: 'italic' }}>📝 {p.note}</div>}
+                                    <div onClick={(e) => { e.stopPropagation(); toggleCampoPrenotato(p); }} title="Clic per cambiare" style={{ fontSize: '0.78rem', cursor: 'pointer', fontWeight: 'bold', color: p.campoPrenotato ? '#166534' : '#9a3412' }}>{p.campoPrenotato ? '🔒 Campo prenotato' : '🔓 Campo da prenotare'}</div>
                                     <div style={{ fontSize: '0.78rem' }}>💶 €{((p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0)).toFixed(2)} / €{(parseFloat(p.prezzoVendita) || 0).toFixed(2)} · {p.statoPagamento || 'in attesa'}</div>
                                   </div>
                                 );
@@ -1283,11 +1304,16 @@ function Prenotazioni({ user }) {
                     <span className={`badge-stato ${(prenSelezionata.stato || '').toLowerCase()}`}>{prenSelezionata.stato}</span>
                   </div>
                   <div style={{ marginTop: '12px', fontSize: '0.9rem', lineHeight: 1.6 }}>
-                    📅 {prenSelezionata.data} · {prenSelezionata.oraInizio}{prenSelezionata.oraFine ? `–${prenSelezionata.oraFine}` : ''}<br />
-                    👤 {prenSelezionata.nominativo} {prenSelezionata.telefono ? `· 📞 ${prenSelezionata.telefono}` : ''}<br />
+                    📅 {prenSelezionata.data} · {prenSelezionata.oraInizio}{prenSelezionata.oraFine ? `–${prenSelezionata.oraFine}` : ''}{prenSelezionata.durataOre ? ` (${prenSelezionata.durataOre}h)` : ''}<br />
+                    👤 <strong>{prenSelezionata.nominativo}</strong>{prenSelezionata.telefono ? ` · 📞 ${prenSelezionata.telefono}` : ''}{prenSelezionata.email ? ` · ✉️ ${prenSelezionata.email}` : ''}<br />
                     📦 {prenSelezionata.pacchettoNome || '—'}<br />
                     🏟️ {prenSelezionata.campoNome || [prenSelezionata.locationIndirizzo, prenSelezionata.locationCitta].filter(Boolean).join(', ') || '—'}<br />
-                    💶 €{(parseFloat(prenSelezionata.prezzoVendita) || 0).toFixed(2)}
+                    {prenSelezionata.operatori && prenSelezionata.operatori.length > 0 && <>🧑‍🔧 {prenSelezionata.operatori.map(o => o.nome).join(', ')}<br /></>}
+                    {prenSelezionata.tipoRinfresco && <>🍽️ Rinfresco: {prenSelezionata.tipoRinfresco}{prenSelezionata.numeroPartecipanti ? ` · ${prenSelezionata.numeroPartecipanti} pers` : ''}<br /></>}
+                    {prenSelezionata.etaMedia && <>🎂 Età media: {prenSelezionata.etaMedia}<br /></>}
+                    {prenSelezionata.note && <>📝 <em>{prenSelezionata.note}</em><br /></>}
+                    💶 Pagato €{((prenSelezionata.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0)).toFixed(2)} / €{(parseFloat(prenSelezionata.prezzoVendita) || 0).toFixed(2)} · <strong>{prenSelezionata.statoPagamento || 'in attesa'}</strong>
+                    <div onClick={() => toggleCampoPrenotato(prenSelezionata)} title="Clic per cambiare" style={{ marginTop: '8px', cursor: 'pointer', fontWeight: 'bold', color: prenSelezionata.campoPrenotato ? '#166534' : '#9a3412' }}>{prenSelezionata.campoPrenotato ? '🔒 Campo prenotato' : '🔓 Campo da prenotare'} <span style={{ fontSize: '0.75rem', color: '#777', fontWeight: 'normal' }}>(clic per cambiare)</span></div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginTop: '18px', justifyContent: 'center' }}>
                     <button className="btn-modifica-inline" title="Apri" style={{ padding: '8px 12px' }} onClick={() => { caricaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>📂</button>
@@ -1299,6 +1325,73 @@ function Prenotazioni({ user }) {
                 </div>
               </div>
             )}
+          </div>
+        );
+      })()}
+
+      {/* ===================== COSTI / RICAVI (senza IVA) ===================== */}
+      {currentView === "costi" && (() => {
+        const nettoRicavo = (p) => p.prezzoVenditaNetto != null ? parseFloat(p.prezzoVenditaNetto) : (parseFloat(p.prezzoVendita) || 0) / 1.22;
+        const nettoCampo = (p) => p.costoCampoNetto != null ? parseFloat(p.costoCampoNetto) : (parseFloat(p.costoCampo) || 0) / 1.22;
+        const nettoRinf = (p) => p.costoRinfrescoNetto != null ? parseFloat(p.costoRinfrescoNetto) : (parseFloat(p.costoRinfresco) || 0) / 1.22;
+        const righe = prenotazioniFiltrate;
+        const tot = righe.reduce((a, p) => {
+          const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p);
+          return { ricavo: a.ricavo + r, costo: a.costo + cc + cr, margine: a.margine + (r - cc - cr) };
+        }, { ricavo: 0, costo: 0, margine: 0 });
+        return (
+          <div className="schermata-storico no-print">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <h2 style={{ margin: 0 }}>💰 Costi / Ricavi <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(valori senza IVA)</span></h2>
+              <button onClick={esportaExcelPren} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
+            </div>
+            <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
+              <div className="filtro-group" style={{ flex: '1 1 160px' }}><label>Data:</label><input type="date" value={filtroPrenData} onChange={(e) => setFiltroPrenData(e.target.value)} /></div>
+              <div className="filtro-group" style={{ flex: '1 1 160px' }}><label>Stato:</label><select value={filtroPrenStato} onChange={(e) => setFiltroPrenStato(e.target.value)}><option value="">Tutti</option><option value="FORSE">FORSE</option><option value="CONF">CONF</option></select></div>
+              <div className="filtro-group" style={{ flex: '1 1 180px' }}><label>Nominativo:</label><input type="text" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} /></div>
+            </div>
+
+            <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+              <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+                <thead>
+                  <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                    <th style={{ padding: '10px' }}>Codice / Data</th>
+                    <th style={{ padding: '10px' }}>Nominativo</th>
+                    <th style={{ padding: '10px' }}>Stato</th>
+                    <th style={{ padding: '10px', textAlign: 'right' }}>Ricavo</th>
+                    <th style={{ padding: '10px', textAlign: 'right' }}>Costo campo</th>
+                    <th style={{ padding: '10px', textAlign: 'right' }}>Costo rinfresco</th>
+                    <th style={{ padding: '10px', textAlign: 'right' }}>Margine</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {righe.length === 0 ? (
+                    <tr><td colSpan="7" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessuna partita.</td></tr>
+                  ) : righe.map(p => {
+                    const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), m = r - cc - cr;
+                    return (
+                      <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '10px' }}><strong>{p.id}</strong><br /><span style={{ color: '#777', fontSize: '0.8rem' }}>{p.data}</span></td>
+                        <td style={{ padding: '10px' }}>{p.nominativo}</td>
+                        <td style={{ padding: '10px' }}><span className={`badge-stato ${(p.stato || '').toLowerCase()}`}>{p.stato}</span></td>
+                        <td style={{ padding: '10px', textAlign: 'right' }}>€{r.toFixed(2)}</td>
+                        <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cc.toFixed(2)}</td>
+                        <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cr.toFixed(2)}</td>
+                        <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: m >= 0 ? '#2e7d32' : '#c62828' }}>€{m.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
+                    <td style={{ padding: '10px' }} colSpan="3">TOTALE ({righe.length})</td>
+                    <td style={{ padding: '10px', textAlign: 'right' }}>€{tot.ricavo.toFixed(2)}</td>
+                    <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }} colSpan="2">€{tot.costo.toFixed(2)}</td>
+                    <td style={{ padding: '10px', textAlign: 'right', color: tot.margine >= 0 ? '#2e7d32' : '#c62828' }}>€{tot.margine.toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </div>
         );
       })()}
