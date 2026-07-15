@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import html2pdf from 'html2pdf.js';
 import { supabase } from '../../lib/supabaseClient';
+import { puoVedere } from '../../lib/permessi';
 import { formattaDataIT, formattaIndirizzoPulito } from '../../lib/utils';
 
 const FORM_VUOTO = {
@@ -63,7 +64,8 @@ const dataValidita = (dataEmissione) => {
 };
 
 function Voucher({ user }) {
-  const [currentView, setCurrentView] = useState("nuovo"); // config | nuovo | storico
+  const primaSchedaVoucher = ['nuovo', 'config', 'storico'].find(s => puoVedere(user, 'voucher', s)) || 'nuovo';
+  const [currentView, setCurrentView] = useState(primaSchedaVoucher); // config | nuovo | storico
 
   // --- DATI ---
   const [pacchetti, setPacchetti] = useState([]);
@@ -344,15 +346,19 @@ function Voucher({ user }) {
   return (
     <>
       <nav className="modulo-subnav no-print">
-        {user.ruolo === "admin" && (
+        {puoVedere(user, 'voucher', 'config') && (
           <button className={`nav-btn ${currentView === 'config' ? 'active' : ''}`} onClick={() => setCurrentView("config")}>⚙️ Configuratore Pacchetti</button>
         )}
-        <button className={`nav-btn ${currentView === 'nuovo' ? 'active' : ''}`} onClick={() => setCurrentView("nuovo")}>🎟️ Nuovo Voucher</button>
-        <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}>🗂️ Storico Voucher</button>
+        {puoVedere(user, 'voucher', 'nuovo') && (
+          <button className={`nav-btn ${currentView === 'nuovo' ? 'active' : ''}`} onClick={() => setCurrentView("nuovo")}>🎟️ Nuovo Voucher</button>
+        )}
+        {puoVedere(user, 'voucher', 'storico') && (
+          <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}>🗂️ Storico Voucher</button>
+        )}
       </nav>
 
       {/* ===================== CONFIGURATORE PACCHETTI ===================== */}
-      {currentView === "config" && user.ruolo === "admin" && (
+      {currentView === "config" && puoVedere(user, 'voucher', 'config') && (
         <div className="schermata-admin no-print" style={{ padding: '20px' }}>
           <h2>Configuratore Pacchetti Gioco</h2>
           <p className="descrizione-pagina">Definisci i pacchetti: importo e descrizione (testo che apparirà sul voucher).</p>
@@ -430,7 +436,7 @@ function Voucher({ user }) {
       )}
 
       {/* ===================== NUOVO / MODIFICA VOUCHER ===================== */}
-      {currentView === "nuovo" && (
+      {currentView === "nuovo" && puoVedere(user, 'voucher', 'nuovo') && (
         <div className="schermata-inserimento no-print">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <h2 style={{ margin: 0 }}>{codiceInModifica ? `Modifica Voucher ${codiceInModifica}` : "Nuovo Voucher"}</h2>
@@ -542,7 +548,7 @@ function Voucher({ user }) {
       )}
 
       {/* ===================== STORICO VOUCHER ===================== */}
-      {currentView === "storico" && (
+      {currentView === "storico" && puoVedere(user, 'voucher', 'storico') && (
         <div className="schermata-storico no-print">
           <h2 style={{ margin: 0 }}>🗂️ Storico Voucher</h2>
           <p className="descrizione-pagina">Consulta, completa, modifica, ristampa o elimina i voucher emessi.</p>

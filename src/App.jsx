@@ -1,22 +1,12 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import './App.css'
 import { supabase } from './lib/supabaseClient';
 import Preventivatore from './moduli/preventivatore/Preventivatore';
 import Voucher from './moduli/voucher/Voucher';
 import Prenotazioni from './moduli/prenotazioni/Prenotazioni';
-
-// I moduli sperimentali sono visibili solo in sviluppo locale (non nella build online),
-// a meno che non si imposti VITE_SPERIMENTALE=true nell'ambiente.
-const MODULI_SPERIMENTALI = import.meta.env.DEV || import.meta.env.VITE_SPERIMENTALE === 'true';
-
-// --- ELENCO DEI MODULI DISPONIBILI ---
-const TUTTI_I_MODULI = [
-  { id: 'preventivatore', label: 'Preventivatore', icon: '🎈' },
-  { id: 'voucher', label: 'Voucher', icon: '🎟️' },
-  { id: 'prenotazioni', label: 'Prenotazioni', icon: '📅', sperimentale: true },
-];
-
-const MODULI = TUTTI_I_MODULI.filter(m => !m.sperimentale || MODULI_SPERIMENTALI);
+import CostiRicavi from './moduli/costiricavi/CostiRicavi';
+import Impostazioni from './moduli/impostazioni/Impostazioni';
+import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
 
 function App() {
   // --- AUTENTICAZIONE ---
@@ -27,6 +17,27 @@ function App() {
   // --- NAVIGAZIONE TRA MODULI ---
   const [currentModule, setCurrentModule] = useState("preventivatore");
   const [sidebarAperta, setSidebarAperta] = useState(false);
+
+  // --- CONFIGURAZIONE MODULI (flag sperimentale, badge SP in sidebar) ---
+  const [moduliConfig, setModuliConfig] = useState({});
+
+  const fetchModuliConfig = useCallback(async () => {
+    const { data } = await supabase.from('moduli_config').select('*');
+    const mappa = {};
+    (data || []).forEach(r => { mappa[r.modulo_id] = r.sperimentale; });
+    setModuliConfig(mappa);
+  }, []);
+
+  const fetchPermessiRuolo = useCallback(async (ruolo) => {
+    const { data } = await supabase.from('ruoli').select('*').eq('nome', ruolo).maybeSingle();
+    return data?.permessi || {};
+  }, []);
+
+  const refreshPermessiUtenteCorrente = useCallback(async () => {
+    if (!user) return;
+    const permessi = await fetchPermessiRuolo(user.ruolo);
+    setUser(u => u ? { ...u, permessi } : u);
+  }, [user, fetchPermessiRuolo]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -39,7 +50,9 @@ function App() {
         .maybeSingle();
 
       if (data) {
-        setUser({ username: data.username, ruolo: data.ruolo });
+        const permessi = await fetchPermessiRuolo(data.ruolo);
+        setUser({ username: data.username, ruolo: data.ruolo, permessi });
+        fetchModuliConfig();
       } else {
         alert("Credenziali errate o utente non trovato!");
       }
@@ -78,7 +91,12 @@ function App() {
     );
   }
 
-  const moduloCorrente = MODULI.find(m => m.id === currentModule);
+  const moduliVisibili = MODULI_REGISTRY.filter(m => moduloVisibile(user, m.id));
+  const isAdmin = user.ruolo === "admin";
+  const IMPOSTAZIONI_VOCE = { id: 'impostazioni', label: 'Impostazioni', icon: '🛠️' };
+  const moduloCorrente = currentModule === 'impostazioni'
+    ? IMPOSTAZIONI_VOCE
+    : MODULI_REGISTRY.find(m => m.id === currentModule);
 
   return (
     <div className="app-container">
@@ -90,15 +108,27 @@ function App() {
           <button className="sidebar-chiudi" onClick={() => setSidebarAperta(false)}>✕</button>
         </div>
         <nav className="sidebar-nav">
-          {MODULI.map(m => (
+          {moduliVisibili.map(m => (
             <button
               key={m.id}
               className={`sidebar-voce ${currentModule === m.id ? 'active' : ''}`}
               onClick={() => cambiaModulo(m.id)}
             >
               <span className="sidebar-icona">{m.icon}</span> {m.label}
+              {moduliConfig[m.id] && <span className="badge-sp">SP</span>}
             </button>
           ))}
+          {isAdmin && (
+            <>
+              <div className="sidebar-separatore"></div>
+              <button
+                className={`sidebar-voce ${currentModule === 'impostazioni' ? 'active' : ''}`}
+                onClick={() => cambiaModulo('impostazioni')}
+              >
+                <span className="sidebar-icona">{IMPOSTAZIONI_VOCE.icon}</span> {IMPOSTAZIONI_VOCE.label}
+              </button>
+            </>
+          )}
         </nav>
       </aside>
 
@@ -122,7 +152,18 @@ function App() {
 
       {currentModule === "voucher" && <Voucher user={user} />}
 
-      {currentModule === "prenotazioni" && MODULI_SPERIMENTALI && <Prenotazioni user={user} />}
+      {currentModule === "prenotazioni" && <Prenotazioni user={user} />}
+
+      {currentModule === "costiricavi" && <CostiRicavi user={user} />}
+
+      {currentModule === "impostazioni" && isAdmin && (
+        <Impostazioni
+          user={user}
+          moduliConfig={moduliConfig}
+          onModuliConfigChange={fetchModuliConfig}
+          onRuoliChange={refreshPermessiUtenteCorrente}
+        />
+      )}
     </div>
   )
 }

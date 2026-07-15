@@ -3,17 +3,19 @@ import html2pdf from 'html2pdf.js';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabaseClient';
 import { COSTO_AL_KM, MOLTIPLICATORE_TARGET } from '../../lib/costanti';
+import { puoVedere } from '../../lib/permessi';
 import {
   formattaDataIT,
   calcolaGiorni,
   arrotondaAllaDecina,
   moltiplicatoreTargetPer,
+  isPartenzaBFMMilano,
   formattaIndirizzoPulito
 } from '../../lib/utils';
 
 function Preventivatore({ user }) {
   // --- NAVIGAZIONE INTERNA AL MODULO ---
-  const [currentView, setCurrentView] = useState(user?.ruolo === "admin" ? "admin" : "calculator");
+  const [currentView, setCurrentView] = useState(puoVedere(user, 'preventivatore', 'admin') ? "admin" : "calculator");
 
   // --- STATI DEI DATI ---
   const [sedi, setSedi] = useState([]);
@@ -33,7 +35,8 @@ function Preventivatore({ user }) {
   const [nuovoExtra, setNuovoExtra] = useState({ nome: "", prezzo: "" });
 
   // --- STATI LAYOUT CONFIGURATORE (sotto-schede, elenchi collassabili, form) ---
-  const [configTabAdmin, setConfigTabAdmin] = useState("sedi"); // sedi | gonfiabili | extra
+  const primaSottoschedaAdmin = ['sedi', 'gonfiabili', 'extra'].find(s => puoVedere(user, 'preventivatore', 'admin', s)) || 'sedi';
+  const [configTabAdmin, setConfigTabAdmin] = useState(primaSottoschedaAdmin); // sedi | gonfiabili | extra
   const [showListaSedi, setShowListaSedi] = useState(true);
   const [showListaGonfiabili, setShowListaGonfiabili] = useState(true);
   const [showListaExtra, setShowListaExtra] = useState(true);
@@ -434,10 +437,12 @@ function Preventivatore({ user }) {
   };
 
   // --- CALCOLI TOTALI E ARROTONDAMENTI ---
+  // I gonfiabili con partenza "BFM - Milano" hanno un costo fittizio: concorre al calcolo del prezzo di
+  // vendita (vedi moltiplicatoreTargetPer) ma non deve comparire nel totale costi riportato (resta a zero).
   let totaleComplessivoCostiBase = 0;
   serviziSelezionati.forEach(nome => {
     const sol = soluzioniMigliori[nome];
-    if (sol) totaleComplessivoCostiBase += arrotondaAllaDecina(sol.totaleOpzione);
+    if (sol && !isPartenzaBFMMilano(sol.partenza)) totaleComplessivoCostiBase += arrotondaAllaDecina(sol.totaleOpzione);
   });
   
   const costoExtraBase = extras.filter(e => extraSelezionati.includes(e.id)).reduce((acc, curr) => acc + arrotondaAllaDecina(curr.prezzo), 0);
@@ -776,35 +781,39 @@ function Preventivatore({ user }) {
       <style>{mobileStyles}</style>
 
       <nav className="modulo-subnav no-print">
-        {/* Mostrato solo per Admin */}
-        {user.ruolo === "admin" && (
+        {puoVedere(user, 'preventivatore', 'admin') && (
           <button className={`nav-btn ${currentView === 'admin' ? 'active' : ''}`} onClick={() => setCurrentView("admin")}>⚙️ Configurazione</button>
         )}
-        {/* Mostrato per tutti i ruoli connessi */}
-        <button className={`nav-btn ${currentView === 'calculator' ? 'active' : ''}`} onClick={() => setCurrentView("calculator")}>📋 Preventivatore</button>
-
-        {/* Mostrati per Admin e Superutente */}
-        {(user.ruolo === "admin" || user.ruolo === "superutente") && (
+        {puoVedere(user, 'preventivatore', 'calculator') && (
+          <button className={`nav-btn ${currentView === 'calculator' ? 'active' : ''}`} onClick={() => setCurrentView("calculator")}>📋 Preventivatore</button>
+        )}
+        {puoVedere(user, 'preventivatore', 'sales') && (
           <button className={`nav-btn ${currentView === 'sales' ? 'active' : ''}`} onClick={() => setCurrentView("sales")}>💰 Vendita</button>
         )}
-        {(user.ruolo === "admin" || user.ruolo === "superutente") && (
+        {puoVedere(user, 'preventivatore', 'storico') && (
           <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}>🗂️ Storico Preventivi</button>
         )}
       </nav>
 
-      {/* VIEW: ADMIN (Visibile solo per admin vero) */}
-      {currentView === "admin" && user.ruolo === "admin" && (
+      {/* VIEW: ADMIN */}
+      {currentView === "admin" && puoVedere(user, 'preventivatore', 'admin') && (
         <div className="schermata-admin no-print" style={{ padding: '20px', fontFamily: 'inherit' }}>
           <h2>Pannello di Controllo Risorse ed Infrastruttura</h2>
 
           <div className="modulo-subnav" style={{ marginTop: '15px' }}>
-            <button className={`nav-btn ${configTabAdmin === 'sedi' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('sedi')}>📍 Sedi</button>
-            <button className={`nav-btn ${configTabAdmin === 'gonfiabili' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('gonfiabili')}>🎈 Gonfiabili</button>
-            <button className={`nav-btn ${configTabAdmin === 'extra' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('extra')}>⚙️ Extra</button>
+            {puoVedere(user, 'preventivatore', 'admin', 'sedi') && (
+              <button className={`nav-btn ${configTabAdmin === 'sedi' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('sedi')}>📍 Sedi</button>
+            )}
+            {puoVedere(user, 'preventivatore', 'admin', 'gonfiabili') && (
+              <button className={`nav-btn ${configTabAdmin === 'gonfiabili' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('gonfiabili')}>🎈 Gonfiabili</button>
+            )}
+            {puoVedere(user, 'preventivatore', 'admin', 'extra') && (
+              <button className={`nav-btn ${configTabAdmin === 'extra' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('extra')}>⚙️ Extra</button>
+            )}
           </div>
 
           {/* 1. SEZIONE SEDE / MAGAZZINO */}
-          {configTabAdmin === 'sedi' && (
+          {configTabAdmin === 'sedi' && puoVedere(user, 'preventivatore', 'admin', 'sedi') && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0' }}>
               <h3 style={{ margin: 0 }}>Sedi / Magazzini ({sedi.length})</h3>
@@ -882,7 +891,7 @@ function Preventivatore({ user }) {
           )}
 
           {/* 2. SEZIONE GONFIABILI */}
-          {configTabAdmin === 'gonfiabili' && (
+          {configTabAdmin === 'gonfiabili' && puoVedere(user, 'preventivatore', 'admin', 'gonfiabili') && (
           <div className="admin-sezione-fullwidth" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '15px' }}>
             <div style={{ order: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0 }}>Gonfiabili ({gonfiabili.length})</h3>
@@ -1019,7 +1028,7 @@ function Preventivatore({ user }) {
           )}
 
           {/* 3. SEZIONE SERVIZI EXTRA */}
-          {configTabAdmin === 'extra' && (
+          {configTabAdmin === 'extra' && puoVedere(user, 'preventivatore', 'admin', 'extra') && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0' }}>
               <h3 style={{ margin: 0 }}>Servizi Extra ({extras.length})</h3>
@@ -1201,16 +1210,15 @@ function Preventivatore({ user }) {
               <h3>TOTALE COSTI STIMATO: <span>€{totaleComplessivoCostoFlotta.toFixed(2)}</span></h3>
             </div>
 
-            {/* Mostrato a admin e superutente */}
-            {(user.ruolo === "admin" || user.ruolo === "superutente") && (
+            {puoVedere(user, 'preventivatore', 'sales') && (
               <button className="btn-preventivo" onClick={() => setCurrentView("sales")}>➡️ Procedi alla Vendita</button>
             )}
           </div>
         </div>
       )}
 
-      {/* VIEW: PAGINA VENDITA (Per Admin e Superutente) */}
-      {currentView === "sales" && (user.ruolo === "admin" || user.ruolo === "superutente") && (
+      {/* VIEW: PAGINA VENDITA */}
+      {currentView === "sales" && puoVedere(user, 'preventivatore', 'sales') && (
         <div className="schermata-vendita no-print">
           {(serviziSelezionati.length === 0 || !destinazione) ? (
             <div style={{ padding: '35px', textAlign: 'center', backgroundColor: '#fff3cd', color: '#856404', borderRadius: '8px', border: '1px solid #ffeeba', margin: '20px 0' }}>
@@ -1446,8 +1454,8 @@ function Preventivatore({ user }) {
         </div>
       )}
 
-      {/* VIEW: STORICO PREVENTIVI (Per Admin e Superutente) */}
-      {currentView === "storico" && (user.ruolo === "admin" || user.ruolo === "superutente") && (
+      {/* VIEW: STORICO PREVENTIVI */}
+      {currentView === "storico" && puoVedere(user, 'preventivatore', 'storico') && (
         <div className="schermata-storico no-print">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <h2 style={{ margin: 0 }}>🗂️ Database Storico Preventivi</h2>
