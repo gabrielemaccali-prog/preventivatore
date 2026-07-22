@@ -1896,7 +1896,7 @@ function Prenotazioni({ user }) {
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <button type="button" className="btn-preventivo" style={{ width: 'auto', marginTop: 0, fontSize: '0.85rem', padding: '6px 12px' }} onClick={() => { setRiepilogoTesto(messaggioOperatore(op)); setRiepilogoCopiato(false); }}>📋 Copia testo</button>
                           {numero && (
-                            <a className="btn-conferma" title="Apri WhatsApp Web" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '34px', padding: '6px', fontSize: '1rem' }} href={`https://web.whatsapp.com/send?phone=${numero}&text=${encodeURIComponent(messaggioOperatore(op))}`} target="whatsapp-noleggio">📱</a>
+                            <a className="btn-conferma" title="Apri app WhatsApp" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '34px', padding: '6px', fontSize: '1rem' }} href={`whatsapp://send?phone=${numero}&text=${encodeURIComponent(messaggioOperatore(op))}`} target="whatsapp-noleggio">📱</a>
                           )}
                         </div>
                       </div>
