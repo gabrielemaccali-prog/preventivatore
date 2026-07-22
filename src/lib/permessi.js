@@ -45,6 +45,7 @@ export const SCHEDE_REGISTRY = {
       { id: 'nuova', label: 'Nuova Prenotazione' },
       { id: 'storico', label: 'Storico' },
       { id: 'calendario', label: 'Calendario' },
+      { id: 'riepiloghi', label: 'Riepiloghi' },
     ],
   },
   costiricavi: {

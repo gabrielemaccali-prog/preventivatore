@@ -12,7 +12,10 @@ const GIORNI = [
 
 const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", centroRicavo: "", prevedeRinfresco: false, numeroPartecipanti: "" };
 const OPERATORE_VUOTO = { nome: "", email: "", telefono: "" };
-const CAMPO_VUOTO = { nome: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusa: false, costoMerenda: "", costoAperitivo: "" };
+const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusaCampo: false, ivaInclusaRinfresco: false, costoMerenda: "", costoAperitivo: "", ivaCampo: "22", ivaRinfresco: "22", noRinfresco: false };
+
+// Frazione IVA da applicare (percentuale campo, es. 22 -> 0.22); 22% di default se non specificata sul campo.
+const fracIva = (v) => (v != null && v !== '' ? parseFloat(v) : 22) / 100;
 
 const PREN_VUOTA = {
   data: "", pacchettoId: "", oraInizio: "", oraFine: "",
@@ -48,6 +51,93 @@ const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 const addGiorni = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const inizioSettimana = (d) => { const x = new Date(d); const g = x.getDay(); x.setDate(x.getDate() - (g === 0 ? 6 : g - 1)); x.setHours(0, 0, 0, 0); return x; };
 const coloreStato = (s) => s === 'CONF' ? { bg: '#dcfce7', bd: '#16a34a', tx: '#166534' } : { bg: '#fed7aa', bd: '#f59e0b', tx: '#9a3412' };
+
+// Data breve in italiano, es. "24 luglio" (senza anno)
+const formattaDataBreveIT = (dataStr) => {
+  if (!dataStr) return '';
+  return new Date(dataStr).toLocaleDateString('it-IT', { day: '2-digit', month: 'long' });
+};
+
+// Ripulisce un numero di telefono per un link wa.me (aggiunge il prefisso 39 ai numeri italiani senza prefisso)
+const numeroWhatsApp = (telefono) => {
+  const cifre = (telefono || '').replace(/\D/g, '');
+  if (!cifre) return null;
+  return cifre.length === 10 ? `39${cifre}` : cifre;
+};
+
+// Calendario Google condiviso su cui precompilare i link "Aggiungi a Google Calendar" (vedi Impostazioni/CLAUDE per come cambiarlo)
+const GOOGLE_CALENDAR_ID = 'bubblefootballmi@gmail.com';
+
+// Costruisce data/ora come oggetto Date locale, senza ambiguità di fuso (evita l'interpretazione UTC di "YYYY-MM-DD")
+const dataOraLocale = (dataStr, oraStr) => {
+  const [y, mese, g] = (dataStr || '').split('-').map(Number);
+  const [h, m] = (oraStr || '00:00').split(':').map(Number);
+  return new Date(y, (mese || 1) - 1, g || 1, h || 0, m || 0, 0);
+};
+
+// Formatta un Date nel formato richiesto da Google Calendar (YYYYMMDDTHHMMSS, orario locale + parametro ctz)
+const dataOraGoogle = (d) => {
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}T${p2(d.getHours())}${p2(d.getMinutes())}00`;
+};
+
+// Costruisce la descrizione estesa dell'evento Google Calendar: contatti, dettagli vendita, pagamento, fatturazione
+const dettagliGoogleCalendar = (p) => {
+  const righe = [];
+  righe.push(`Contatti: ${p.nominativo || ''}${p.telefono ? ` · Tel ${p.telefono}` : ''}${p.email ? ` · ${p.email}` : ''}`);
+  if (p.etaMedia) righe.push(`Età media partecipanti: ${p.etaMedia}`);
+  if (p.note) righe.push(`Note: ${p.note}`);
+
+  righe.push('');
+  righe.push(`Pacchetto: ${p.pacchettoNome || '—'}${p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} partecipanti` : ''}`);
+  if (p.tipoRinfresco) righe.push(`Rinfresco: ${p.tipoRinfresco}`);
+  righe.push(`Prezzo vendita: €${(parseFloat(p.prezzoVendita) || 0).toFixed(2)}${p.sconto ? ` (sconto ${p.sconto}%)` : ''}`);
+
+  righe.push('');
+  const pagatoTot = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
+  righe.push(`Pagamento: ${p.statoPagamento || 'in attesa'} — pagato €${pagatoTot.toFixed(2)} / €${(parseFloat(p.prezzoVendita) || 0).toFixed(2)}`);
+  (p.pagamenti || []).forEach(pg => righe.push(`  • ${pg.data}: €${(parseFloat(pg.importo) || 0).toFixed(2)}${pg.nominativo ? ` (${pg.nominativo})` : ''}`));
+
+  if (p.fattTipo === 'azienda') {
+    righe.push('');
+    righe.push(`Fatturazione (azienda): ${p.ragioneSociale || ''}`);
+    if (p.aziIndirizzo || p.aziCitta) righe.push(`  ${[p.aziIndirizzo, p.aziCap, p.aziCitta, p.aziProvincia].filter(Boolean).join(', ')}`);
+    if (p.pIva) righe.push(`  P.IVA ${p.pIva}`);
+    if (p.cfAzienda) righe.push(`  CF ${p.cfAzienda}`);
+    if (p.sdi) righe.push(`  SDI ${p.sdi}`);
+  } else if (p.fattTipo === 'privato' && (p.fattNome || p.fattCognome || p.fattCF)) {
+    righe.push('');
+    righe.push(`Fatturazione (privato): ${[p.fattNome, p.fattCognome].filter(Boolean).join(' ')}`);
+    if (p.fattIndirizzo || p.fattCitta) righe.push(`  ${[p.fattIndirizzo, p.fattCap, p.fattCitta, p.fattProvincia].filter(Boolean).join(', ')}`);
+    if (p.fattCF) righe.push(`  CF ${p.fattCF}`);
+  }
+  return righe.join('\n');
+};
+
+// Link "Aggiungi a Google Calendar" precompilato con i dati della prenotazione, sul calendario condiviso GOOGLE_CALENDAR_ID.
+// operatoriAnagrafica serve a risolvere l'email corrente degli operatori assegnati (nello snapshot della prenotazione c'è solo id/nome).
+const linkGoogleCalendar = (p, operatoriAnagrafica) => {
+  const inizio = dataOraLocale(p.data, p.oraInizio);
+  const durataOre = p.oraFine ? durataDaOrari(p.oraInizio, p.oraFine) : (parseFloat(p.durataOre) || 1);
+  const fine = new Date(inizio.getTime() + Math.max(durataOre, 0.25) * 3600000);
+  const luogo = p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '';
+  const titolo = [p.nominativo, p.campoNome, p.pacchettoNome].filter(Boolean).join(' - ');
+  const emailOperatori = (p.operatori || [])
+    .map(op => (operatoriAnagrafica || []).find(o => o.id === op.id)?.email)
+    .filter(Boolean);
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: titolo,
+    dates: `${dataOraGoogle(inizio)}/${dataOraGoogle(fine)}`,
+    details: dettagliGoogleCalendar(p),
+    location: luogo,
+    src: GOOGLE_CALENDAR_ID,
+    authuser: GOOGLE_CALENDAR_ID,
+    ctz: 'Europe/Rome',
+  });
+  if (emailOperatori.length > 0) params.set('add', emailOperatori.join(','));
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+};
 
 // Numero settimana ISO 8601
 const numeroSettimana = (d) => {
@@ -103,7 +193,13 @@ const normalizzaOra24 = (raw) => {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 };
 
-// MODULO SPERIMENTALE — non visibile nella build online.
+const lblStyle = { display: 'block', fontSize: '0.78rem', fontWeight: 'bold', color: '#555', marginBottom: '3px' };
+// Componente a livello di modulo (non ricreato ad ogni render): un input dentro,
+// altrimenti React lo tratta come un tipo nuovo ad ogni render e l'input perde il focus a ogni carattere digitato.
+const Campo = ({ label, children }) => (
+  <div><label style={lblStyle}>{label}</label>{children}</div>
+);
+
 function Prenotazioni({ user }) {
   const primaSchedaPren = ['nuova', 'config', 'storico', 'calendario'].find(s => puoVedere(user, 'prenotazioni', s)) || 'nuova';
   const [currentView, setCurrentView] = useState(primaSchedaPren); // config | nuova | storico | calendario
@@ -124,6 +220,24 @@ function Prenotazioni({ user }) {
   const [showListaPacchetti, setShowListaPacchetti] = useState(true);
   const [showListaOperatori, setShowListaOperatori] = useState(true);
   const [showListaCampi, setShowListaCampi] = useState(true);
+  // singole schede campo (collassate di default: mostrano solo nome/indirizzo, il dettaglio si apre al click)
+  const [campiEspansi, setCampiEspansi] = useState({});
+  const toggleCampoEspanso = (id) => setCampiEspansi(prev => ({ ...prev, [id]: !prev[id] }));
+
+  // Raggruppa i campi per provincia (ordine alfabetico, "Senza provincia" sempre in coda)
+  const gruppiCampiPerProvincia = (() => {
+    const gruppi = {};
+    campi.forEach(c => {
+      const prov = c.provincia || 'Senza provincia';
+      if (!gruppi[prov]) gruppi[prov] = [];
+      gruppi[prov].push(c);
+    });
+    return Object.entries(gruppi).sort(([a], [b]) => {
+      if (a === 'Senza provincia') return 1;
+      if (b === 'Senza provincia') return -1;
+      return a.localeCompare(b);
+    });
+  })();
 
   // form (usati sia per creare sia per modificare)
   const [formPacchetto, setFormPacchetto] = useState(PACCHETTO_VUOTO);
@@ -154,6 +268,12 @@ function Prenotazioni({ user }) {
   const [calView, setCalView] = useState("mese");
   const [calDate, setCalDate] = useState(() => new Date());
   const [prenSelezionata, setPrenSelezionata] = useState(null);
+  const [testoConferma, setTestoConferma] = useState(null); // testo mail di conferma pronto da copiare
+  const [confermaCopiata, setConfermaCopiata] = useState(false);
+  const [riepilogoData, setRiepilogoData] = useState(() => new Date());
+  const [riepilogoTab, setRiepilogoTab] = useState("operatori"); // operatori | campi
+  const [riepilogoTesto, setRiepilogoTesto] = useState(null); // messaggio whatsapp pronto da copiare
+  const [riepilogoCopiato, setRiepilogoCopiato] = useState(false);
 
   useEffect(() => { fetchTutto(); }, []);
 
@@ -238,14 +358,144 @@ function Prenotazioni({ user }) {
     setCurrentView("nuova");
   };
 
-  const cambiaStatoPren = async (id, nuovoStato) => {
-    await supabase.from('prenotazioni').update({ stato: nuovoStato }).eq('id', id);
+  // Data in formato esteso italiano, es. "Mercoledì 09 settembre 2026"
+  const formattaDataEstesaIT = (dataStr) => {
+    if (!dataStr) return '';
+    const txt = new Date(dataStr).toLocaleDateString('it-IT', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+    return txt.charAt(0).toUpperCase() + txt.slice(1);
+  };
+
+  const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // Costruisce la mail di conferma (testo semplice + HTML con tabella, come nel formato usato oggi via Gmail)
+  const costruisciConferma = (p) => {
+    const campoInfo = p.campoId ? campi.find(c => c.id === p.campoId) : null;
+    const locationTxt = campoInfo
+      ? [campoInfo.nomeCompleto || campoInfo.nome, [campoInfo.indirizzo, campoInfo.citta].filter(Boolean).join(', ')].filter(Boolean).join(' ')
+      : (p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—');
+    const oraTxt = p.oraInizio ? `${p.oraInizio}${p.oraFine ? ` - ${p.oraFine}` : ''}${p.durataOre ? `   (${p.durataOre} ${p.durataOre === 1 ? 'ora' : 'ore'})` : ''}` : '—';
+    const prezzoVendita = parseFloat(p.prezzoVendita) || 0;
+    const totalePagatoP = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
+    const residuo = Math.max(prezzoVendita - totalePagatoP, 0);
+    const statoPag = p.statoPagamento || statoPagamentoDi(p.pagamenti, prezzoVendita);
+    const rigaPagamentoLabel = statoPag === 'saldato' ? 'Pagamento:' : 'Modalità di pagamento:';
+    const rigaPagamentoValore = statoPag === 'saldato'
+      ? 'SALDATO ✅'
+      : `Con Bonifico — Importo da versare: €${residuo.toFixed(2)}${totalePagatoP > 0 ? ` (già versato €${totalePagatoP.toFixed(2)} su €${prezzoVendita.toFixed(2)})` : ''}`;
+
+    const testo = [
+      `Ciao ${p.nominativo || ''},`,
+      '',
+      `di seguito puoi trovare l'avvenuta conferma della tua prenotazione:`,
+      '',
+      'PRENOTAZIONE',
+      p.pacchettoNome || '',
+      'Data:',
+      formattaDataEstesaIT(p.data),
+      'Orario:',
+      oraTxt,
+      'Centro Sportivo:',
+      locationTxt,
+      'Tariffa di gioco:',
+      `${prezzoVendita.toFixed(2)}€`,
+      '',
+      rigaPagamentoLabel,
+      rigaPagamentoValore,
+      '',
+      "Ricordiamo inoltre che E' VIETATO introdurre all'interno del Centro Sportivo cibi e bevande acquistati altrove.",
+      '',
+      "In caso di disdetta ti chiedo gentilmente di comunicarlo entro 30 ore dalla data dell'evento.",
+      '',
+      'Cosa fare adesso?',
+      "- Compilare il modulo di registrazione all'evento che trovi al link https://forms.gle/mmVKZW81XEvkVU4A6",
+      "  Tutti i giocatori dovranno compilare il modulo online, stampare o conservare sul telefono la mail di conferma e mostrarla al nostro staff PRIMA DI GIOCARE. Eventuali giocatori sprovvisti di tale conferma non potranno prendere parte all'attività.",
+      '',
+      '- Presentatevi al campo 20 minuti in anticipo per la verifica della documentazione.',
+      '',
+      '- Consigliamo di consultare la pagina FAQ https://www.bubblefootballmi.it/faq/ dove troverete ulteriori informazioni utili.',
+      '',
+      "Si informa che, in caso di comportamenti scorretti o non conformi al regolamento, l'attività potrà essere sospesa definitivamente, con la conseguente perdita di qualsiasi diritto al rimborso.",
+      '',
+      'Resto in attesa di conferma presa visione e in caso di eventuali errori ti prego di segnalarli rispondendo a questa email.',
+      '',
+      'Saluti',
+      'Karin',
+      '',
+      '',
+      'Bubble Football Milano | Calcio al Buio | Ideeinfesta',
+      'Tel. (0039) 351 67 59 881',
+      'E-mail: bubblefootballmi@gmail.com',
+      'Sito web: www.bubblefootballitalia.it | www.calcioalbuio.it | www.ideeinfesta.it/',
+      'BFM S.R.L. (C.F./P.IVA 14418440963)'
+    ].join('\n');
+
+    const cellaLabel = 'background:#1f79cb;color:#fff;font-weight:bold;border:1px solid #1f79cb;padding:6px 10px;';
+    const cellaValore = 'border:1px solid #1f79cb;padding:6px 10px;color:#000;';
+    const rigaTabella = (label, valore, big) => `<tr><td style="${cellaLabel}">${escapeHtml(label)}</td><td style="${cellaValore}${big ? 'font-weight:bold;font-size:15px;' : ''}">${escapeHtml(valore)}</td></tr>`;
+
+    const html = `
+      <div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#000;line-height:1.5;">
+        <p>Ciao ${escapeHtml(p.nominativo || '')},</p>
+        <p>di seguito puoi trovare l'avvenuta conferma della tua prenotazione:</p>
+        <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:12px 0;">
+          <tbody>
+            ${rigaTabella('PRENOTAZIONE', p.pacchettoNome || '', true)}
+            ${rigaTabella('Data:', formattaDataEstesaIT(p.data))}
+            ${rigaTabella('Orario:', oraTxt)}
+            ${rigaTabella('Centro Sportivo:', locationTxt)}
+            ${rigaTabella('Tariffa di gioco:', `${prezzoVendita.toFixed(2)}€`)}
+            ${rigaTabella(rigaPagamentoLabel, rigaPagamentoValore)}
+          </tbody>
+        </table>
+        <p><b>Ricordiamo inoltre che E' VIETATO introdurre all'interno del Centro Sportivo cibi e bevande acquistati altrove.</b></p>
+        <p><b><u>In caso di disdetta ti chiedo gentilmente di comunicarlo entro 30 ore dalla data dell'evento.</u></b></p>
+        <p>Cosa fare adesso?</p>
+        <ul style="margin:0 0 12px;padding-left:20px;">
+          <li style="margin-bottom:10px;"><b>Compilare il modulo di registrazione all'evento che trovi al link</b> <a href="https://forms.gle/mmVKZW81XEvkVU4A6">https://forms.gle/mmVKZW81XEvkVU4A6</a><br>
+            <u>Tutti i giocatori dovranno compilare il modulo online, stampare o conservare sul telefono la mail di conferma e mostrarla al nostro staff PRIMA DI GIOCARE. Eventuali giocatori sprovvisti di tale conferma non potranno prendere parte all'attività.</u>
+          </li>
+          <li style="margin-bottom:10px;"><b>Presentatevi al campo 20 minuti in anticipo</b> per la verifica della documentazione.</li>
+          <li>Consigliamo di consultare la pagina FAQ <a href="https://www.bubblefootballmi.it/faq/">https://www.bubblefootballmi.it/faq/</a> dove troverete ulteriori informazioni utili.</li>
+        </ul>
+        <p style="background:#ff9900;padding:6px;display:inline-block;"><u><b><i>Si informa che, in caso di comportamenti scorretti o non conformi al regolamento, l'attività potrà essere sospesa definitivamente, con la conseguente perdita di qualsiasi diritto al rimborso</i></b></u>.</p>
+        <p>Resto in attesa di conferma presa visione e in caso di eventuali errori ti prego di segnalarli rispondendo a questa email.</p>
+        <p>Saluti<br>Karin</p>
+        <p style="color:#444;font-size:13px;">
+          Bubble Football Milano | Calcio al Buio | Ideeinfesta<br>
+          Tel. (0039) 351 67 59 881<br>
+          E-mail: <a href="mailto:bubblefootballmi@gmail.com">bubblefootballmi@gmail.com</a><br>
+          Sito web: <a href="https://www.bubblefootballitalia.it">www.bubblefootballitalia.it</a> | <a href="http://www.calcioalbuio.it">www.calcioalbuio.it</a> | <a href="http://www.ideeinfesta.it/">www.ideeinfesta.it/</a><br>
+          BFM S.R.L. (C.F./P.IVA 14418440963)
+        </p>
+      </div>
+    `;
+
+    return { testo, html };
+  };
+
+  const cambiaStatoPren = async (p, nuovoStato) => {
+    await supabase.from('prenotazioni').update({ stato: nuovoStato }).eq('id', p.id);
     fetchTutto();
+    if (nuovoStato === 'CONF') setTestoConferma(costruisciConferma(p));
   };
   const toggleCampoPrenotato = async (p) => {
     const nuovo = !p.campoPrenotato;
     await supabase.from('prenotazioni').update({ campoPrenotato: nuovo }).eq('id', p.id);
     setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, campoPrenotato: nuovo } : prev);
+    fetchTutto();
+  };
+  // Apre il link precompilato Google Calendar e segna la prenotazione come sincronizzata (ripristinato a "non sincronizzato" ad ogni modifica salvata)
+  const apriGoogleCalendar = async (p) => {
+    window.open(linkGoogleCalendar(p, operatori), '_blank', 'noopener,noreferrer');
+    await supabase.from('prenotazioni').update({ googleCalendarSync: true }).eq('id', p.id);
+    setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, googleCalendarSync: true } : prev);
+    fetchTutto();
+  };
+  // Permette di correggere manualmente lo stato di sincronizzazione (es. click per errore, evento poi cancellato su Google Calendar)
+  const toggleGoogleCalendarSync = async (p) => {
+    const nuovo = !p.googleCalendarSync;
+    await supabase.from('prenotazioni').update({ googleCalendarSync: nuovo }).eq('id', p.id);
+    setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, googleCalendarSync: nuovo } : prev);
     fetchTutto();
   };
   const eliminaPrenotazione = async (id) => {
@@ -313,12 +563,14 @@ function Prenotazioni({ user }) {
     if (!f.oraInizio) return alert("Inserisci l'orario di inizio.");
     if (!durataFissa && !f.oraFine) return alert("Per un pacchetto a durata libera inserisci anche l'orario di fine.");
     if (pac.prevedeRinfresco && !f.tipoRinfresco) return alert("Il pacchetto prevede un rinfresco: seleziona merenda o aperitivo.");
+    if (pac.prevedeRinfresco && campi.find(c => c.id === f.campoId)?.noRinfresco) return alert("Questo campo non consente pacchetti con rinfresco: cambia campo o pacchetto.");
     if (f.fattTipo === 'privato' && f.fattCF && !validaCF(f.fattCF)) return alert("Codice Fiscale non valido.");
 
     const IVA = 0.22;
     const durataOre = durataFissa ? parseFloat(pac.durataOre) : durataDaOrari(f.oraInizio, f.oraFine);
     const campo = pac.locationTipo === 'campi' ? campi.find(c => c.id === f.campoId) : null;
-    const campoIvaIncl = campo ? !!campo.ivaInclusa : false;
+    const campoIvaInclCampo = campo ? !!campo.ivaInclusaCampo : false;
+    const campoIvaInclRinfresco = campo ? !!campo.ivaInclusaRinfresco : false;
     const sconto = parseFloat(f.sconto) || 0;
     const scontoFrac = 1 - sconto / 100;
     const pacHaPrezzo = pac.prezzo != null && pac.prezzo !== "";
@@ -326,17 +578,19 @@ function Prenotazioni({ user }) {
     const prezzoBaseLordo = pacHaPrezzo ? parseFloat(pac.prezzo) : ((parseFloat(f.prezzoManuale) || 0) * (1 + IVA));
     const prezzoVenditaNetto = prezzoBaseNetto * scontoFrac;
     const prezzoVenditaLordo = prezzoBaseLordo * scontoFrac;
+    const ivaCampoFrac = campo ? fracIva(campo.ivaCampo) : IVA;
+    const ivaRinfrescoFrac = campo ? fracIva(campo.ivaRinfresco) : IVA;
     const costoCampoRaw = campo ? calcolaCostoCampo(campo, f.data, f.oraInizio) : 0;
-    const costoCampoLordo = campoIvaIncl ? costoCampoRaw : costoCampoRaw * (1 + IVA);
-    const costoCampoNetto = campoIvaIncl ? costoCampoRaw / (1 + IVA) : costoCampoRaw;
+    const costoCampoLordo = campoIvaInclCampo ? costoCampoRaw : costoCampoRaw * (1 + ivaCampoFrac);
+    const costoCampoNetto = campoIvaInclCampo ? costoCampoRaw / (1 + ivaCampoFrac) : costoCampoRaw;
     const numPart = numOrNull(f.numeroPartecipanti);
     let costoRinfrescoRaw = 0;
     if (pac.prevedeRinfresco && f.tipoRinfresco && campo && numPart) {
       const perPersona = f.tipoRinfresco === 'merenda' ? (parseFloat(campo.costoMerenda) || 0) : (parseFloat(campo.costoAperitivo) || 0);
       costoRinfrescoRaw = perPersona * numPart;
     }
-    const costoRinfrescoLordo = campoIvaIncl ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + IVA);
-    const costoRinfrescoNetto = campoIvaIncl ? costoRinfrescoRaw / (1 + IVA) : costoRinfrescoRaw;
+    const costoRinfrescoLordo = campoIvaInclRinfresco ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + ivaRinfrescoFrac);
+    const costoRinfrescoNetto = campoIvaInclRinfresco ? costoRinfrescoRaw / (1 + ivaRinfrescoFrac) : costoRinfrescoRaw;
     const operatoriSnap = operatori.filter(o => f.operatoriIds.includes(o.id)).map(o => ({ id: o.id, nome: o.nome }));
 
     const rec = {
@@ -368,7 +622,8 @@ function Prenotazioni({ user }) {
       const { error } = await supabase.from('prenotazioni').insert([{ id: codice, ...rec }]);
       if (error) { console.error(error); setSalvataggioPren(false); return alert("Errore durante il salvataggio della prenotazione."); }
     } else {
-      const { error } = await supabase.from('prenotazioni').update(rec).eq('id', codice);
+      // ogni modifica invalida la sincronizzazione con Google Calendar già fatta in precedenza
+      const { error } = await supabase.from('prenotazioni').update({ ...rec, googleCalendarSync: false }).eq('id', codice);
       if (error) { console.error(error); setSalvataggioPren(false); return alert("Errore durante l'aggiornamento della prenotazione."); }
     }
     setSalvataggioPren(false);
@@ -381,16 +636,11 @@ function Prenotazioni({ user }) {
   const inputStyle = { width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' };
   const btnSalva = { padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' };
   const btnNuovo = { width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' };
-  const lblStyle = { display: 'block', fontSize: '0.78rem', fontWeight: 'bold', color: '#555', marginBottom: '3px' };
   const boxForm = { background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0', marginBottom: '15px' };
   const boxTabella = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible' };
   const headerElenco = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0' };
   const btnCollassa = { width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: '0.85rem', background: '#e2e8f0', color: '#334155' };
   const btnBarraNuovo = { display: 'flex', justifyContent: 'flex-end', margin: '18px 0 12px 0' };
-
-  const Campo = ({ label, children }) => (
-    <div><label style={lblStyle}>{label}</label>{children}</div>
-  );
 
   // ---------------- PACCHETTI ----------------
   const salvaPacchetto = async (e) => {
@@ -464,9 +714,12 @@ function Prenotazioni({ user }) {
     e.preventDefault();
     if (!formCampo.nome) return alert("Inserisci il nome del campo");
     const rec = {
-      nome: formCampo.nome, indirizzo: formCampo.indirizzo, cap: formCampo.cap, citta: formCampo.citta, provincia: formCampo.provincia,
-      centroCosto: formCampo.centroCosto, costoFlat: numOrNull(formCampo.costoFlat), ivaInclusa: formCampo.ivaInclusa,
-      costoMerenda: numOrNull(formCampo.costoMerenda), costoAperitivo: numOrNull(formCampo.costoAperitivo)
+      nome: formCampo.nome, nomeCompleto: formCampo.nomeCompleto, indirizzo: formCampo.indirizzo, cap: formCampo.cap, citta: formCampo.citta, provincia: formCampo.provincia,
+      centroCosto: formCampo.centroCosto, costoFlat: numOrNull(formCampo.costoFlat),
+      ivaInclusaCampo: formCampo.ivaInclusaCampo, ivaInclusaRinfresco: formCampo.ivaInclusaRinfresco,
+      costoMerenda: numOrNull(formCampo.costoMerenda), costoAperitivo: numOrNull(formCampo.costoAperitivo),
+      ivaCampo: numOrNull(formCampo.ivaCampo), ivaRinfresco: numOrNull(formCampo.ivaRinfresco),
+      noRinfresco: formCampo.noRinfresco
     };
     let error;
     if (editCampo) ({ error } = await supabase.from('pren_campi').update(rec).eq('id', editCampo));
@@ -478,9 +731,12 @@ function Prenotazioni({ user }) {
   const modificaCampo = (c) => {
     setEditCampo(c.id);
     setFormCampo({
-      nome: c.nome || "", indirizzo: c.indirizzo || "", cap: c.cap || "", citta: c.citta || "", provincia: c.provincia || "",
-      centroCosto: c.centroCosto || "", costoFlat: c.costoFlat ?? "", ivaInclusa: !!c.ivaInclusa,
-      costoMerenda: c.costoMerenda ?? "", costoAperitivo: c.costoAperitivo ?? ""
+      nome: c.nome || "", nomeCompleto: c.nomeCompleto || "", indirizzo: c.indirizzo || "", cap: c.cap || "", citta: c.citta || "", provincia: c.provincia || "",
+      centroCosto: c.centroCosto || "", costoFlat: c.costoFlat ?? "",
+      ivaInclusaCampo: !!c.ivaInclusaCampo, ivaInclusaRinfresco: !!c.ivaInclusaRinfresco,
+      costoMerenda: c.costoMerenda ?? "", costoAperitivo: c.costoAperitivo ?? "",
+      ivaCampo: c.ivaCampo ?? "22", ivaRinfresco: c.ivaRinfresco ?? "22",
+      noRinfresco: !!c.noRinfresco
     });
     setShowFormCampo(true);
   };
@@ -522,12 +778,15 @@ function Prenotazioni({ user }) {
         {puoVedere(user, 'prenotazioni', 'calendario') && (
           <button className={`nav-btn ${currentView === 'calendario' ? 'active' : ''}`} onClick={() => setCurrentView("calendario")}>📅 Calendario</button>
         )}
+        {puoVedere(user, 'prenotazioni', 'riepiloghi') && (
+          <button className={`nav-btn ${currentView === 'riepiloghi' ? 'active' : ''}`} onClick={() => setCurrentView("riepiloghi")}>📋 Riepiloghi</button>
+        )}
       </nav>
 
       {/* ===================== CONFIGURATORE ===================== */}
       {currentView === "config" && puoVedere(user, 'prenotazioni', 'config') && (
         <div className="schermata-admin no-print" style={{ padding: '20px' }}>
-          <h2>Configuratore Prenotazioni <span style={{ fontSize: '0.7rem', background: '#fde68a', color: '#92400e', padding: '3px 10px', borderRadius: '6px', verticalAlign: 'middle' }}>SPERIMENTALE</span></h2>
+          <h2>Configuratore Prenotazioni</h2>
 
           <div className="modulo-subnav" style={{ marginTop: '15px' }}>
             {puoVedere(user, 'prenotazioni', 'config', 'pacchetti') && (
@@ -701,26 +960,46 @@ function Prenotazioni({ user }) {
               </div>
 
               {showListaCampi && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                {campi.map(c => {
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                {gruppiCampiPerProvincia.map(([provincia, campiGruppo]) => (
+                <div key={provincia}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '0.85rem', fontWeight: 'bold', color: '#0288d1', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '2px solid #e0f2fe', paddingBottom: '6px' }}>
+                    📌 {provincia} <span style={{ fontWeight: 'normal', color: '#888', textTransform: 'none' }}>({campiGruppo.length})</span>
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {campiGruppo.map(c => {
                   const tarCampo = tariffe.filter(t => t.campoId === c.id);
                   const inModifica = editCampo === c.id && showFormCampo;
+                  const espanso = !!campiEspansi[c.id] || inModifica;
                   return (
                     <div key={c.id} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '15px', ...(inModifica ? { boxShadow: '0 0 0 2px #0288d1' } : {}) }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', flexWrap: 'wrap' }}>
-                        <div>
-                          <strong style={{ fontSize: '1rem' }}>📍 {c.nome}</strong>
-                          <div style={{ fontSize: '0.85rem', color: '#555' }}>{[c.indirizzo, c.cap, c.citta, c.provincia].filter(Boolean).join(', ')}</div>
-                          <div style={{ fontSize: '0.8rem', color: '#777' }}>
-                            Centro di costo: {c.centroCosto || '—'} · Base €{parseFloat(c.costoFlat || 0).toFixed(2)}
-                            {c.costoMerenda != null && ` · Merenda €${parseFloat(c.costoMerenda).toFixed(2)}/p`}
-                            {c.costoAperitivo != null && ` · Aperitivo €${parseFloat(c.costoAperitivo).toFixed(2)}/p`}
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer' }} onClick={() => toggleCampoEspanso(c.id)}>
+                          <span style={{ fontSize: '0.7rem', color: '#888', marginTop: '4px' }}>{espanso ? '▼' : '▶'}</span>
+                          <div>
+                            <strong style={{ fontSize: '1rem' }}>📍 {c.nome}</strong>
+                            {c.noRinfresco && <span title="Non è possibile fare rinfresco in questo campo" style={{ marginLeft: '6px', fontSize: '0.7rem', fontWeight: 'bold', padding: '2px 7px', borderRadius: '10px', background: '#fee2e2', color: '#991b1b' }}>🚫 No rinfresco</span>}
+                            {c.nomeCompleto && <div style={{ fontSize: '0.82rem', color: '#0288d1', fontStyle: 'italic' }}>{c.nomeCompleto}</div>}
                           </div>
-                          <span style={{ display: 'inline-block', marginTop: '4px', fontSize: '0.72rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: c.ivaInclusa ? '#dcfce7' : '#fee2e2', color: c.ivaInclusa ? '#166534' : '#991b1b' }}>{ivaLabel(c.ivaInclusa)}</span>
                         </div>
                         <div style={{ display: 'flex', gap: '5px' }}>
                           <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => modificaCampo(c)}>Modifica</button>
                           <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviCampo(c.id)}>Elimina</button>
+                        </div>
+                      </div>
+
+                      {espanso && (
+                      <>
+                      <div style={{ marginTop: '8px' }}>
+                        <div style={{ fontSize: '0.85rem', color: '#555' }}>{[c.indirizzo, c.cap, c.citta, c.provincia].filter(Boolean).join(', ')}</div>
+                        <div style={{ fontSize: '0.8rem', color: '#777' }}>
+                          Centro di costo: {c.centroCosto || '—'} · Base €{parseFloat(c.costoFlat || 0).toFixed(2)}
+                          {c.costoMerenda != null && ` · Merenda €${parseFloat(c.costoMerenda).toFixed(2)}/p`}
+                          {c.costoAperitivo != null && ` · Aperitivo €${parseFloat(c.costoAperitivo).toFixed(2)}/p`}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                          <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: c.ivaInclusaCampo ? '#dcfce7' : '#fee2e2', color: c.ivaInclusaCampo ? '#166534' : '#991b1b' }}>Campo: {ivaLabel(c.ivaInclusaCampo)}</span>
+                          <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: c.ivaInclusaRinfresco ? '#dcfce7' : '#fee2e2', color: c.ivaInclusaRinfresco ? '#166534' : '#991b1b' }}>Rinfresco: {ivaLabel(c.ivaInclusaRinfresco)}</span>
                         </div>
                       </div>
 
@@ -759,9 +1038,14 @@ function Prenotazioni({ user }) {
                           <button type="button" className="btn-conferma" style={{ padding: '6px 12px' }} onClick={() => addTariffa(c.id)}>+ Tariffa</button>
                         </div>
                       )}
+                      </>
+                      )}
                     </div>
                   );
                 })}
+                  </div>
+                </div>
+                ))}
                 {campi.length === 0 && <p style={{ color: '#666' }}>Nessun campo configurato.</p>}
               </div>
               )}
@@ -775,6 +1059,7 @@ function Prenotazioni({ user }) {
                   <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>{editCampo ? 'Modifica Campo' : 'Nuovo Campo'}</h3>
                   <form onSubmit={salvaCampo} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     <Campo label="Nome campo"><input type="text" value={formCampo.nome} onChange={(e) => setFormCampo({ ...formCampo, nome: e.target.value })} style={inputStyle} /></Campo>
+                    <Campo label="Nome completo campo (usato nelle comunicazioni al cliente)"><input type="text" value={formCampo.nomeCompleto} onChange={(e) => setFormCampo({ ...formCampo, nomeCompleto: e.target.value })} style={inputStyle} placeholder="Es. Padel Arena Quintosole" /></Campo>
                     <Campo label="Cerca indirizzo"><RicercaIndirizzo onSelect={(a) => setFormCampo(prev => ({ ...prev, indirizzo: a.indirizzo, cap: a.cap, citta: a.citta, provincia: a.provincia }))} /></Campo>
                     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 0.8fr', gap: '8px' }}>
                       <Campo label="Indirizzo"><input type="text" value={formCampo.indirizzo} onChange={(e) => setFormCampo({ ...formCampo, indirizzo: e.target.value })} style={inputStyle} /></Campo>
@@ -788,8 +1073,20 @@ function Prenotazioni({ user }) {
                       <Campo label="Costo merenda €/pers"><input type="number" step="any" value={formCampo.costoMerenda} onChange={(e) => setFormCampo({ ...formCampo, costoMerenda: e.target.value })} style={inputStyle} /></Campo>
                       <Campo label="Costo aperitivo €/pers"><input type="number" step="any" value={formCampo.costoAperitivo} onChange={(e) => setFormCampo({ ...formCampo, costoAperitivo: e.target.value })} style={inputStyle} /></Campo>
                     </div>
+                    <div style={{ display: 'flex', gap: '20px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
+                        <input type="checkbox" checked={formCampo.ivaInclusaCampo} onChange={(e) => setFormCampo({ ...formCampo, ivaInclusaCampo: e.target.checked })} /> Costo campo IVA inclusa
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
+                        <input type="checkbox" checked={formCampo.ivaInclusaRinfresco} onChange={(e) => setFormCampo({ ...formCampo, ivaInclusaRinfresco: e.target.checked })} /> Costo rinfresco IVA inclusa
+                      </label>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <Campo label="% IVA affitto campo"><input type="number" step="any" value={formCampo.ivaCampo} onChange={(e) => setFormCampo({ ...formCampo, ivaCampo: e.target.value })} style={inputStyle} /></Campo>
+                      <Campo label="% IVA rinfreschi"><input type="number" step="any" value={formCampo.ivaRinfresco} onChange={(e) => setFormCampo({ ...formCampo, ivaRinfresco: e.target.value })} style={inputStyle} /></Campo>
+                    </div>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
-                      <input type="checkbox" checked={formCampo.ivaInclusa} onChange={(e) => setFormCampo({ ...formCampo, ivaInclusa: e.target.checked })} /> Costi IVA inclusa
+                      <input type="checkbox" checked={formCampo.noRinfresco} onChange={(e) => setFormCampo({ ...formCampo, noRinfresco: e.target.checked })} /> 🚫 Non è possibile fare rinfresco in questo campo
                     </label>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button type="submit" style={btnSalva}>{editCampo ? 'Salva modifiche' : 'Salva Campo'}</button>
@@ -819,13 +1116,14 @@ function Prenotazioni({ user }) {
         const prezzoBaseLordo = pacHaPrezzo ? parseFloat(pac.prezzo) : ((parseFloat(formPren.prezzoManuale) || 0) * (1 + IVA));
         const prezzoLordo = prezzoBaseLordo * scontoFrac;
         const prezzoVendita = prezzoLordo; // il cliente paga il lordo
-        // Costo campo (i valori del campo sono lordi o netti a seconda del flag ivaInclusa)
-        const campoIvaIncl = campoSel ? !!campoSel.ivaInclusa : false;
+        // Costo rinfresco (i valori sono lordi o netti a seconda del flag ivaInclusaRinfresco del campo)
+        const campoIvaInclRinfresco = campoSel ? !!campoSel.ivaInclusaRinfresco : false;
         // Rinfresco
         const numPart = numOrNull(formPren.numeroPartecipanti);
         const perPersonaRinf = campoSel ? (formPren.tipoRinfresco === 'merenda' ? (parseFloat(campoSel.costoMerenda) || 0) : formPren.tipoRinfresco === 'aperitivo' ? (parseFloat(campoSel.costoAperitivo) || 0) : 0) : 0;
         const costoRinfrescoRaw = (pac?.prevedeRinfresco && formPren.tipoRinfresco && numPart) ? perPersonaRinf * numPart : 0;
-        const costoRinfrescoLordo = campoIvaIncl ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + IVA);
+        const ivaRinfrescoFrac = campoSel ? fracIva(campoSel.ivaRinfresco) : IVA;
+        const costoRinfrescoLordo = campoIvaInclRinfresco ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + ivaRinfrescoFrac);
         const errCF = formPren.fattTipo === 'privato' && formPren.fattCF && !validaCF(formPren.fattCF);
         const emailNonValida = formPren.email && !validaEmail(formPren.email);
         const totalePagato = (formPren.pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0);
@@ -856,7 +1154,7 @@ function Prenotazioni({ user }) {
         return (
         <div className="schermata-inserimento no-print form-pren" style={(codicePrenInModifica && formModificato) ? { paddingBottom: '60px' } : undefined}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <h2 style={{ margin: 0 }}>{codicePrenInModifica ? `Modifica Prenotazione ${codicePrenInModifica}` : "Nuova Prenotazione"} <span style={{ fontSize: '0.7rem', background: '#fde68a', color: '#92400e', padding: '3px 10px', borderRadius: '6px' }}>SPERIMENTALE</span></h2>
+            <h2 style={{ margin: 0 }}>{codicePrenInModifica ? `Modifica Prenotazione ${codicePrenInModifica}` : "Nuova Prenotazione"}</h2>
             <button className="btn-chiudi" style={{ float: 'none' }} onClick={nuovaPrenotazione}>🆕 Nuova</button>
           </div>
 
@@ -864,7 +1162,7 @@ function Prenotazioni({ user }) {
 
           {/* 1. Data, pacchetto, orari */}
           <div className="sezione">
-            <h2>1. Evento</h2>
+            <h2>Evento</h2>
             <div className="date-grid" style={{ flexWrap: 'wrap' }}>
               <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Data
                 <input type="date" value={formPren.data} onChange={(e) => setF({ data: e.target.value })} style={evidenzia('data')} />
@@ -893,7 +1191,7 @@ function Prenotazioni({ user }) {
 
           {/* 2. Contatti */}
           <div className="sezione">
-            <h2>2. Contatti prenotazione</h2>
+            <h2>Contatti prenotazione</h2>
             <div className="date-grid" style={{ flexWrap: 'wrap' }}>
               <label style={{ flex: '2 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nominativo *
                 <input type="text" value={formPren.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} style={evidenzia('nominativo')} />
@@ -918,13 +1216,13 @@ function Prenotazioni({ user }) {
 
           {/* 3. Location */}
           <div className="sezione">
-            <h2>3. Location</h2>
+            <h2>Location</h2>
             {locationDaCampi ? (
               <>
                 <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '10px' }}>Campo
                   <select className="dropdown-gonfiabili" value={formPren.campoId} onChange={(e) => setF({ campoId: e.target.value })} style={evidenzia('campoId')}>
                     <option value="">-- Seleziona campo --</option>
-                    {campi.map(c => <option key={c.id} value={c.id}>{c.nome}{c.citta ? ` — ${c.citta}` : ''}</option>)}
+                    {campi.map(c => <option key={c.id} value={c.id}>{c.nome}{c.citta ? ` — ${c.citta}` : ''}{pac?.prevedeRinfresco && c.noRinfresco ? ' 🚫 no rinfresco' : ''}</option>)}
                   </select>
                 </label>
 
@@ -932,7 +1230,11 @@ function Prenotazioni({ user }) {
                   <input type="checkbox" checked={formPren.campoPrenotato} onChange={(e) => setF({ campoPrenotato: e.target.checked })} /> 🔒 Campo prenotato
                 </label>
 
-                {campoSel && pac?.prevedeRinfresco && (
+                {campoSel && pac?.prevedeRinfresco && campoSel.noRinfresco && (
+                  <p style={{ color: '#c62828', fontWeight: 'bold' }}>🚫 Questo campo non consente pacchetti con rinfresco: scegli un altro campo o un pacchetto senza rinfresco.</p>
+                )}
+
+                {campoSel && pac?.prevedeRinfresco && !campoSel.noRinfresco && (
                   <div className="pren-row" style={{ marginBottom: '12px' }}>
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Rinfresco *
                       <select value={formPren.tipoRinfresco} onChange={(e) => setF({ tipoRinfresco: e.target.value })} style={!formPren.tipoRinfresco ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('tipoRinfresco')}>
@@ -948,7 +1250,7 @@ function Prenotazioni({ user }) {
                   </div>
                 )}
 
-                {campoSel && pac?.prevedeRinfresco && formPren.tipoRinfresco && costoRinfrescoLordo === 0 && (
+                {campoSel && pac?.prevedeRinfresco && !campoSel.noRinfresco && formPren.tipoRinfresco && costoRinfrescoLordo === 0 && (
                   <p style={{ color: '#c62828' }}>🍽️ Rinfresco {formPren.tipoRinfresco}: costo 0 — {!numPart ? "n° partecipanti mancante nel pacchetto" : `il campo non ha il costo ${formPren.tipoRinfresco} configurato`}.</p>
                 )}
               </>
@@ -967,7 +1269,7 @@ function Prenotazioni({ user }) {
 
           {/* 4. Operatori */}
           <div className="sezione">
-            <h2>4. Operatori</h2>
+            <h2>Operatori</h2>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {operatori.map(o => {
                 const sel = formPren.operatoriIds.includes(o.id);
@@ -983,7 +1285,7 @@ function Prenotazioni({ user }) {
 
           {/* 6. Prezzo */}
           <div className="sezione">
-            <h2>6. Prezzo di vendita</h2>
+            <h2>Prezzo di vendita</h2>
             {!pacHaPrezzo && (
               <>
                 <div className="date-grid" style={{ flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -1071,7 +1373,7 @@ function Prenotazioni({ user }) {
 
           {/* 8. Fatturazione */}
           <div className="sezione">
-            <h2>8. Dati di fatturazione <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(facoltativi, inseribili in un secondo momento)</span></h2>
+            <h2>Dati di fatturazione <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(facoltativi, inseribili in un secondo momento)</span></h2>
             <div style={{ display: 'flex', gap: '18px', marginBottom: '12px' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.9rem' }}><input type="radio" name="fattTipo" checked={formPren.fattTipo === 'privato'} onChange={() => setF({ fattTipo: 'privato' })} /> Privato</label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.9rem' }}><input type="radio" name="fattTipo" checked={formPren.fattTipo === 'azienda'} onChange={() => setF({ fattTipo: 'azienda' })} /> Azienda</label>
@@ -1198,11 +1500,13 @@ function Prenotazioni({ user }) {
                       <div style={{ display: 'flex', flexDirection: 'row', gap: '6px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
                         <button className="btn-modifica-inline" title="Apri" style={{ padding: '6px 9px' }} onClick={() => caricaPrenotazione(p)}>📂</button>
                         {p.stato === "FORSE" && (
-                          <button className="btn-conferma" title="Conferma" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p.id, "CONF")}>✔️</button>
+                          <button className="btn-conferma" title="Conferma (prepara mail al cliente)" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p, "CONF")}>✔️</button>
                         )}
                         {p.stato === "CONF" && (
-                          <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p.id, "FORSE")}>↩️</button>
+                          <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p, "FORSE")}>↩️</button>
                         )}
+                        <button className="btn-modifica-inline" title={p.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '6px 9px' }} onClick={() => apriGoogleCalendar(p)}>📅</button>
+                        <button type="button" onClick={() => toggleGoogleCalendarSync(p)} title={p.googleCalendarSync ? "Sincronizzato con Google Calendar (clic per correggere a mano)" : "Non ancora sincronizzato con Google Calendar (clic per correggere a mano)"} style={{ border: 'none', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 'bold', padding: '2px 6px', borderRadius: '8px', background: p.googleCalendarSync ? '#dcfce7' : '#fee2e2', color: p.googleCalendarSync ? '#166534' : '#991b1b' }}>{p.googleCalendarSync ? '✅ Sync' : '⚠️ No sync'}</button>
                         {user.ruolo === "admin" && (
                           <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => eliminaPrenotazione(p.id)}>🗑️</button>
                         )}
@@ -1284,14 +1588,31 @@ function Prenotazioni({ user }) {
           );
         };
 
+        // Su schermi stretti: nasconde i chip completi nei giorni del mese (troppo piccoli per essere leggibili)
+        // e mostra solo l'orario di ciascuna prenotazione in una mini-etichetta colorata per stato,
+        // così l'intero mese entra senza scroll orizzontale ma resta comunque leggibile un minimo di informazione.
+        const calendarioMobileStyles = `
+          @media (max-width: 480px) {
+            .cal-mese-grid { min-width: 0 !important; grid-template-columns: 16px repeat(7, 1fr) !important; gap: 2px !important; }
+            .cal-mese-giorno { min-height: 46px !important; padding: 2px !important; }
+            .cal-mese-numero { font-size: 0.6rem !important; }
+            .cal-mese-giorno-header { font-size: 0.6rem !important; padding: 2px 0 !important; }
+            .cal-mese-settimana, .cal-mese-settimana-label { font-size: 0.55rem !important; }
+            .cal-mese-chips { display: none !important; }
+            .cal-mese-puntini { display: flex !important; flex-wrap: wrap; align-content: flex-start; gap: 1px; justify-content: center; }
+          }
+        `;
+
         return (
           <div className="schermata-storico no-print">
+            <style>{calendarioMobileStyles}</style>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} onClick={vaiPrec}>‹</button>
                 <button className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} onClick={() => setCalDate(new Date())}>Oggi</button>
                 <button className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} onClick={vaiSucc}>›</button>
                 <h2 style={{ margin: 0, textTransform: 'capitalize' }}>{titolo}</h2>
+                {toISODate(calDate) === oggiIso && <span style={{ fontSize: '0.7rem', background: '#2563eb', color: '#fff', padding: '2px 9px', borderRadius: '10px', fontWeight: 'bold', letterSpacing: '0.03em' }}>OGGI</span>}
               </div>
               <div className="modulo-subnav" style={{ margin: 0 }}>
                 <button className={`nav-btn ${calView === 'mese' ? 'active' : ''}`} onClick={() => setCalView('mese')}>Mese</button>
@@ -1307,26 +1628,43 @@ function Prenotazioni({ user }) {
 
             {/* MESE */}
             {calView === 'mese' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '44px repeat(7, 1fr)', gap: '4px' }}>
-                <div style={{ fontSize: '0.7rem', color: '#94a3b8', textAlign: 'center', padding: '6px 0' }}>Sett.</div>
-                {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'].map(g => <div key={g} style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#64748b', textAlign: 'center', padding: '6px 0' }}>{g}</div>)}
-                {Array.from({ length: 6 }, (_, w) => Array.from({ length: 7 }, (_, d) => addGiorni(inizioSettimana(new Date(calDate.getFullYear(), calDate.getMonth(), 1)), w * 7 + d))).map((settimana, wi) => (
-                  <Fragment key={wi}>
-                    <div onClick={() => { setCalDate(settimana[0]); setCalView('settimana'); }} title="Apri settimana" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 'bold', color: '#64748b' }}>{numeroSettimana(settimana[3])}</div>
-                    {settimana.map((giorno, di) => {
-                      const iso = toISODate(giorno);
-                      const fuoriMese = giorno.getMonth() !== calDate.getMonth();
-                      const lista = prenDelGiorno(iso);
-                      return (
-                        <div key={di} onClick={() => { setCalDate(giorno); setCalView('giorno'); }} title="Apri giorno" style={{ cursor: 'pointer', minHeight: '150px', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '4px', background: fuoriMese ? '#f8fafc' : '#fff', opacity: fuoriMese ? 0.55 : 1 }}>
-                          <div style={{ fontSize: '0.75rem', fontWeight: iso === oggiIso ? 'bold' : 'normal', color: iso === oggiIso ? '#2563eb' : '#475569', textAlign: 'right' }}>{giorno.getDate()}</div>
-                          {lista.slice(0, 8).map(p => <Chip key={p.id} p={p} />)}
-                          {lista.length > 8 && <div style={{ fontSize: '0.7rem', color: '#777' }}>+{lista.length - 8} altre…</div>}
-                        </div>
-                      );
-                    })}
-                  </Fragment>
-                ))}
+              <div className="cal-mese-wrap" style={{ overflowX: 'auto' }}>
+                <div className="cal-mese-grid" style={{ display: 'grid', gridTemplateColumns: '44px repeat(7, 1fr)', gap: '4px', minWidth: '640px' }}>
+                  <div className="cal-mese-settimana-label" style={{ fontSize: '0.7rem', color: '#94a3b8', textAlign: 'center', padding: '6px 0' }}>Sett.</div>
+                  {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'].map(g => <div key={g} className="cal-mese-giorno-header" style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#64748b', textAlign: 'center', padding: '6px 0' }}>{g}</div>)}
+                  {Array.from({ length: 6 }, (_, w) => Array.from({ length: 7 }, (_, d) => addGiorni(inizioSettimana(new Date(calDate.getFullYear(), calDate.getMonth(), 1)), w * 7 + d))).map((settimana, wi) => (
+                    <Fragment key={wi}>
+                      <div onClick={() => { setCalDate(settimana[0]); setCalView('settimana'); }} title="Apri settimana" className="cal-mese-settimana" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 'bold', color: '#64748b' }}>{numeroSettimana(settimana[3])}</div>
+                      {settimana.map((giorno, di) => {
+                        const iso = toISODate(giorno);
+                        const fuoriMese = giorno.getMonth() !== calDate.getMonth();
+                        const lista = prenDelGiorno(iso);
+                        return (
+                          <div key={di} onClick={() => { setCalDate(giorno); setCalView('giorno'); }} title="Apri giorno" className="cal-mese-giorno" style={{ cursor: 'pointer', minHeight: '150px', border: iso === oggiIso ? '2px solid #2563eb' : '1px solid #e2e8f0', borderRadius: '6px', padding: '4px', background: iso === oggiIso ? '#eff6ff' : (fuoriMese ? '#f8fafc' : '#fff'), opacity: fuoriMese ? 0.55 : 1 }}>
+                            <div className="cal-mese-numero" style={{ textAlign: 'right' }}>
+                              <span style={iso === oggiIso ? { display: 'inline-block', fontSize: '0.75rem', fontWeight: 'bold', color: '#fff', background: '#2563eb', borderRadius: '50%', width: '20px', height: '20px', lineHeight: '20px', textAlign: 'center' } : { fontSize: '0.75rem', fontWeight: 'normal', color: '#475569' }}>{giorno.getDate()}</span>
+                            </div>
+                            <div className="cal-mese-chips">
+                              {lista.slice(0, 8).map(p => <Chip key={p.id} p={p} />)}
+                              {lista.length > 8 && <div style={{ fontSize: '0.7rem', color: '#777' }}>+{lista.length - 8} altre…</div>}
+                            </div>
+                            <div className="cal-mese-puntini" style={{ display: 'none' }}>
+                              {lista.slice(0, 4).map(p => {
+                                const c = coloreStato(p.stato);
+                                return (
+                                  <span key={p.id} title={`${p.oraInizio || ''} ${p.stato} · ${p.nominativo}`} onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} style={{ display: 'inline-block', fontSize: '0.55rem', lineHeight: 1, fontWeight: 'bold', padding: '1px 2px', borderRadius: '3px', background: c.bg, border: `1px solid ${c.bd}`, color: c.tx, margin: '1px' }}>
+                                    {(p.oraInizio || '').slice(0, 2) || '•'}
+                                  </span>
+                                );
+                              })}
+                              {lista.length > 4 && <span style={{ fontSize: '0.55rem', color: '#777' }}>+{lista.length - 4}</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -1339,11 +1677,14 @@ function Prenotazioni({ user }) {
                 <div style={{ overflowX: 'auto' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '56px repeat(7, 1fr)', gap: '1px', background: '#e2e8f0', border: '1px solid #e2e8f0', borderRadius: '6px', minWidth: '700px' }}>
                     <div style={{ background: '#fff' }}></div>
-                    {giorni.map((g, i) => (
-                      <div key={i} style={{ background: toISODate(g) === oggiIso ? '#eff6ff' : '#f8fafc', padding: '6px', fontSize: '0.78rem', fontWeight: 'bold', color: '#475569', textAlign: 'center' }}>
-                        {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'][i]} {g.getDate()}
-                      </div>
-                    ))}
+                    {giorni.map((g, i) => {
+                      const isOggi = toISODate(g) === oggiIso;
+                      return (
+                        <div key={i} style={{ background: isOggi ? '#dbeafe' : '#f8fafc', padding: '6px', fontSize: '0.78rem', fontWeight: 'bold', color: isOggi ? '#2563eb' : '#475569', textAlign: 'center', borderBottom: isOggi ? '3px solid #2563eb' : '3px solid transparent', boxSizing: 'border-box' }}>
+                          {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'][i]} {g.getDate()}
+                        </div>
+                      );
+                    })}
                     <div style={{ position: 'relative', background: '#f8fafc', height: `${altezzaGriglia}px` }}>
                       {ORE_GRIGLIA.map((h, i) => (
                         <div key={h} style={{ position: 'absolute', top: `${i * ROW_H}px`, transform: 'translateY(-50%)', width: '100%', boxSizing: 'border-box', fontSize: '0.72rem', color: '#64748b', textAlign: 'right', padding: '0 6px' }}>{String(h).padStart(2, '0')}:00</div>
@@ -1351,8 +1692,9 @@ function Prenotazioni({ user }) {
                     </div>
                     {giorni.map((g, di) => {
                       const eventi = calcolaLayoutEventi(prenDelGiorno(toISODate(g)));
+                      const isOggi = toISODate(g) === oggiIso;
                       return (
-                        <div key={di} style={{ position: 'relative', background: '#fff', height: `${altezzaGriglia}px` }}>
+                        <div key={di} style={{ position: 'relative', background: isOggi ? '#f5f9ff' : '#fff', height: `${altezzaGriglia}px` }}>
                           {ORE_GRIGLIA.map((h, i) => <div key={h} style={{ position: 'absolute', top: `${i * ROW_H}px`, width: '100%', borderTop: '1px solid #f1f5f9' }}></div>)}
                           {eventi.map(ev => (
                             <div key={ev.p.id} style={{ position: 'absolute', top: `${(ev.inizioMin / 60) * ROW_H}px`, height: `${(ev.durataMin / 60) * ROW_H}px`, left: `${(ev.corsia / ev.numCorsie) * 100}%`, width: `${(1 / ev.numCorsie) * 100}%`, boxSizing: 'border-box', padding: '0 1px 2px 1px' }}>
@@ -1435,8 +1777,11 @@ function Prenotazioni({ user }) {
             {prenSelezionata && (
               <div className="modal-preventivo-backdrop" onClick={() => setPrenSelezionata(null)}>
                 <div style={{ background: '#fff', maxWidth: '420px', margin: '80px auto', borderRadius: '10px', padding: '22px' }} onClick={e => e.stopPropagation()}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: 0 }}>{prenSelezionata.id}</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <button className="btn-chiudi" title="Chiudi" style={{ float: 'none', padding: '4px 9px' }} onClick={() => setPrenSelezionata(null)}>✕</button>
+                      <h3 style={{ margin: 0 }}>{prenSelezionata.id}</h3>
+                    </div>
                     <span className={`badge-stato ${(prenSelezionata.stato || '').toLowerCase()}`}>{prenSelezionata.stato}</span>
                   </div>
                   <div style={{ marginTop: '12px', fontSize: '0.9rem', lineHeight: 1.6 }}>
@@ -1448,7 +1793,8 @@ function Prenotazioni({ user }) {
                     {prenSelezionata.tipoRinfresco && <>🍽️ Rinfresco: {prenSelezionata.tipoRinfresco}{prenSelezionata.numeroPartecipanti ? ` · ${prenSelezionata.numeroPartecipanti} pers` : ''}<br /></>}
                     {prenSelezionata.etaMedia && <>🎂 Età media: {prenSelezionata.etaMedia}<br /></>}
                     {prenSelezionata.note && <>📝 <em>{prenSelezionata.note}</em><br /></>}
-                    💶 Pagato €{((prenSelezionata.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0)).toFixed(2)} / €{(parseFloat(prenSelezionata.prezzoVendita) || 0).toFixed(2)} · <strong>{prenSelezionata.statoPagamento || 'in attesa'}</strong>
+                    💶 Pagato €{((prenSelezionata.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0)).toFixed(2)} / €{(parseFloat(prenSelezionata.prezzoVendita) || 0).toFixed(2)} · <strong>{prenSelezionata.statoPagamento || 'in attesa'}</strong><br />
+                    📅 <button type="button" onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(prenSelezionata); }} title="Clic per correggere a mano lo stato di sincronizzazione" style={{ border: 'none', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: prenSelezionata.googleCalendarSync ? '#dcfce7' : '#fee2e2', color: prenSelezionata.googleCalendarSync ? '#166534' : '#991b1b' }}>{prenSelezionata.googleCalendarSync ? '✅ Sincronizzato con Google Calendar' : '⚠️ Non sincronizzato con Google Calendar'}</button>
                     {prenSelezionata.campoId && (
                       <label onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', cursor: 'pointer', fontWeight: 'bold', color: prenSelezionata.campoPrenotato ? '#166534' : '#9a3412' }}>
                         <input type="checkbox" checked={!!prenSelezionata.campoPrenotato} onChange={() => toggleCampoPrenotato(prenSelezionata)} /> {prenSelezionata.campoPrenotato ? 'Campo prenotato' : 'Campo da prenotare'} <span style={{ fontSize: '0.75rem', color: '#777', fontWeight: 'normal' }}>(clic per cambiare)</span>
@@ -1457,10 +1803,10 @@ function Prenotazioni({ user }) {
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginTop: '18px', justifyContent: 'center' }}>
                     <button className="btn-modifica-inline" title="Apri" style={{ padding: '8px 12px' }} onClick={() => { caricaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>📂</button>
-                    {prenSelezionata.stato === 'FORSE' && <button className="btn-conferma" title="Conferma" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata.id, 'CONF'); setPrenSelezionata(null); }}>✔️</button>}
-                    {prenSelezionata.stato === 'CONF' && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata.id, 'FORSE'); setPrenSelezionata(null); }}>↩️</button>}
+                    {prenSelezionata.stato === 'FORSE' && <button className="btn-conferma" title="Conferma (prepara mail al cliente)" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'CONF'); setPrenSelezionata(null); }}>✔️</button>}
+                    {prenSelezionata.stato === 'CONF' && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'FORSE'); setPrenSelezionata(null); }}>↩️</button>}
+                    <button className="btn-modifica-inline" title={prenSelezionata.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '8px 12px' }} onClick={() => apriGoogleCalendar(prenSelezionata)}>📅</button>
                     {user.ruolo === 'admin' && <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { eliminaPrenotazione(prenSelezionata.id); setPrenSelezionata(null); }}>🗑️</button>}
-                    <button className="btn-chiudi" title="Chiudi" style={{ float: 'none', padding: '8px 12px' }} onClick={() => setPrenSelezionata(null)}>✕</button>
                   </div>
                 </div>
               </div>
@@ -1469,6 +1815,194 @@ function Prenotazioni({ user }) {
         );
       })()}
 
+      {/* ===================== RIEPILOGHI SETTIMANALI (per operatore / per campo) ===================== */}
+      {currentView === "riepiloghi" && puoVedere(user, 'prenotazioni', 'riepiloghi') && (() => {
+        const inizio = inizioSettimana(riepilogoData);
+        const fine = addGiorni(inizio, 6);
+        const isoSettimana = new Set(Array.from({ length: 7 }, (_, i) => toISODate(addGiorni(inizio, i))));
+        const righeSettimana = prenotazioni.filter(p => isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
+        const locLabelRiep = (p) => p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—';
+
+        const rigaTestoBreve = (p) => {
+          const extra = [];
+          if (p.tipoRinfresco) extra.push(p.tipoRinfresco);
+          if (p.numeroPartecipanti) extra.push(`${p.numeroPartecipanti} pers`);
+          return `ore ${p.oraInizio || '—'} ${formattaDataBreveIT(p.data)} - ${p.pacchettoNome || 'Prenotazione'}${extra.length ? ' (' + extra.join(', ') + ')' : ''}`;
+        };
+
+        // Raggruppa per operatore
+        const perOperatore = {};
+        righeSettimana.forEach(p => {
+          (p.operatori || []).forEach(o => {
+            if (!perOperatore[o.id]) perOperatore[o.id] = [];
+            perOperatore[o.id].push(p);
+          });
+        });
+        const listaOperatori = operatori
+          .map(o => ({ id: o.id, nome: o.nome, telefono: o.telefono, righe: perOperatore[o.id] || [] }))
+          .filter(o => o.righe.length > 0);
+
+        // Raggruppa per campo configurato (le location libere non hanno un gruppo/riepilogo da inviare)
+        const perCampo = {};
+        righeSettimana.filter(p => p.campoId).forEach(p => {
+          const label = locLabelRiep(p);
+          if (!perCampo[label]) perCampo[label] = [];
+          perCampo[label].push(p);
+        });
+        const listaCampi = Object.entries(perCampo).map(([label, righe]) => ({ label, righe }));
+
+        const periodoTxt = `dal ${formattaDataBreveIT(toISODate(inizio))} al ${formattaDataBreveIT(toISODate(fine))}`;
+
+        const messaggioOperatore = (op) => [
+          `Ciao ${op.nome}! 👋`,
+          `Ecco le tue prenotazioni per la settimana ${periodoTxt}:`,
+          '',
+          ...op.righe.map((p, i) => `${i + 1}) ${rigaTestoBreve(p)}${locLabelRiep(p) !== '—' ? ` presso ${locLabelRiep(p)}` : ''}`),
+          '',
+          'Grazie! 💪'
+        ].join('\n');
+
+        const messaggioCampo = (c) => [
+          `📋 Prenotazioni della settimana - ${c.label}`,
+          `Periodo ${periodoTxt}`,
+          '',
+          ...c.righe.map((p, i) => `${i + 1}) ${rigaTestoBreve(p)}`)
+        ].join('\n');
+
+        return (
+          <div className="schermata-storico no-print">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} onClick={() => setRiepilogoData(d => addGiorni(d, -7))}>‹</button>
+                <button className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} onClick={() => setRiepilogoData(new Date())}>Oggi</button>
+                <button className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} onClick={() => setRiepilogoData(d => addGiorni(d, 7))}>›</button>
+                <h2 style={{ margin: 0 }}>Settimana {periodoTxt}</h2>
+              </div>
+              <div className="modulo-subnav" style={{ margin: 0 }}>
+                <button className={`nav-btn ${riepilogoTab === 'operatori' ? 'active' : ''}`} onClick={() => setRiepilogoTab('operatori')}>👤 Per Operatore</button>
+                <button className={`nav-btn ${riepilogoTab === 'campi' ? 'active' : ''}`} onClick={() => setRiepilogoTab('campi')}>📍 Per Campo</button>
+              </div>
+            </div>
+
+            {riepilogoTab === 'operatori' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
+                {listaOperatori.length === 0 && <p style={{ color: '#666' }}>Nessuna prenotazione con operatori assegnati in questa settimana.</p>}
+                {listaOperatori.map(op => {
+                  const numero = numeroWhatsApp(op.telefono);
+                  return (
+                    <div key={op.id} className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                        <strong>👤 {op.nome} <span style={{ fontWeight: 'normal', color: '#777', fontSize: '0.85rem' }}>({op.righe.length} prenotazion{op.righe.length === 1 ? 'e' : 'i'})</span></strong>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button type="button" className="btn-preventivo" style={{ width: 'auto', marginTop: 0, fontSize: '0.85rem', padding: '6px 12px' }} onClick={() => { setRiepilogoTesto(messaggioOperatore(op)); setRiepilogoCopiato(false); }}>📋 Copia testo</button>
+                          {numero && (
+                            <a className="btn-conferma" title="Apri WhatsApp Web" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '34px', padding: '6px', fontSize: '1rem' }} href={`https://web.whatsapp.com/send?phone=${numero}&text=${encodeURIComponent(messaggioOperatore(op))}`} target="whatsapp-noleggio">📱</a>
+                          )}
+                        </div>
+                      </div>
+                      <ul style={{ margin: '10px 0 0 0', paddingLeft: '20px', fontSize: '0.85rem', color: '#555' }}>
+                        {op.righe.map(p => <li key={p.id}>{rigaTestoBreve(p)}{locLabelRiep(p) !== '—' && ` · ${locLabelRiep(p)}`}</li>)}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {riepilogoTab === 'campi' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
+                {listaCampi.length === 0 && <p style={{ color: '#666' }}>Nessuna prenotazione in questa settimana.</p>}
+                {listaCampi.map(c => (
+                  <div key={c.label} className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                      <strong>📍 {c.label} <span style={{ fontWeight: 'normal', color: '#777', fontSize: '0.85rem' }}>({c.righe.length} prenotazion{c.righe.length === 1 ? 'e' : 'i'})</span></strong>
+                      <button type="button" className="btn-preventivo" style={{ width: 'auto', marginTop: 0, fontSize: '0.85rem', padding: '6px 12px' }} onClick={() => { setRiepilogoTesto(messaggioCampo(c)); setRiepilogoCopiato(false); }}>📋 Copia messaggio</button>
+                    </div>
+                    <ul style={{ margin: '10px 0 0 0', paddingLeft: '20px', fontSize: '0.85rem', color: '#555' }}>
+                      {c.righe.map(p => <li key={p.id}>{rigaTestoBreve(p)}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ANTEPRIMA RIEPILOGO DA COPIARE (invio manuale su WhatsApp, es. gruppo di un campo) */}
+      {riepilogoTesto !== null && (
+        <div className="modal-preventivo-backdrop no-print" onClick={() => { setRiepilogoTesto(null); setRiepilogoCopiato(false); }}>
+          <div style={{ background: '#fff', maxWidth: '480px', margin: '80px auto', borderRadius: '10px', padding: '22px' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>📱 Messaggio riepilogo</h3>
+            <p className="descrizione-pagina" style={{ marginTop: 0 }}>Copia il testo e incollalo in WhatsApp (es. nel gruppo del campo).</p>
+            <textarea readOnly value={riepilogoTesto} rows={12} style={{ width: '100%', boxSizing: 'border-box', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', fontFamily: 'inherit', fontSize: '0.85rem', resize: 'vertical' }} onFocus={(e) => e.target.select()} />
+            <div style={{ display: 'flex', gap: '10px', marginTop: '14px', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn-chiudi" style={{ float: 'none' }} onClick={() => { setRiepilogoTesto(null); setRiepilogoCopiato(false); }}>Chiudi</button>
+              <button
+                type="button"
+                className="btn-preventivo"
+                style={{ width: 'auto', marginTop: 0 }}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(riepilogoTesto);
+                    setRiepilogoCopiato(true);
+                  } catch {
+                    alert("Copia non riuscita: seleziona il testo manualmente.");
+                  }
+                }}
+              >
+                {riepilogoCopiato ? '✅ Copiato!' : '📋 Copia testo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ANTEPRIMA CONFERMA DA COPIARE (invio manuale via Gmail, con formattazione HTML) */}
+      {testoConferma !== null && (
+        <div className="modal-preventivo-backdrop no-print" onClick={() => { setTestoConferma(null); setConfermaCopiata(false); }}>
+          <div style={{ background: '#fff', maxWidth: '600px', margin: '60px auto', borderRadius: '10px', padding: '22px' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>✉️ Conferma prenotazione</h3>
+            <p className="descrizione-pagina" style={{ marginTop: 0 }}>Copia il messaggio e incollalo in una nuova mail Gmail: la formattazione (tabella, grassetti) viene mantenuta.</p>
+            <div
+              style={{ maxHeight: '360px', overflowY: 'auto', padding: '14px', border: '1px solid #cbd5e1', borderRadius: '6px', background: '#f9f9f9' }}
+              dangerouslySetInnerHTML={{ __html: testoConferma.html }}
+            />
+            <div style={{ display: 'flex', gap: '10px', marginTop: '14px', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn-chiudi" style={{ float: 'none' }} onClick={() => { setTestoConferma(null); setConfermaCopiata(false); }}>Chiudi</button>
+              <button
+                type="button"
+                className="btn-preventivo"
+                style={{ width: 'auto', marginTop: 0 }}
+                onClick={async () => {
+                  try {
+                    if (window.ClipboardItem && navigator.clipboard.write) {
+                      await navigator.clipboard.write([
+                        new ClipboardItem({
+                          'text/html': new Blob([testoConferma.html], { type: 'text/html' }),
+                          'text/plain': new Blob([testoConferma.testo], { type: 'text/plain' })
+                        })
+                      ]);
+                    } else {
+                      await navigator.clipboard.writeText(testoConferma.testo);
+                    }
+                    setConfermaCopiata(true);
+                  } catch {
+                    try {
+                      await navigator.clipboard.writeText(testoConferma.testo);
+                      setConfermaCopiata(true);
+                    } catch {
+                      alert("Copia non riuscita: seleziona il testo manualmente.");
+                    }
+                  }
+                }}
+              >
+                {confermaCopiata ? '✅ Copiato!' : '📋 Copia messaggio'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

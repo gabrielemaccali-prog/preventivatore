@@ -78,6 +78,7 @@ function CostiRicavi({ user }) {
 
   const centroRicavoDi = useCallback((p) => pacchetti.find(x => x.id === p.pacchettoId)?.centroRicavo || 'Non assegnato', [pacchetti]);
   const centroCostoDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.centroCosto || 'Non assegnato', [campi]);
+  const campoNomeDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.nome || '—', [campi]);
 
   // ====================== TABELLA (dettaglio partite, filtri e export) ======================
   const [filtroData, setFiltroData] = useState("");
@@ -201,6 +202,7 @@ function CostiRicavi({ user }) {
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                   <th style={{ padding: '10px' }}>Codice / Data</th>
                   <th style={{ padding: '10px' }}>Nominativo</th>
+                  <th style={{ padding: '10px' }}>Campo</th>
                   <th style={{ padding: '10px' }}>Stato</th>
                   <th style={{ padding: '10px', textAlign: 'right' }}>Ricavo</th>
                   <th style={{ padding: '10px', textAlign: 'right' }}>Costo campo</th>
@@ -211,13 +213,14 @@ function CostiRicavi({ user }) {
               </thead>
               <tbody>
                 {righeTabella.length === 0 ? (
-                  <tr><td colSpan="8" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessuna partita.</td></tr>
+                  <tr><td colSpan="9" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessuna partita.</td></tr>
                 ) : righeTabella.map(p => {
                   const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), ce = nettoEreditato(p), m = r - cc - cr - ce;
                   return (
                     <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
                       <td style={{ padding: '10px' }}><strong>{p.id}</strong><br /><span style={{ color: '#777', fontSize: '0.8rem' }}>{p.data}</span></td>
                       <td style={{ padding: '10px' }}>{p.nominativo}</td>
+                      <td style={{ padding: '10px' }}>{campoNomeDi(p)}</td>
                       <td style={{ padding: '10px' }}><span className={`badge-stato ${(p.stato || '').toLowerCase()}`}>{p.stato}</span></td>
                       <td style={{ padding: '10px', textAlign: 'right' }}>€{r.toFixed(2)}</td>
                       <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cc.toFixed(2)}</td>
@@ -230,7 +233,7 @@ function CostiRicavi({ user }) {
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
-                  <td style={{ padding: '10px' }} colSpan="3">TOTALE ({righeTabella.length})</td>
+                  <td style={{ padding: '10px' }} colSpan="4">TOTALE ({righeTabella.length})</td>
                   <td style={{ padding: '10px', textAlign: 'right' }}>€{totTabella.ricavo.toFixed(2)}</td>
                   <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }} colSpan="3">€{totTabella.costo.toFixed(2)}</td>
                   <td style={{ padding: '10px', textAlign: 'right', color: totTabella.margine >= 0 ? '#2e7d32' : '#c62828' }}>€{totTabella.margine.toFixed(2)}</td>

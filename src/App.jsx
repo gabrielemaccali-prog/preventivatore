@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import './App.css'
 import { supabase } from './lib/supabaseClient';
 import Preventivatore from './moduli/preventivatore/Preventivatore';
@@ -20,6 +20,13 @@ function App() {
 
   // --- CONFIGURAZIONE MODULI (flag sperimentale, badge SP in sidebar) ---
   const [moduliConfig, setModuliConfig] = useState({});
+
+  // --- ACCESSO RAPIDO (solo sviluppo locale, nessuna password) ---
+  const [utentiDev, setUtentiDev] = useState([]);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    supabase.from('utenti').select('username, ruolo').order('username').then(({ data }) => { if (data) setUtentiDev(data); });
+  }, []);
 
   const fetchModuliConfig = useCallback(async () => {
     const { data } = await supabase.from('moduli_config').select('*');
@@ -62,6 +69,12 @@ function App() {
     }
   };
 
+  const handleQuickLogin = async (u) => {
+    const permessi = await fetchPermessiRuolo(u.ruolo);
+    setUser({ username: u.username, ruolo: u.ruolo, permessi });
+    fetchModuliConfig();
+  };
+
   const handleLogout = () => {
     setUser(null);
     setLoginUser("");
@@ -86,6 +99,19 @@ function App() {
             <input type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} />
             <button type="submit">Accedi</button>
           </form>
+
+          {import.meta.env.DEV && utentiDev.length > 0 && (
+            <div style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px dashed #cbd5e1' }}>
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8', textAlign: 'center', margin: '0 0 8px 0' }}>🛠️ Accesso rapido (solo sviluppo locale, senza password)</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center' }}>
+                {utentiDev.map(u => (
+                  <button key={u.username} type="button" onClick={() => handleQuickLogin(u)} style={{ padding: '6px 12px', fontSize: '0.8rem', background: '#e2e8f0', color: '#334155', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                    {u.username} <span style={{ opacity: 0.6 }}>({u.ruolo})</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
