@@ -205,7 +205,7 @@ function Prenotazioni({ user }) {
   const [currentView, setCurrentView] = useState(primaSchedaPren); // config | nuova | gestione | calendario
   const primaSottoschedaConfigPren = ['pacchetti', 'operatori', 'campi'].find(s => puoVedere(user, 'prenotazioni', 'config', s)) || 'pacchetti';
   const [configTab, setConfigTab] = useState(primaSottoschedaConfigPren);  // pacchetti | operatori | campi
-  const [gestioneTab, setGestioneTab] = useState("daConfermare"); // daConfermare | inAttesaPagamento | daCompletare
+  const [gestioneTab, setGestioneTab] = useState("inAttesaPagamento"); // inAttesaPagamento | daConfermare | partiteAttive | daCompletare
 
   const [pacchetti, setPacchetti] = useState([]);
   const [operatori, setOperatori] = useState([]);
@@ -1531,23 +1531,28 @@ function Prenotazioni({ user }) {
       )}
       {currentView === "gestione" && puoVedere(user, 'prenotazioni', 'gestione') && (() => {
         const oggiIsoGestione = toISODate(new Date());
-        const daConfermare = prenotazioni.filter(p => p.stato === 'FORSE' && p.statoPagamento && p.statoPagamento !== 'in attesa');
         const inAttesaPagamento = prenotazioni.filter(p => p.stato === 'FORSE' && (!p.statoPagamento || p.statoPagamento === 'in attesa'));
+        const daConfermare = prenotazioni.filter(p => p.stato === 'FORSE' && p.statoPagamento && p.statoPagamento !== 'in attesa');
+        const partiteAttive = prenotazioni.filter(p => p.stato === 'CONF' && p.data >= oggiIsoGestione);
         const daCompletare = prenotazioni.filter(p => p.stato === 'CONF' && p.data < oggiIsoGestione && (p.statoPagamento !== 'saldato' || !fatturazioneCompletaDi(p)));
-        const listaCorrente = gestioneTab === 'daConfermare' ? daConfermare : gestioneTab === 'inAttesaPagamento' ? inAttesaPagamento : daCompletare;
-        const messaggioVuoto = gestioneTab === 'daConfermare' ? "Nessun cliente pagato in attesa di conferma."
-          : gestioneTab === 'inAttesaPagamento' ? "Nessun cliente in attesa di pagamento."
-          : "Nessuna prenotazione da completare.";
+        const liste = { inAttesaPagamento, daConfermare, partiteAttive, daCompletare };
+        const messaggiVuoto = {
+          inAttesaPagamento: "Nessun cliente in attesa di pagamento.",
+          daConfermare: "Nessun cliente pagato in attesa di conferma.",
+          partiteAttive: "Nessuna partita confermata in programma.",
+          daCompletare: "Nessuna prenotazione da completare.",
+        };
         return (
           <div className="schermata-storico no-print">
             <h2 style={{ margin: 0 }}>🔔 Gestione</h2>
             <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento o completamento dati.</p>
             <nav className="modulo-subnav" style={{ margin: '10px 0' }}>
-              <button className={`nav-btn ${gestioneTab === 'daConfermare' ? 'active' : ''}`} onClick={() => setGestioneTab('daConfermare')}>💰 Da confermare ({daConfermare.length})</button>
               <button className={`nav-btn ${gestioneTab === 'inAttesaPagamento' ? 'active' : ''}`} onClick={() => setGestioneTab('inAttesaPagamento')}>⏳ In attesa di pagamento ({inAttesaPagamento.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'daConfermare' ? 'active' : ''}`} onClick={() => setGestioneTab('daConfermare')}>💰 Da confermare ({daConfermare.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'partiteAttive' ? 'active' : ''}`} onClick={() => setGestioneTab('partiteAttive')}>🎮 Partite attive ({partiteAttive.length})</button>
               <button className={`nav-btn ${gestioneTab === 'daCompletare' ? 'active' : ''}`} onClick={() => setGestioneTab('daCompletare')}>🧩 Da completare ({daCompletare.length})</button>
             </nav>
-            {tabellaPren(listaCorrente, messaggioVuoto)}
+            {tabellaPren(liste[gestioneTab], messaggiVuoto[gestioneTab])}
           </div>
         );
       })()}
