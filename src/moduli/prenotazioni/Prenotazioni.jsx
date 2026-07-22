@@ -166,6 +166,11 @@ const statoPagamentoDi = (pagamenti, prezzoVendita) => {
   return 'acconto';
 };
 
+// Verifica se i dati di fatturazione sono completi (privato con CF valido, oppure azienda con P.IVA)
+const fatturazioneCompletaDi = (p) => p.fattTipo === 'azienda'
+  ? !!(p.ragioneSociale && p.aziIndirizzo && p.aziCitta && p.pIva)
+  : !!(p.fattNome && p.fattCognome && p.fattIndirizzo && p.fattCitta && validaCF(p.fattCF));
+
 // Durata in ore dalla differenza inizio/fine (gestisce l'attraversamento della mezzanotte)
 const durataDaOrari = (ini, fin) => {
   const a = toMinutes(ini), b = toMinutes(fin);
@@ -196,10 +201,11 @@ const Campo = ({ label, children }) => (
 );
 
 function Prenotazioni({ user }) {
-  const primaSchedaPren = ['nuova', 'config', 'storico', 'calendario'].find(s => puoVedere(user, 'prenotazioni', s)) || 'nuova';
-  const [currentView, setCurrentView] = useState(primaSchedaPren); // config | nuova | storico | calendario
+  const primaSchedaPren = ['nuova', 'config', 'gestione', 'calendario'].find(s => puoVedere(user, 'prenotazioni', s)) || 'nuova';
+  const [currentView, setCurrentView] = useState(primaSchedaPren); // config | nuova | gestione | calendario
   const primaSottoschedaConfigPren = ['pacchetti', 'operatori', 'campi'].find(s => puoVedere(user, 'prenotazioni', 'config', s)) || 'pacchetti';
   const [configTab, setConfigTab] = useState(primaSottoschedaConfigPren);  // pacchetti | operatori | campi
+  const [gestioneTab, setGestioneTab] = useState("daConfermare"); // daConfermare | inAttesaPagamento | daCompletare
 
   const [pacchetti, setPacchetti] = useState([]);
   const [operatori, setOperatori] = useState([]);
@@ -499,6 +505,72 @@ function Prenotazioni({ user }) {
     fetchTutto();
   };
 
+  // Riga di tabella condivisa da Storico e dalle sotto-schede di Gestione (stesse azioni: apri, conferma, calendario, elimina)
+  const rigaTabellaPren = (p) => {
+    const totPagato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
+    const totale = parseFloat(p.prezzoVendita) || 0;
+    return (
+      <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+        <td style={{ padding: '12px' }}>
+          <strong>{p.id}</strong><br />
+          <span style={{ color: '#777', fontSize: '0.8rem' }}>{p.data} {p.oraInizio ? `· ${p.oraInizio}` : ''}</span><br />
+          <span className={`badge-stato ${(p.stato || '').toLowerCase()}`} style={{ marginTop: '6px' }}>{p.stato}</span>
+        </td>
+        <td style={{ padding: '12px' }}>
+          👤 {p.nominativo}<br />
+          {p.telefono && <span style={{ fontSize: '0.8rem', color: '#555' }}>📞 {p.telefono}</span>}
+        </td>
+        <td style={{ padding: '12px', fontSize: '0.82rem', color: '#555' }}>
+          {p.pacchettoNome || '—'}<br />
+          <span style={{ color: '#777' }}>{p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—'}</span>
+          {p.operatori && p.operatori.length > 0 && <><br /><span style={{ color: '#0288d1' }}>🧑‍🔧 {p.operatori.map(o => o.nome).join(', ')}</span></>}
+        </td>
+        <td style={{ padding: '12px' }}>
+          <strong style={{ color: '#0f172a' }}>€{totPagato.toFixed(2)}</strong> <span style={{ color: '#777' }}>/ €{totale.toFixed(2)}</span><br />
+          <span className="badge-stato" style={{ marginTop: '6px', background: p.statoPagamento === 'saldato' ? '#dcfce7' : p.statoPagamento === 'acconto' ? '#fef9c3' : '#fee2e2', color: p.statoPagamento === 'saldato' ? '#166534' : p.statoPagamento === 'acconto' ? '#854d0e' : '#991b1b' }}>{p.statoPagamento || 'in attesa'}</span>
+        </td>
+        <td style={{ padding: '12px', textAlign: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'row', gap: '6px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button className="btn-modifica-inline" title="Apri" style={{ padding: '6px 9px' }} onClick={() => caricaPrenotazione(p)}>📂</button>
+            {p.stato === "FORSE" && (
+              <button className="btn-conferma" title="Conferma (prepara mail al cliente)" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p, "CONF")}>✔️</button>
+            )}
+            {p.stato === "CONF" && (
+              <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p, "FORSE")}>↩️</button>
+            )}
+            <button className="btn-modifica-inline" title={p.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '6px 9px' }} onClick={() => apriGoogleCalendar(p)}>📅</button>
+            <button type="button" onClick={() => toggleGoogleCalendarSync(p)} title={p.googleCalendarSync ? "Sincronizzato con Google Calendar (clic per correggere a mano)" : "Non ancora sincronizzato con Google Calendar (clic per correggere a mano)"} style={{ border: 'none', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 'bold', padding: '2px 6px', borderRadius: '8px', background: p.googleCalendarSync ? '#dcfce7' : '#fee2e2', color: p.googleCalendarSync ? '#166534' : '#991b1b' }}>{p.googleCalendarSync ? '✅ Sync' : '⚠️ No sync'}</button>
+            {user.ruolo === "admin" && (
+              <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => eliminaPrenotazione(p.id)}>🗑️</button>
+            )}
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  // Tabella completa (intestazione + righe) condivisa da Storico e Gestione
+  const tabellaPren = (righe, messaggioVuoto) => (
+    <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+      <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+        <thead>
+          <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+            <th style={{ padding: '12px' }}>Codice / Data / Stato</th>
+            <th style={{ padding: '12px' }}>Nominativo</th>
+            <th style={{ padding: '12px' }}>Pacchetto / Location / Operatori</th>
+            <th style={{ padding: '12px' }}>Pagato / Totale</th>
+            <th style={{ padding: '12px', textAlign: 'center' }}>Azioni</th>
+          </tr>
+        </thead>
+        <tbody>
+          {righe.length === 0
+            ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            : righe.map(rigaTabellaPren)}
+        </tbody>
+      </table>
+    </div>
+  );
+
   const esportaExcelPren = () => {
     if (prenotazioniFiltrate.length === 0) return alert("Nessuna prenotazione da esportare.");
     const righe = prenotazioniFiltrate.map(p => {
@@ -767,8 +839,8 @@ function Prenotazioni({ user }) {
         {puoVedere(user, 'prenotazioni', 'nuova') && (
           <button className={`nav-btn ${currentView === 'nuova' ? 'active' : ''}`} onClick={() => setCurrentView("nuova")}>➕ Nuova Prenotazione</button>
         )}
-        {puoVedere(user, 'prenotazioni', 'storico') && (
-          <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}>🗂️ Storico</button>
+        {puoVedere(user, 'prenotazioni', 'gestione') && (
+          <button className={`nav-btn ${currentView === 'gestione' ? 'active' : ''}`} onClick={() => setCurrentView("gestione")}>🔔 Gestione</button>
         )}
         {puoVedere(user, 'prenotazioni', 'calendario') && (
           <button className={`nav-btn ${currentView === 'calendario' ? 'active' : ''}`} onClick={() => setCurrentView("calendario")}>📅 Calendario</button>
@@ -1454,67 +1526,31 @@ function Prenotazioni({ user }) {
             </div>
           </div>
 
-          <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
-            <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
-              <thead>
-                <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '12px' }}>Codice / Data / Stato</th>
-                  <th style={{ padding: '12px' }}>Nominativo</th>
-                  <th style={{ padding: '12px' }}>Pacchetto / Location / Operatori</th>
-                  <th style={{ padding: '12px' }}>Pagato / Totale</th>
-                  <th style={{ padding: '12px', textAlign: 'center' }}>Azioni</th>
-                </tr>
-              </thead>
-              <tbody>
-                {prenotazioniFiltrate.length === 0 ? (
-                  <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessuna prenotazione trovata.</td></tr>
-                ) : prenotazioniFiltrate.map(p => {
-                  const totPagato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
-                  const totale = parseFloat(p.prezzoVendita) || 0;
-                  return (
-                  <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={{ padding: '12px' }}>
-                      <strong>{p.id}</strong><br />
-                      <span style={{ color: '#777', fontSize: '0.8rem' }}>{p.data} {p.oraInizio ? `· ${p.oraInizio}` : ''}</span><br />
-                      <span className={`badge-stato ${(p.stato || '').toLowerCase()}`} style={{ marginTop: '6px' }}>{p.stato}</span>
-                    </td>
-                    <td style={{ padding: '12px' }}>
-                      👤 {p.nominativo}<br />
-                      {p.telefono && <span style={{ fontSize: '0.8rem', color: '#555' }}>📞 {p.telefono}</span>}
-                    </td>
-                    <td style={{ padding: '12px', fontSize: '0.82rem', color: '#555' }}>
-                      {p.pacchettoNome || '—'}<br />
-                      <span style={{ color: '#777' }}>{p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—'}</span>
-                      {p.operatori && p.operatori.length > 0 && <><br /><span style={{ color: '#0288d1' }}>🧑‍🔧 {p.operatori.map(o => o.nome).join(', ')}</span></>}
-                    </td>
-                    <td style={{ padding: '12px' }}>
-                      <strong style={{ color: '#0f172a' }}>€{totPagato.toFixed(2)}</strong> <span style={{ color: '#777' }}>/ €{totale.toFixed(2)}</span><br />
-                      <span className="badge-stato" style={{ marginTop: '6px', background: p.statoPagamento === 'saldato' ? '#dcfce7' : p.statoPagamento === 'acconto' ? '#fef9c3' : '#fee2e2', color: p.statoPagamento === 'saldato' ? '#166534' : p.statoPagamento === 'acconto' ? '#854d0e' : '#991b1b' }}>{p.statoPagamento || 'in attesa'}</span>
-                    </td>
-                    <td style={{ padding: '12px', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', flexDirection: 'row', gap: '6px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
-                        <button className="btn-modifica-inline" title="Apri" style={{ padding: '6px 9px' }} onClick={() => caricaPrenotazione(p)}>📂</button>
-                        {p.stato === "FORSE" && (
-                          <button className="btn-conferma" title="Conferma (prepara mail al cliente)" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p, "CONF")}>✔️</button>
-                        )}
-                        {p.stato === "CONF" && (
-                          <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p, "FORSE")}>↩️</button>
-                        )}
-                        <button className="btn-modifica-inline" title={p.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '6px 9px' }} onClick={() => apriGoogleCalendar(p)}>📅</button>
-                        <button type="button" onClick={() => toggleGoogleCalendarSync(p)} title={p.googleCalendarSync ? "Sincronizzato con Google Calendar (clic per correggere a mano)" : "Non ancora sincronizzato con Google Calendar (clic per correggere a mano)"} style={{ border: 'none', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 'bold', padding: '2px 6px', borderRadius: '8px', background: p.googleCalendarSync ? '#dcfce7' : '#fee2e2', color: p.googleCalendarSync ? '#166534' : '#991b1b' }}>{p.googleCalendarSync ? '✅ Sync' : '⚠️ No sync'}</button>
-                        {user.ruolo === "admin" && (
-                          <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => eliminaPrenotazione(p.id)}>🗑️</button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          {tabellaPren(prenotazioniFiltrate, "Nessuna prenotazione trovata.")}
         </div>
       )}
+      {currentView === "gestione" && puoVedere(user, 'prenotazioni', 'gestione') && (() => {
+        const oggiIsoGestione = toISODate(new Date());
+        const daConfermare = prenotazioni.filter(p => p.stato === 'FORSE' && p.statoPagamento && p.statoPagamento !== 'in attesa');
+        const inAttesaPagamento = prenotazioni.filter(p => p.stato === 'FORSE' && (!p.statoPagamento || p.statoPagamento === 'in attesa'));
+        const daCompletare = prenotazioni.filter(p => p.stato === 'CONF' && p.data < oggiIsoGestione && (p.statoPagamento !== 'saldato' || !fatturazioneCompletaDi(p)));
+        const listaCorrente = gestioneTab === 'daConfermare' ? daConfermare : gestioneTab === 'inAttesaPagamento' ? inAttesaPagamento : daCompletare;
+        const messaggioVuoto = gestioneTab === 'daConfermare' ? "Nessun cliente pagato in attesa di conferma."
+          : gestioneTab === 'inAttesaPagamento' ? "Nessun cliente in attesa di pagamento."
+          : "Nessuna prenotazione da completare.";
+        return (
+          <div className="schermata-storico no-print">
+            <h2 style={{ margin: 0 }}>🔔 Gestione</h2>
+            <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento o completamento dati.</p>
+            <nav className="modulo-subnav" style={{ margin: '10px 0' }}>
+              <button className={`nav-btn ${gestioneTab === 'daConfermare' ? 'active' : ''}`} onClick={() => setGestioneTab('daConfermare')}>💰 Da confermare ({daConfermare.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'inAttesaPagamento' ? 'active' : ''}`} onClick={() => setGestioneTab('inAttesaPagamento')}>⏳ In attesa di pagamento ({inAttesaPagamento.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'daCompletare' ? 'active' : ''}`} onClick={() => setGestioneTab('daCompletare')}>🧩 Da completare ({daCompletare.length})</button>
+            </nav>
+            {tabellaPren(listaCorrente, messaggioVuoto)}
+          </div>
+        );
+      })()}
       {currentView === "calendario" && puoVedere(user, 'prenotazioni', 'calendario') && (() => {
         const oggiIso = toISODate(new Date());
         const prenDelGiorno = (iso) => prenotazioni.filter(p => p.data === iso).sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
