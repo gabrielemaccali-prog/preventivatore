@@ -1569,21 +1569,22 @@ function Prenotazioni({ user }) {
 
         const Chip = ({ p, riempi }) => {
           const c = coloreStato(p.stato);
-          const campoTxt = p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—';
+          const campoTxt = p.campoNome || p.locationCitta || '—';
           const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
           const hasOp = p.operatori && p.operatori.length > 0;
           return (
             <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${p.stato} · ${p.nominativo} · ${campoTxt} · ${p.pacchettoNome || ''} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4px' }}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.oraInizio ? <strong>{p.oraInizio}</strong> : ''} - {p.stato} - {p.nominativo}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.oraInizio ? <strong>{p.oraInizio}</strong> : ''} - {p.nominativo}</span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                   <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
                   {fatturazioneCompletaDi(p) && <span title="Dati di fatturazione completi">🧾</span>}
                   <span title={hasOp ? `${p.operatori.length} operatori assegnati` : 'nessun operatore'}>{hasOp ? `🧑${p.operatori.length}` : '🚫'}</span>
+                  <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'} style={{ filter: p.googleCalendarSync ? 'none' : 'grayscale(1) opacity(0.5)' }}>📅</span>
                   {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'campo prenotato' : 'campo da prenotare'} style={{ margin: 0 }} />}
                 </span>
               </div>
-              <div style={{ fontSize: '0.66rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{campoTxt} · {p.pacchettoNome || '—'}</div>
+              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{p.pacchettoNome || '—'} - {campoTxt}</div>
             </div>
           );
         };
@@ -1752,15 +1753,16 @@ function Prenotazioni({ user }) {
                               <div key={p.id} style={{ position: 'absolute', top: `${(ev.inizioMin / 60) * ROW_H}px`, height: `${(ev.durataMin / 60) * ROW_H}px`, left: `${(ev.corsia / ev.numCorsie) * 100}%`, width: `${(1 / ev.numCorsie) * 100}%`, boxSizing: 'border-box', padding: '0 3px 3px 3px' }}>
                                 <div onClick={() => setPrenSelezionata(p)} style={{ cursor: 'pointer', height: '100%', boxSizing: 'border-box', overflow: 'hidden', background: c.bg, borderLeft: `4px solid ${c.bd}`, color: c.tx, padding: '3px 8px', borderRadius: '6px', fontSize: '0.8rem', lineHeight: 1.3 }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
-                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><strong>{p.oraInizio || ''}{p.oraFine ? `–${p.oraFine}` : ''}</strong> · {p.stato} · <strong>{p.nominativo}</strong></span>
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><strong>{p.oraInizio || ''}{p.oraFine ? `–${p.oraFine}` : ''}</strong> · <strong>{p.nominativo}</strong></span>
                                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                                       <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
                                       {fatturazioneCompletaDi(p) && <span title="Dati di fatturazione completi">🧾</span>}
                                       <span title={hasOp ? `${p.operatori.length} operatori assegnati` : 'nessun operatore'}>{hasOp ? `🧑${p.operatori.length}` : '🚫'}</span>
+                                      <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'} style={{ filter: p.googleCalendarSync ? 'none' : 'grayscale(1) opacity(0.5)' }}>📅</span>
                                       {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'campo prenotato' : 'campo da prenotare'} style={{ margin: 0 }} />}
                                     </span>
                                   </div>
-                                  <div style={{ fontSize: '0.76rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—'} · {p.pacchettoNome || '—'}</div>
+                                  <div style={{ fontSize: '0.76rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{p.pacchettoNome || '—'} - {p.campoNome || p.locationCitta || '—'}</div>
                                 </div>
                               </div>
                             );
