@@ -166,11 +166,6 @@ const statoPagamentoDi = (pagamenti, prezzoVendita) => {
   return 'acconto';
 };
 
-// Verifica se i dati di fatturazione sono completi (privato con CF valido, oppure azienda con P.IVA)
-const fatturazioneCompletaDi = (p) => p.fattTipo === 'azienda'
-  ? !!(p.ragioneSociale && p.aziIndirizzo && p.aziCitta && p.pIva)
-  : !!(p.fattNome && p.fattCognome && p.fattIndirizzo && p.fattCitta && validaCF(p.fattCF));
-
 // Durata in ore dalla differenza inizio/fine (gestisce l'attraversamento della mezzanotte)
 const durataDaOrari = (ini, fin) => {
   const a = toMinutes(ini), b = toMinutes(fin);
@@ -1578,9 +1573,8 @@ function Prenotazioni({ user }) {
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.oraInizio ? <strong>{p.oraInizio}</strong> : ''} - {p.nominativo}</span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                   <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
-                  {fatturazioneCompletaDi(p) && <span title="Dati di fatturazione completi">🧾</span>}
                   <span title={hasOp ? `${p.operatori.length} operatori assegnati` : 'nessun operatore'}>{hasOp ? `🧑${p.operatori.length}` : '🚫'}</span>
-                  <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'} style={{ filter: p.googleCalendarSync ? 'none' : 'grayscale(1) opacity(0.5)' }}>📅</span>
+                  <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'}>{p.googleCalendarSync ? '✅' : '⚠️'}</span>
                   {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'campo prenotato' : 'campo da prenotare'} style={{ margin: 0 }} />}
                 </span>
               </div>
@@ -1756,9 +1750,8 @@ function Prenotazioni({ user }) {
                                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><strong>{p.oraInizio || ''}{p.oraFine ? `–${p.oraFine}` : ''}</strong> · <strong>{p.nominativo}</strong></span>
                                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                                       <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
-                                      {fatturazioneCompletaDi(p) && <span title="Dati di fatturazione completi">🧾</span>}
                                       <span title={hasOp ? `${p.operatori.length} operatori assegnati` : 'nessun operatore'}>{hasOp ? `🧑${p.operatori.length}` : '🚫'}</span>
-                                      <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'} style={{ filter: p.googleCalendarSync ? 'none' : 'grayscale(1) opacity(0.5)' }}>📅</span>
+                                      <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'}>{p.googleCalendarSync ? '✅' : '⚠️'}</span>
                                       {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'campo prenotato' : 'campo da prenotare'} style={{ margin: 0 }} />}
                                     </span>
                                   </div>
