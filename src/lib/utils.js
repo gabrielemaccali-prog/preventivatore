@@ -41,6 +41,11 @@ export const validaCF = (cfRaw) => {
   return String.fromCharCode('A'.charCodeAt(0) + (somma % 26)) === cf[15];
 };
 
+// Verifica se i dati di fatturazione di una prenotazione sono completi (privato con CF valido, oppure azienda con P.IVA)
+export const fatturazioneCompletaDi = (p) => p.fattTipo === 'azienda'
+  ? !!(p.ragioneSociale && p.aziIndirizzo && p.aziCitta && p.pIva)
+  : !!(p.fattNome && p.fattCognome && p.fattIndirizzo && p.fattCitta && validaCF(p.fattCF));
+
 // Scompone un risultato Nominatim nei singoli campi indirizzo
 export const parseIndirizzo = (luogo) => {
   const a = luogo.address || {};

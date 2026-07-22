@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
-import { validaCF } from '../../lib/utils'
+import { validaCF, fatturazioneCompletaDi } from '../../lib/utils'
 import { puoVedere } from '../../lib/permessi'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 
@@ -165,11 +165,6 @@ const statoPagamentoDi = (pagamenti, prezzoVendita) => {
   if (tot + 0.001 >= (prezzoVendita || 0)) return 'saldato';
   return 'acconto';
 };
-
-// Verifica se i dati di fatturazione sono completi (privato con CF valido, oppure azienda con P.IVA)
-const fatturazioneCompletaDi = (p) => p.fattTipo === 'azienda'
-  ? !!(p.ragioneSociale && p.aziIndirizzo && p.aziCitta && p.pIva)
-  : !!(p.fattNome && p.fattCognome && p.fattIndirizzo && p.fattCitta && validaCF(p.fattCF));
 
 // Durata in ore dalla differenza inizio/fine (gestisce l'attraversamento della mezzanotte)
 const durataDaOrari = (ini, fin) => {
@@ -847,6 +842,9 @@ function Prenotazioni({ user }) {
         )}
         {puoVedere(user, 'prenotazioni', 'riepiloghi') && (
           <button className={`nav-btn ${currentView === 'riepiloghi' ? 'active' : ''}`} onClick={() => setCurrentView("riepiloghi")}>📋 Riepiloghi</button>
+        )}
+        {puoVedere(user, 'prenotazioni', 'storico') && (
+          <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}>🗂️ Storico</button>
         )}
       </nav>
 

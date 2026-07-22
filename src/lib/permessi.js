@@ -46,12 +46,14 @@ export const SCHEDE_REGISTRY = {
       { id: 'gestione', label: 'Gestione' },
       { id: 'calendario', label: 'Calendario' },
       { id: 'riepiloghi', label: 'Riepiloghi' },
+      { id: 'storico', label: 'Storico' },
     ],
   },
   costiricavi: {
     schede: [
       { id: 'tabella', label: 'Tabella' },
       { id: 'andamento', label: 'Andamento' },
+      { id: 'completate', label: 'Completate' },
     ],
   },
 };

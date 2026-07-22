@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
+import { fatturazioneCompletaDi } from '../../lib/utils'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell
@@ -56,7 +57,7 @@ const raggruppaPerCentro = (righe, getCentro, getValore) => {
 const formattaEuro = (v) => `€${(+v || 0).toFixed(2)}`;
 
 function CostiRicavi({ user }) {
-  const primaSchedaCR = ['tabella', 'andamento'].find(s => puoVedere(user, 'costiricavi', s)) || 'tabella';
+  const primaSchedaCR = ['tabella', 'andamento', 'completate'].find(s => puoVedere(user, 'costiricavi', s)) || 'tabella';
   const [currentView, setCurrentView] = useState(primaSchedaCR);
 
   const [prenotazioni, setPrenotazioni] = useState([]);
@@ -92,11 +93,6 @@ function CostiRicavi({ user }) {
     return mData && mStato && mNome;
   });
 
-  const totTabella = righeTabella.reduce((a, p) => {
-    const r = nettoRicavo(p), c = costoTotaleNetto(p);
-    return { ricavo: a.ricavo + r, costo: a.costo + c, margine: a.margine + (r - c) };
-  }, { ricavo: 0, costo: 0, margine: 0 });
-
   const esportaExcel = () => {
     if (righeTabella.length === 0) return alert("Nessuna partita da esportare.");
     const righe = righeTabella.map(p => {
@@ -115,6 +111,69 @@ function CostiRicavi({ user }) {
     XLSX.utils.book_append_sheet(wb, ws, "CostiRicavi");
     XLSX.writeFile(wb, "Costi_Ricavi.xlsx");
   };
+
+  // Riga e tabella (con totali) condivise da "Tabella" e "Completate"
+  const rigaCR = (p) => {
+    const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), ce = nettoEreditato(p), m = r - cc - cr - ce;
+    return (
+      <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+        <td style={{ padding: '10px' }}><strong>{p.id}</strong><br /><span style={{ color: '#777', fontSize: '0.8rem' }}>{p.data}</span></td>
+        <td style={{ padding: '10px' }}>{p.nominativo}</td>
+        <td style={{ padding: '10px' }}>{campoNomeDi(p)}</td>
+        <td style={{ padding: '10px' }}><span className={`badge-stato ${(p.stato || '').toLowerCase()}`}>{p.stato}</span></td>
+        <td style={{ padding: '10px', textAlign: 'right' }}>€{r.toFixed(2)}</td>
+        <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cc.toFixed(2)}</td>
+        <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cr.toFixed(2)}</td>
+        <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{p.ereditaCosti ? `€${ce.toFixed(2)}` : '—'}</td>
+        <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: m >= 0 ? '#2e7d32' : '#c62828' }}>€{m.toFixed(2)}</td>
+      </tr>
+    );
+  };
+
+  const totaliCR = (righe) => righe.reduce((a, p) => {
+    const r = nettoRicavo(p), c = costoTotaleNetto(p);
+    return { ricavo: a.ricavo + r, costo: a.costo + c, margine: a.margine + (r - c) };
+  }, { ricavo: 0, costo: 0, margine: 0 });
+
+  const tabellaCR = (righe, messaggioVuoto) => {
+    const tot = totaliCR(righe);
+    return (
+      <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+        <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+          <thead>
+            <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+              <th style={{ padding: '10px' }}>Codice / Data</th>
+              <th style={{ padding: '10px' }}>Nominativo</th>
+              <th style={{ padding: '10px' }}>Campo</th>
+              <th style={{ padding: '10px' }}>Stato</th>
+              <th style={{ padding: '10px', textAlign: 'right' }}>Ricavo</th>
+              <th style={{ padding: '10px', textAlign: 'right' }}>Costo campo</th>
+              <th style={{ padding: '10px', textAlign: 'right' }}>Costo rinfresco</th>
+              <th style={{ padding: '10px', textAlign: 'right' }}>Costo ereditato</th>
+              <th style={{ padding: '10px', textAlign: 'right' }}>Margine</th>
+            </tr>
+          </thead>
+          <tbody>
+            {righe.length === 0
+              ? <tr><td colSpan="9" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+              : righe.map(rigaCR)}
+          </tbody>
+          <tfoot>
+            <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
+              <td style={{ padding: '10px' }} colSpan="4">TOTALE ({righe.length})</td>
+              <td style={{ padding: '10px', textAlign: 'right' }}>€{tot.ricavo.toFixed(2)}</td>
+              <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }} colSpan="3">€{tot.costo.toFixed(2)}</td>
+              <td style={{ padding: '10px', textAlign: 'right', color: tot.margine >= 0 ? '#2e7d32' : '#c62828' }}>€{tot.margine.toFixed(2)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    );
+  };
+
+  // ====================== COMPLETATE (partite CONF passate, saldate e con dati di fatturazione completi) ======================
+  const oggiIsoCR = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+  const righeCompletate = prenotazioni.filter(p => p.stato === 'CONF' && p.data < oggiIsoCR && p.statoPagamento === 'saldato' && fatturazioneCompletaDi(p));
 
   // ====================== ANDAMENTO (grafici) ======================
   const annoCorrente = String(new Date().getFullYear());
@@ -181,6 +240,9 @@ function CostiRicavi({ user }) {
         {puoVedere(user, 'costiricavi', 'andamento') && (
           <button className={`nav-btn ${currentView === 'andamento' ? 'active' : ''}`} onClick={() => setCurrentView("andamento")}>📈 Andamento</button>
         )}
+        {puoVedere(user, 'costiricavi', 'completate') && (
+          <button className={`nav-btn ${currentView === 'completate' ? 'active' : ''}`} onClick={() => setCurrentView("completate")}>✅ Completate</button>
+        )}
       </nav>
 
       {/* ===================== TABELLA ===================== */}
@@ -196,51 +258,16 @@ function CostiRicavi({ user }) {
             <div className="filtro-group" style={{ flex: '1 1 180px' }}><label>Nominativo:</label><input type="text" value={filtroNome} onChange={(e) => setFiltroNome(e.target.value)} /></div>
           </div>
 
-          <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
-            <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
-              <thead>
-                <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '10px' }}>Codice / Data</th>
-                  <th style={{ padding: '10px' }}>Nominativo</th>
-                  <th style={{ padding: '10px' }}>Campo</th>
-                  <th style={{ padding: '10px' }}>Stato</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>Ricavo</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>Costo campo</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>Costo rinfresco</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>Costo ereditato</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>Margine</th>
-                </tr>
-              </thead>
-              <tbody>
-                {righeTabella.length === 0 ? (
-                  <tr><td colSpan="9" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessuna partita.</td></tr>
-                ) : righeTabella.map(p => {
-                  const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), ce = nettoEreditato(p), m = r - cc - cr - ce;
-                  return (
-                    <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: '10px' }}><strong>{p.id}</strong><br /><span style={{ color: '#777', fontSize: '0.8rem' }}>{p.data}</span></td>
-                      <td style={{ padding: '10px' }}>{p.nominativo}</td>
-                      <td style={{ padding: '10px' }}>{campoNomeDi(p)}</td>
-                      <td style={{ padding: '10px' }}><span className={`badge-stato ${(p.stato || '').toLowerCase()}`}>{p.stato}</span></td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>€{r.toFixed(2)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cc.toFixed(2)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cr.toFixed(2)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{p.ereditaCosti ? `€${ce.toFixed(2)}` : '—'}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: m >= 0 ? '#2e7d32' : '#c62828' }}>€{m.toFixed(2)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
-                  <td style={{ padding: '10px' }} colSpan="4">TOTALE ({righeTabella.length})</td>
-                  <td style={{ padding: '10px', textAlign: 'right' }}>€{totTabella.ricavo.toFixed(2)}</td>
-                  <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }} colSpan="3">€{totTabella.costo.toFixed(2)}</td>
-                  <td style={{ padding: '10px', textAlign: 'right', color: totTabella.margine >= 0 ? '#2e7d32' : '#c62828' }}>€{totTabella.margine.toFixed(2)}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+          {tabellaCR(righeTabella, "Nessuna partita.")}
+        </div>
+      )}
+
+      {/* ===================== COMPLETATE ===================== */}
+      {currentView === "completate" && puoVedere(user, 'costiricavi', 'completate') && (
+        <div className="schermata-storico no-print">
+          <h2 style={{ margin: 0 }}>✅ Partite completate</h2>
+          <p className="descrizione-pagina">Partite confermate, già disputate, saldate e con dati di fatturazione completi.</p>
+          {tabellaCR(righeCompletate, "Nessuna partita completata.")}
         </div>
       )}
 
