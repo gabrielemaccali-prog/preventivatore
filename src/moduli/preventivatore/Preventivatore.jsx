@@ -32,7 +32,7 @@ function Preventivatore({ user }) {
     nome: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", 
     dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: ""
   });
-  const [nuovoExtra, setNuovoExtra] = useState({ nome: "", prezzo: "" });
+  const [nuovoExtra, setNuovoExtra] = useState({ nome: "", prezzo: "", costoLibero: false });
 
   // --- STATI LAYOUT CONFIGURATORE (sotto-schede, elenchi collassabili, form) ---
   const primaSottoschedaAdmin = ['sedi', 'gonfiabili', 'extra'].find(s => puoVedere(user, 'preventivatore', 'admin', s)) || 'sedi';
@@ -53,7 +53,7 @@ function Preventivatore({ user }) {
     dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: ""
   });
   const [idExtraInModifica, setIdExtraInModifica] = useState(null);
-  const [datiExtraInModifica, setDatiExtraInModifica] = useState({ nome: "", prezzo: "" });
+  const [datiExtraInModifica, setDatiExtraInModifica] = useState({ nome: "", prezzo: "", costoLibero: false });
 
   // --- STATI DEL PREVENTIVATORE ---
   const [serviziSelezionati, setServiziSelezionati] = useState([]);
@@ -62,6 +62,7 @@ function Preventivatore({ user }) {
   const [dataFine, setDataFine] = useState("");
   const [unSoloTrasporto, setUnSoloTrasporto] = useState(false);
   const [extraSelezionati, setExtraSelezionati] = useState([]);
+  const [costiExtraLiberi, setCostiExtraLiberi] = useState({}); // costo inserito manualmente per gli extra "a costo libero" (chiave = id extra)
   const [queryIndirizzo, setQueryIndirizzo] = useState("");
   const [risultatiRicerca, setRisultatiRicerca] = useState([]);
   const [destinazione, setDestinazione] = useState(null);
@@ -145,6 +146,7 @@ function Preventivatore({ user }) {
     setDataFine("");
     setUnSoloTrasporto(false);
     setExtraSelezionati([]);
+    setCostiExtraLiberi({});
     setQueryIndirizzo("");
     setRisultatiRicerca([]);
     setDestinazione(null);
@@ -201,11 +203,13 @@ function Preventivatore({ user }) {
     // Extra: rimappa per nome verso gli id correnti
     const idsExtra = [];
     const venditaEx = {};
+    const costiLiberiEx = {};
     ex.forEach(e => {
       const trovato = extras.find(x => x.nome === e.nome);
       if (trovato) {
         idsExtra.push(trovato.id);
         venditaEx[trovato.id] = { prezzo: String(e.prezzoVendita ?? ""), sconto: "0" };
+        if (trovato.costoLibero) costiLiberiEx[trovato.id] = String(e.costo ?? "");
       }
     });
 
@@ -218,6 +222,7 @@ function Preventivatore({ user }) {
     setVenditaGonfiabili(vendita);
     setExtraSelezionati(idsExtra);
     setVenditaExtras(venditaEx);
+    setCostiExtraLiberi(costiLiberiEx);
     setDataInizio(inizio);
     setDataFine(fine);
     setDestinazione({ nome: p.destinazione });
@@ -445,7 +450,15 @@ function Preventivatore({ user }) {
     if (sol && !isPartenzaBFMMilano(sol.partenza)) totaleComplessivoCostiBase += arrotondaAllaDecina(sol.totaleOpzione);
   });
   
-  const costoExtraBase = extras.filter(e => extraSelezionati.includes(e.id)).reduce((acc, curr) => acc + arrotondaAllaDecina(curr.prezzo), 0);
+  // Per gli extra "a costo libero" il costo non è quello configurato in anagrafica,
+  // ma quello inserito manualmente ogni volta in fase di preventivo (vedi costiExtraLiberi).
+  const getCostoExtra = (ex) => {
+    if (!ex) return 0;
+    if (ex.costoLibero) return parseFloat(costiExtraLiberi[ex.id]) || 0;
+    return parseFloat(ex.prezzo) || 0;
+  };
+
+  const costoExtraBase = extras.filter(e => extraSelezionati.includes(e.id)).reduce((acc, curr) => acc + arrotondaAllaDecina(getCostoExtra(curr)), 0);
   const totaleComplessivoCostoFlotta = totaleComplessivoCostiBase + costoExtraBase;
 
   let totaleVenditaComplessivo = 0;
@@ -462,7 +475,7 @@ function Preventivatore({ user }) {
   });
 
   extras.filter(e => extraSelezionati.includes(e.id)).forEach(ex => {
-    const cost = arrotondaAllaDecina(parseFloat(ex.prezzo) || 0);
+    const cost = arrotondaAllaDecina(getCostoExtra(ex));
     const defaultPrezzo = cost; // Per gli extra, si propone direttamente il costo arrotondato
     
     const vPrezzo = (venditaExtras[ex.id]?.prezzo !== undefined && venditaExtras[ex.id]?.prezzo !== "") 
@@ -516,18 +529,19 @@ function Preventivatore({ user }) {
     });
 
     const dettagliExtra = extras.filter(e => extraSelezionati.includes(e.id)).map(e => {
-      const costTotal = arrotondaAllaDecina(parseFloat(e.prezzo) || 0);
+      const costTotal = arrotondaAllaDecina(getCostoExtra(e));
       const defaultPrezzo = costTotal;
-      
-      const vPrezzo = (venditaExtras[e.id]?.prezzo !== undefined && venditaExtras[e.id]?.prezzo !== "") 
-        ? parseFloat(venditaExtras[e.id].prezzo) 
+
+      const vPrezzo = (venditaExtras[e.id]?.prezzo !== undefined && venditaExtras[e.id]?.prezzo !== "")
+        ? parseFloat(venditaExtras[e.id].prezzo)
         : defaultPrezzo;
       const vSconto = parseFloat(venditaExtras[e.id]?.sconto) || 0;
-      
-      return { 
-        nome: e.nome, 
-        costo: costTotal, 
-        prezzoVendita: vPrezzo * (1 - vSconto / 100) 
+
+      return {
+        nome: e.nome,
+        costo: costTotal,
+        costoLibero: !!e.costoLibero,
+        prezzoVendita: vPrezzo * (1 - vSconto / 100)
       };
     });
 
@@ -705,10 +719,15 @@ function Preventivatore({ user }) {
 
   const addExtra = async (e) => {
     e.preventDefault();
-    if (!nuovoExtra.nome || !nuovoExtra.prezzo) return alert("Compila tutti i campi");
-    const newE = { id: "e_" + Date.now(), nome: nuovoExtra.nome, prezzo: parseFloat(nuovoExtra.prezzo) };
+    if (!nuovoExtra.nome || (!nuovoExtra.costoLibero && !nuovoExtra.prezzo)) return alert("Compila tutti i campi");
+    const newE = {
+      id: "e_" + Date.now(),
+      nome: nuovoExtra.nome,
+      prezzo: nuovoExtra.costoLibero ? 0 : parseFloat(nuovoExtra.prezzo),
+      costoLibero: nuovoExtra.costoLibero
+    };
     const { error } = await supabase.from('extras').insert([newE]);
-    if (!error) { setNuovoExtra({ nome: "", prezzo: "" }); setShowFormExtra(false); fetchData(); }
+    if (!error) { setNuovoExtra({ nome: "", prezzo: "", costoLibero: false }); setShowFormExtra(false); fetchData(); }
   };
 
   const salvaModificaSede = async () => {
@@ -726,7 +745,11 @@ function Preventivatore({ user }) {
   };
 
   const salvaModificaExtra = async () => {
-    await supabase.from('extras').update({ nome: datiExtraInModifica.nome, prezzo: parseFloat(datiExtraInModifica.prezzo) }).eq('id', idExtraInModifica);
+    await supabase.from('extras').update({
+      nome: datiExtraInModifica.nome,
+      prezzo: datiExtraInModifica.costoLibero ? 0 : parseFloat(datiExtraInModifica.prezzo) || 0,
+      costoLibero: datiExtraInModifica.costoLibero
+    }).eq('id', idExtraInModifica);
     setIdExtraInModifica(null); fetchData();
   };
 
@@ -1051,7 +1074,15 @@ function Preventivatore({ user }) {
                       {idExtraInModifica === e.id ? (
                         <>
                           <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiExtraInModifica.nome} onChange={(e)=>setDatiExtraInModifica({...datiExtraInModifica, nome: e.target.value})} style={{ width: '100%', fontSize: '0.85rem', height: '30px' }} /></td>
-                          <td style={{ padding: '10px 12px' }}><input type="number" step="any" className="table-input" value={datiExtraInModifica.prezzo} onChange={(e)=>setDatiExtraInModifica({...datiExtraInModifica, prezzo: e.target.value})} style={{ width: '100%', fontSize: '0.85rem', height: '30px' }} /></td>
+                          <td style={{ padding: '10px 12px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#555', marginBottom: '4px', whiteSpace: 'nowrap' }}>
+                              <input type="checkbox" checked={datiExtraInModifica.costoLibero} onChange={(e)=>setDatiExtraInModifica({...datiExtraInModifica, costoLibero: e.target.checked})} />
+                              Costo libero
+                            </label>
+                            {!datiExtraInModifica.costoLibero && (
+                              <input type="number" step="any" className="table-input" value={datiExtraInModifica.prezzo} onChange={(e)=>setDatiExtraInModifica({...datiExtraInModifica, prezzo: e.target.value})} style={{ width: '100%', fontSize: '0.85rem', height: '30px' }} />
+                            )}
+                          </td>
                           <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                               <button className="btn-salva-inline" onClick={salvaModificaExtra} style={{ fontSize: '0.8rem', padding: '4px 8px' }}>Salva</button>
@@ -1062,10 +1093,12 @@ function Preventivatore({ user }) {
                       ) : (
                         <>
                           <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{e.nome}</td>
-                          <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#2e7d32' }}>€{parseFloat(e.prezzo).toFixed(2)}</td>
+                          <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: e.costoLibero ? '#b45309' : '#2e7d32' }}>
+                            {e.costoLibero ? <em>Libero (da specificare)</em> : `€${parseFloat(e.prezzo).toFixed(2)}`}
+                          </td>
                           <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                             <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                              <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => { setIdExtraInModifica(e.id); setDatiExtraInModifica({ nome: e.nome, prezzo: e.prezzo }); }}>Modifica</button>
+                              <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => { setIdExtraInModifica(e.id); setDatiExtraInModifica({ nome: e.nome, prezzo: e.prezzo, costoLibero: !!e.costoLibero }); }}>Modifica</button>
                               <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviExtra(e.id)}>Elimina</button>
                             </div>
                           </td>
@@ -1087,7 +1120,13 @@ function Preventivatore({ user }) {
                 <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Configura Servizio Extra</h3>
                 <form onSubmit={addExtra} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <input type="text" placeholder="Nome Servizio" value={nuovoExtra.nome} onChange={(e) => setNuovoExtra({...nuovoExtra, nome: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                  <input type="number" step="any" placeholder="Prezzo (€)" value={nuovoExtra.prezzo} onChange={(e) => setNuovoExtra({...nuovoExtra, prezzo: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#444' }}>
+                    <input type="checkbox" checked={nuovoExtra.costoLibero} onChange={(e) => setNuovoExtra({...nuovoExtra, costoLibero: e.target.checked, prezzo: e.target.checked ? "" : nuovoExtra.prezzo})} />
+                    Costo libero (l'importo cambia ogni volta e verrà specificato nel preventivo)
+                  </label>
+                  {!nuovoExtra.costoLibero && (
+                    <input type="number" step="any" placeholder="Prezzo (€)" value={nuovoExtra.prezzo} onChange={(e) => setNuovoExtra({...nuovoExtra, prezzo: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  )}
                   <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem', marginTop: '5px' }}>Salva Extra</button>
                 </form>
               </div>
@@ -1167,12 +1206,27 @@ function Preventivatore({ user }) {
           <div className="sezione">
             <h2>4. Servizi Accessori Opzionali</h2>
             <div className="extra-grid">
-              {extras.map(srv => (
-                <label key={srv.id} className="extra-label">
-                  <input type="checkbox" checked={extraSelezionati.includes(srv.id)} onChange={() => setExtraSelezionati(prev => prev.includes(srv.id) ? prev.filter(x=>x!==srv.id) : [...prev, srv.id])} />
-                  {srv.nome} (+€{parseFloat(srv.prezzo).toFixed(2)})
-                </label>
-              ))}
+              {extras.map(srv => {
+                const selezionato = extraSelezionati.includes(srv.id);
+                return (
+                  <div key={srv.id} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <label className="extra-label">
+                      <input type="checkbox" checked={selezionato} onChange={() => setExtraSelezionati(prev => prev.includes(srv.id) ? prev.filter(x=>x!==srv.id) : [...prev, srv.id])} />
+                      {srv.nome} {!srv.costoLibero && `(+€${parseFloat(srv.prezzo).toFixed(2)})`}
+                    </label>
+                    {srv.costoLibero && selezionato && (
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="Costo (€)"
+                        value={costiExtraLiberi[srv.id] ?? ""}
+                        onChange={(e) => setCostiExtraLiberi(prev => ({ ...prev, [srv.id]: e.target.value }))}
+                        style={{ width: '110px', height: '28px', fontSize: '0.85rem', padding: '2px 8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                      />
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -1200,7 +1254,7 @@ function Preventivatore({ user }) {
                 <div className="scheda-riepilogo-prodotto extra-box-dettaglio">
                   <h4>Accessori</h4>
                   {extras.filter(e => extraSelezionati.includes(e.id)).map(e => (
-                    <p key={e.id}>• {e.nome}: <span>€{parseFloat(e.prezzo).toFixed(2)}</span></p>
+                    <p key={e.id}>• {e.nome}: <span>€{getCostoExtra(e).toFixed(2)}</span></p>
                   ))}
                   <p className="subtotale-prodotto">Subtotale Extra: <strong>€{costoExtraBase.toFixed(2)}</strong></p>
                 </div>
@@ -1291,8 +1345,8 @@ function Preventivatore({ user }) {
                 })}
 
                 {extras.filter(ex => extraSelezionati.includes(ex.id)).map(ex => {
-                  const costoCalcolato = arrotondaAllaDecina(parseFloat(ex.prezzo) || 0);
-                  
+                  const costoCalcolato = arrotondaAllaDecina(getCostoExtra(ex));
+
                   // PRECOMPILAZIONE: Per gli extra la proposta è il costo vivo arrotondato
                   const currentPrezzo = venditaExtras[ex.id]?.prezzo ?? costoCalcolato.toFixed(2);
                   const currentSconto = venditaExtras[ex.id]?.sconto ?? "0";
@@ -1682,7 +1736,7 @@ function Preventivatore({ user }) {
                       <table className="tabella-preventivo" style={{ width: '100%', textAlign: 'left' }}>
                         <tbody>
                           {extras.filter(e => extraSelezionati.includes(e.id)).map(e => {
-                            const costTotal = arrotondaAllaDecina(parseFloat(e.prezzo) || 0);
+                            const costTotal = arrotondaAllaDecina(getCostoExtra(e));
                             const vPrezzo = venditaExtras[e.id]?.prezzo !== undefined && venditaExtras[e.id]?.prezzo !== "" ? parseFloat(venditaExtras[e.id].prezzo) : costTotal;
                             const vSconto = parseFloat(venditaExtras[e.id]?.sconto) || 0;
                             const prezzoVenditaFinaleExtra = vPrezzo * (1 - vSconto / 100);
@@ -1754,7 +1808,7 @@ function Preventivatore({ user }) {
                     );
                   })}
                   {extras.filter(e => extraSelezionati.includes(e.id)).map(e => {
-                    const costTotal = arrotondaAllaDecina(parseFloat(e.prezzo) || 0);
+                    const costTotal = arrotondaAllaDecina(getCostoExtra(e));
                     const vPrezzo = venditaExtras[e.id]?.prezzo !== undefined && venditaExtras[e.id]?.prezzo !== "" ? parseFloat(venditaExtras[e.id].prezzo) : costTotal;
                     const vSconto = parseFloat(venditaExtras[e.id]?.sconto) || 0;
                     const prezzoVenditaFinaleExtra = vPrezzo * (1 - vSconto / 100);
