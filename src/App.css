@@ -145,6 +145,8 @@ body {
   border: 1px solid #cbd5e1; background: #fff; color: #334155; user-select: none;
 }
 .form-pren .chip-operatore.sel { border-color: #10b981; background: #ecfdf5; color: #065f46; font-weight: 600; }
+.form-pren .chip-operatore.non-disponibile { opacity: 0.6; border-style: dashed; }
+.form-pren .chip-operatore.non-disponibile.sel { border-color: #ef4444; background: #fef2f2; color: #991b1b; opacity: 1; }
 .form-pren textarea {
   padding: 8px 10px; font-size: 0.9rem; border: 1px solid #cbd5e1;
   border-radius: 6px; box-sizing: border-box; width: 100%; resize: vertical;
@@ -163,6 +165,11 @@ body {
 /* Su mobile le sezioni admin (form + tabella) vanno impilate: form sopra, elenco sotto.
    Regola globale valida per tutti i moduli (preventivatore e voucher). */
 @media (max-width: 768px) {
+  /* Sotto-navigazione più compatta: su schermi stretti le schede vanno su più righe,
+     e ogni riga in più "mangia" spazio verticale utile ai contenuti sottostanti (es. calendario). */
+  .modulo-subnav { padding: 6px 8px; gap: 5px; margin-bottom: 12px; }
+  .modulo-subnav .nav-btn { padding: 6px 10px; font-size: 0.78rem; }
+
   .admin-grid-sezione { display: grid; grid-template-columns: 1fr !important; gap: 15px; }
   .admin-table-box { max-height: none !important; }
 
@@ -208,9 +215,12 @@ body {
   border-bottom: 1px solid #e2e8f0;
 }
 .admin-form-box h3 { margin-top: 0; color: #2563eb; font-size: 1.05rem; }
-.admin-form-box input, .admin-form-box select {
+.admin-form-box input:not([type="checkbox"]):not([type="radio"]), .admin-form-box select {
   width: 100%; padding: 10px; margin-bottom: 10px;
   border: 1px solid #cbd5e1; border-radius: 6px;
+}
+.admin-form-box input[type="checkbox"], .admin-form-box input[type="radio"] {
+  width: auto; height: auto; margin: 0; padding: 0;
 }
 .admin-form-box button { width: 100%; background-color: #10b981; padding: 10px; font-size: 0.95rem; }
 .admin-form-box button:hover { background-color: #059669; }
@@ -319,6 +329,15 @@ button:hover { background-color: #1d4ed8; }
 .btn-annulla-inline { background-color: #64748b; font-size: 0.8rem; padding: 5px 10px; }
 .btn-annulla-inline:hover { background-color: #475569; }
 td { padding: 8px 12px; vertical-align: middle; }
+
+/* --- Icone azione senza sfondo (righe tabelle Storico/Gestione/Completate) --- */
+.btn-icona-piatta { background: none; border: none; color: #475569; font-size: 0.95rem; padding: 4px 6px; cursor: pointer; border-radius: 4px; }
+.btn-icona-piatta:hover { background: #f1f5f9; }
+.btn-icona-piatta:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn-icona-piatta:disabled:hover { background: none; }
+.storico-table tbody tr:not(.riga-pren-dettaglio):hover { background: #f8fafc; }
+.riga-pren-chevron { display: inline-block; width: 14px; color: #94a3b8; transition: transform 0.15s; margin-right: 2px; }
+.riga-pren-dettaglio td { padding: 12px 16px 12px 30px; background: #eef2f6; border-bottom: 1px solid #e2e8f0; border-top: 1px dashed #cbd5e1; box-shadow: inset 0 4px 6px -6px rgba(0,0,0,0.15); }
 
 /* ==========================================================================
    --- NUOVO LAYOUT E SPECIFICHE GRAFICHE PER LA PAGINA VENDITA ---
@@ -594,6 +613,7 @@ td { padding: 8px 12px; vertical-align: middle; }
   width: 100%;
 }
 .btn-conferma:hover { background-color: #059669; }
+.btn-conferma:disabled { background-color: #cbd5e1; color: #94a3b8; cursor: not-allowed; }
 
 .btn-ripristina {
   background-color: #f59e0b;

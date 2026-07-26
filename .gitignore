@@ -16,6 +16,9 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# Claude Code: config locale non condivisa (permessi/preferenze macchina-specifiche)
+.claude/settings.local.json
 .DS_Store
 *.suo
 *.ntvs*

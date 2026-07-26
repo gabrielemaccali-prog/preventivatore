@@ -9,7 +9,7 @@ const permessiVuoti = () => {
 };
 
 const RUOLO_VUOTO = { nome: "", permessi: permessiVuoti() };
-const UTENTE_VUOTO = { username: "", password: "", ruolo: "" };
+const UTENTE_VUOTO = { username: "", password: "", ruolo: "", bubbler: false };
 
 function MatricePermessi({ permessi, onToggleScheda, onToggleSottoscheda }) {
   return (
@@ -99,7 +99,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
     const { error } = await supabase.from('utenti').update({
       username: datiUtenteInModifica.username,
       password: datiUtenteInModifica.password,
-      ruolo: datiUtenteInModifica.ruolo
+      ruolo: datiUtenteInModifica.ruolo,
+      bubbler: datiUtenteInModifica.bubbler
     }).eq('id', idUtenteInModifica);
     if (!error) { setIdUtenteInModifica(null); fetchUtenti(); }
     else { console.error(error); alert("Errore salvataggio utente"); }
@@ -110,6 +111,12 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
     if (!window.confirm(`Eliminare l'utente ${u.username}?`)) return;
     await supabase.from('utenti').delete().eq('id', u.id);
     fetchUtenti();
+  };
+
+  const toggleBubbler = async (u) => {
+    const { error } = await supabase.from('utenti').update({ bubbler: !u.bubbler }).eq('id', u.id);
+    if (!error) fetchUtenti();
+    else { console.error(error); alert("Errore salvataggio bubbler"); }
   };
 
   // ====================== RUOLI ======================
@@ -179,13 +186,14 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
           <h2>Utenti</h2>
           <p className="descrizione-pagina">Gestisci gli utenti dell'applicazione e assegna loro un ruolo.</p>
 
-          <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+          <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible', overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: '550px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                   <th style={{ padding: '10px 12px' }}>Username</th>
                   <th style={{ padding: '10px 12px' }}>Password</th>
                   <th style={{ padding: '10px 12px' }}>Ruolo</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', width: '90px' }}>Bubbler</th>
                   <th style={{ padding: '10px 12px', textAlign: 'center', width: '130px' }}>Azioni</th>
                 </tr>
               </thead>
@@ -202,6 +210,9 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                           </select>
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                          <input type="checkbox" checked={!!datiUtenteInModifica.bubbler} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, bubbler: e.target.checked })} />
+                        </td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                             <button className="btn-salva-inline" onClick={salvaModificaUtente} style={{ fontSize: '0.8rem', padding: '4px 8px' }}>Salva</button>
                             <button className="btn-annulla-inline" onClick={() => setIdUtenteInModifica(null)} style={{ fontSize: '0.8rem', padding: '4px 8px' }}>Annulla</button>
@@ -214,8 +225,11 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#888' }}>••••••••</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{u.ruolo}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
+                          <input type="checkbox" checked={!!u.bubbler} onChange={() => toggleBubbler(u)} />
+                        </td>
+                        <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                            <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, password: u.password, ruolo: u.ruolo }); }}>Modifica</button>
+                            <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, password: u.password, ruolo: u.ruolo, bubbler: !!u.bubbler }); }}>Modifica</button>
                             <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviUtente(u)}>Elimina</button>
                           </div>
                         </td>
@@ -223,7 +237,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                     )}
                   </tr>
                 ))}
-                {utenti.length === 0 && <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun utente.</td></tr>}
+                {utenti.length === 0 && <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun utente.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -242,6 +256,9 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                   <option value="">Seleziona ruolo...</option>
                   {ruoli.map(r => <option key={r.id} value={r.nome}>{r.nome}</option>)}
                 </select>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
+                  <input type="checkbox" checked={!!nuovoUtente.bubbler} onChange={(e) => setNuovoUtente({ ...nuovoUtente, bubbler: e.target.checked })} /> Bubbler
+                </label>
                 <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>Salva Utente</button>
               </form>
             </div>
@@ -315,8 +332,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
           <h2>Moduli</h2>
           <p className="descrizione-pagina">Contrassegna un modulo come sperimentale: comparirà con il badge <strong>SP</strong> nel menu hamburger.</p>
 
-          <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+          <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible', overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: '380px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                   <th style={{ padding: '10px 12px' }}>Modulo</th>

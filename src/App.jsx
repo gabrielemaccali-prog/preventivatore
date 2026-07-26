@@ -5,6 +5,7 @@ import Preventivatore from './moduli/preventivatore/Preventivatore';
 import Voucher from './moduli/voucher/Voucher';
 import Prenotazioni from './moduli/prenotazioni/Prenotazioni';
 import CostiRicavi from './moduli/costiricavi/CostiRicavi';
+import Disponibilita from './moduli/disponibilita/Disponibilita';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
 import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
 
@@ -25,7 +26,7 @@ function App() {
   const [utentiDev, setUtentiDev] = useState([]);
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    supabase.from('utenti').select('username, ruolo').order('username').then(({ data }) => { if (data) setUtentiDev(data); });
+    supabase.from('utenti').select('username, ruolo, bubbler').order('username').then(({ data }) => { if (data) setUtentiDev(data); });
   }, []);
 
   const fetchModuliConfig = useCallback(async () => {
@@ -46,6 +47,9 @@ function App() {
     setUser(u => u ? { ...u, permessi } : u);
   }, [user, fetchPermessiRuolo]);
 
+  // Primo modulo visibile per l'utente appena loggato (evita di atterrare su un modulo senza permessi)
+  const primoModuloVisibile = (u) => MODULI_REGISTRY.find(m => moduloVisibile(u, m.id))?.id || "preventivatore";
+
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
@@ -58,7 +62,9 @@ function App() {
 
       if (data) {
         const permessi = await fetchPermessiRuolo(data.ruolo);
-        setUser({ username: data.username, ruolo: data.ruolo, permessi });
+        const nuovoUser = { username: data.username, ruolo: data.ruolo, permessi, bubbler: !!data.bubbler };
+        setUser(nuovoUser);
+        setCurrentModule(primoModuloVisibile(nuovoUser));
         fetchModuliConfig();
       } else {
         alert("Credenziali errate o utente non trovato!");
@@ -71,7 +77,9 @@ function App() {
 
   const handleQuickLogin = async (u) => {
     const permessi = await fetchPermessiRuolo(u.ruolo);
-    setUser({ username: u.username, ruolo: u.ruolo, permessi });
+    const nuovoUser = { username: u.username, ruolo: u.ruolo, permessi, bubbler: !!u.bubbler };
+    setUser(nuovoUser);
+    setCurrentModule(primoModuloVisibile(nuovoUser));
     fetchModuliConfig();
   };
 
@@ -181,6 +189,8 @@ function App() {
       {currentModule === "prenotazioni" && <Prenotazioni user={user} />}
 
       {currentModule === "costiricavi" && <CostiRicavi user={user} />}
+
+      {currentModule === "disponibilita" && <Disponibilita user={user} />}
 
       {currentModule === "impostazioni" && isAdmin && (
         <Impostazioni

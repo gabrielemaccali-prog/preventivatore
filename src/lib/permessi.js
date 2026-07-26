@@ -4,6 +4,7 @@ export const MODULI_REGISTRY = [
   { id: 'voucher', label: 'Voucher', icon: '🎟️' },
   { id: 'prenotazioni', label: 'Prenotazioni', icon: '📅' },
   { id: 'costiricavi', label: 'Costi/Ricavi', icon: '💰' },
+  { id: 'disponibilita', label: 'Disponibilità', icon: '🙋' },
 ];
 
 // --- REGISTRO SCHEDE/SOTTOSCHEDE PER MODULO (usato per costruire la matrice permessi in Impostazioni > Ruoli) ---
@@ -38,7 +39,6 @@ export const SCHEDE_REGISTRY = {
         label: 'Configuratore',
         sottoschede: [
           { id: 'pacchetti', label: 'Pacchetti' },
-          { id: 'operatori', label: 'Operatori' },
           { id: 'campi', label: 'Campi' },
         ],
       },
@@ -54,6 +54,14 @@ export const SCHEDE_REGISTRY = {
       { id: 'tabella', label: 'Tabella' },
       { id: 'andamento', label: 'Andamento' },
       { id: 'completate', label: 'Completate' },
+    ],
+  },
+  disponibilita: {
+    schede: [
+      { id: 'config', label: 'Configuratore' },
+      { id: 'campi', label: 'Disponibilità Campi' },
+      { id: 'calendario', label: 'Disponibilità Calendario' },
+      { id: 'riepilogo', label: 'Riepilogo' },
     ],
   },
 };

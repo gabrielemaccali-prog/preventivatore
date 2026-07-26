@@ -11,7 +11,6 @@ const GIORNI = [
 ];
 
 const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", centroRicavo: "", prevedeRinfresco: false, numeroPartecipanti: "" };
-const OPERATORE_VUOTO = { nome: "", email: "", telefono: "" };
 const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusaCampo: false, ivaInclusaRinfresco: false, costoMerenda: "", costoAperitivo: "", ivaCampo: "22", ivaRinfresco: "22", noRinfresco: false };
 
 // Frazione IVA da applicare (percentuale campo, es. 22 -> 0.22); 22% di default se non specificata sul campo.
@@ -38,6 +37,8 @@ const toMinutes = (hhmm) => {
   if (!m) return null;
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 };
+// Minuti dalla mezzanotte (anche oltre le 24h, es. un turno che sconfina nel giorno dopo) -> "HH:MM"
+const minutiAHHMM = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(Math.round(min % 60)).padStart(2, '0')}`;
 
 // Giorno settimana 1=Lun..7=Dom da una data ISO
 const giornoSettimana = (dataStr) => {
@@ -198,23 +199,24 @@ const Campo = ({ label, children }) => (
 function Prenotazioni({ user }) {
   const primaSchedaPren = ['nuova', 'config', 'gestione', 'calendario'].find(s => puoVedere(user, 'prenotazioni', s)) || 'nuova';
   const [currentView, setCurrentView] = useState(primaSchedaPren); // config | nuova | gestione | calendario
-  const primaSottoschedaConfigPren = ['pacchetti', 'operatori', 'campi'].find(s => puoVedere(user, 'prenotazioni', 'config', s)) || 'pacchetti';
-  const [configTab, setConfigTab] = useState(primaSottoschedaConfigPren);  // pacchetti | operatori | campi
+  const primaSottoschedaConfigPren = ['pacchetti', 'campi'].find(s => puoVedere(user, 'prenotazioni', 'config', s)) || 'pacchetti';
+  const [configTab, setConfigTab] = useState(primaSottoschedaConfigPren);  // pacchetti | campi
   const [gestioneTab, setGestioneTab] = useState("inAttesaPagamento"); // inAttesaPagamento | daConfermare | partiteAttive | daCompletare
 
   const [pacchetti, setPacchetti] = useState([]);
-  const [operatori, setOperatori] = useState([]);
+  const [operatori, setOperatori] = useState([]); // bubbler (utenti con flag bubbler), fonte in Disponibilità > Configuratore
+  const [dispCalendario, setDispCalendario] = useState([]);
+  const [dispCampi, setDispCampi] = useState([]);
+  const [fasceDisp, setFasceDisp] = useState([]);
   const [campi, setCampi] = useState([]);
   const [tariffe, setTariffe] = useState([]);
 
   // visibilità dei form (aperti da "Nuovo" o "Modifica")
   const [showFormPacchetto, setShowFormPacchetto] = useState(false);
-  const [showFormOperatore, setShowFormOperatore] = useState(false);
   const [showFormCampo, setShowFormCampo] = useState(false);
 
   // visibilità elenchi (collassabili, aperti di default)
   const [showListaPacchetti, setShowListaPacchetti] = useState(true);
-  const [showListaOperatori, setShowListaOperatori] = useState(true);
   const [showListaCampi, setShowListaCampi] = useState(true);
   // singole schede campo (collassate di default: mostrano solo nome/indirizzo, il dettaglio si apre al click)
   const [campiEspansi, setCampiEspansi] = useState({});
@@ -238,13 +240,9 @@ function Prenotazioni({ user }) {
   // form (usati sia per creare sia per modificare)
   const [formPacchetto, setFormPacchetto] = useState(PACCHETTO_VUOTO);
   const [editPacchetto, setEditPacchetto] = useState(null);
-  const [formOperatore, setFormOperatore] = useState(OPERATORE_VUOTO);
-  const [editOperatore, setEditOperatore] = useState(null);
   // editing inline in tabella
   const [idPacchettoInline, setIdPacchettoInline] = useState(null);
   const [datiPacchettoInline, setDatiPacchettoInline] = useState(PACCHETTO_VUOTO);
-  const [idOperatoreInline, setIdOperatoreInline] = useState(null);
-  const [datiOperatoreInline, setDatiOperatoreInline] = useState(OPERATORE_VUOTO);
   const [formCampo, setFormCampo] = useState(CAMPO_VUOTO);
   const [editCampo, setEditCampo] = useState(null);
   const [nuovaTariffa, setNuovaTariffa] = useState({ campoId: "", giorni: [], oraInizio: "", oraFine: "", costo: "" });
@@ -263,6 +261,15 @@ function Prenotazioni({ user }) {
   const [filtroPrenNome, setFiltroPrenNome] = useState("");
   const [calView, setCalView] = useState("mese");
   const [calDate, setCalDate] = useState(() => new Date());
+  // Sotto questa soglia il calendario (mese/settimana/giorno) usa layout compatti pensati per stare
+  // interamente a schermo senza scorrimento, invece delle griglie orarie/a colonne pensate per desktop.
+  const [calMobile, setCalMobile] = useState(() => window.matchMedia('(max-width: 768px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const onChange = (e) => setCalMobile(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
   const [prenSelezionata, setPrenSelezionata] = useState(null);
   const [testoConferma, setTestoConferma] = useState(null); // testo mail di conferma pronto da copiare
   const [confermaCopiata, setConfermaCopiata] = useState(false);
@@ -270,26 +277,54 @@ function Prenotazioni({ user }) {
   const [riepilogoTab, setRiepilogoTab] = useState("operatori"); // operatori | campi
   const [riepilogoTesto, setRiepilogoTesto] = useState(null); // messaggio whatsapp pronto da copiare
   const [riepilogoCopiato, setRiepilogoCopiato] = useState(false);
+  const [rigaEspansaId, setRigaEspansaId] = useState(null); // id prenotazione con riga dettaglio espansa (Gestione/Storico)
 
   useEffect(() => { fetchTutto(); }, []);
 
   const fetchTutto = async () => {
-    const [p, o, c, t, pr, pv, vc] = await Promise.all([
+    const [p, o, c, t, pr, pv, vc, dc, dcp, df] = await Promise.all([
       supabase.from('pren_pacchetti').select('*').order('nome'),
-      supabase.from('pren_operatori').select('*').order('nome'),
+      // Operatori = bubbler configurati in Disponibilità (utenti con flag bubbler), non più una tabella a parte.
+      supabase.from('utenti').select('username, nome_breve, telefono, email').eq('bubbler', true).order('nome_breve'),
       supabase.from('pren_campi').select('*').order('nome'),
       supabase.from('pren_campi_tariffe').select('*'),
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
       supabase.from('preventivi').select('*').order('codice', { ascending: false }),
-      supabase.from('voucher').select('*').order('codice', { ascending: false })
+      supabase.from('voucher').select('*').order('codice', { ascending: false }),
+      supabase.from('disp_calendario').select('*'),
+      supabase.from('disp_campi').select('*'),
+      supabase.from('disp_fasce').select('*').order('ordine'),
     ]);
     if (p.data) setPacchetti(p.data);
-    if (o.data) setOperatori(o.data);
+    if (o.data) setOperatori(o.data.map(b => ({ id: b.username, nome: b.nome_breve || b.username, email: b.email, telefono: b.telefono })));
     if (c.data) setCampi(c.data);
     if (t.data) setTariffe(t.data);
-    if (pr.data) setPrenotazioni(pr.data);
+    if (pr.data) setPrenotazioni([...pr.data].sort((a, b) => `${b.data}T${b.oraInizio || '00:00'}`.localeCompare(`${a.data}T${a.oraInizio || '00:00'}`)));
     if (pv.data) setPreventivi(pv.data);
     if (vc.data) setVoucher(vc.data);
+    if (dc.data) setDispCalendario(dc.data);
+    if (dcp.data) setDispCampi(dcp.data);
+    if (df.data) setFasceDisp(df.data);
+  };
+
+  // Disponibilità di un operatore (bubbler), incrociando il campo (se la location è un campo registrato)
+  // e la data/orario della prenotazione con il calendario di Disponibilità.
+  // null = non è ancora possibile determinarlo (manca data o orario), true/false = disponibile o no.
+  const disponibilitaOperatore = (username, iso, oraInizio, oraFine, campoId) => {
+    if (campoId && !dispCampi.some(d => d.utente_username === username && d.campo_id === campoId)) return false;
+    if (!iso) return null;
+    const righeGiorno = dispCalendario.filter(d => d.utente_username === username && d.data === iso);
+    if (righeGiorno.length === 0) return false;
+    const iniMin = toMinutes(oraInizio);
+    const fineMin = toMinutes(oraFine);
+    if (iniMin == null || fineMin == null) return null; // giorno con disponibilità, ma orario non ancora definito
+    return righeGiorno.some(r => {
+      const fascia = fasceDisp.find(f => f.id === r.fascia);
+      const rIni = toMinutes((r.ora_inizio || '').slice(0, 5)) ?? toMinutes((fascia?.ora_inizio || '').slice(0, 5));
+      const rFine = toMinutes((r.ora_fine || '').slice(0, 5)) ?? toMinutes((fascia?.ora_fine || '').slice(0, 5));
+      if (rIni == null || rFine == null) return true;
+      return rIni < fineMin && rFine > iniMin;
+    });
   };
 
   // Costo campo: cerca la tariffa variabile la cui fascia contiene l'ora di inizio nel giorno scelto; altrimenti flat
@@ -470,6 +505,9 @@ function Prenotazioni({ user }) {
   };
 
   const cambiaStatoPren = async (p, nuovoStato) => {
+    if (nuovoStato === 'CONF' && (!p.statoPagamento || p.statoPagamento === 'in attesa')) {
+      return alert("Non è possibile confermare: serve almeno un acconto o il saldo.");
+    }
     await supabase.from('prenotazioni').update({ stato: nuovoStato }).eq('id', p.id);
     fetchTutto();
     if (nuovoStato === 'CONF') setTestoConferma(costruisciConferma(p));
@@ -500,47 +538,72 @@ function Prenotazioni({ user }) {
     fetchTutto();
   };
 
-  // Riga di tabella condivisa da Storico e dalle sotto-schede di Gestione (stesse azioni: apri, conferma, calendario, elimina)
+  // Riga di tabella condivisa da Storico e dalle sotto-schede di Gestione.
+  // Il clic sulla riga espande un pannello con i dettagli (telefono, email, note, pagamenti) e sblocca le azioni (apri, conferma, calendario, elimina).
   const rigaTabellaPren = (p) => {
     const totPagato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
     const totale = parseFloat(p.prezzoVendita) || 0;
+    const coloreStatoRiga = p.stato === 'CONF' ? '#16a34a' : '#f59e0b';
+    const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
+    const espansa = rigaEspansaId === p.id;
     return (
-      <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
-        <td style={{ padding: '12px' }}>
-          <strong>{p.id}</strong><br />
-          <span style={{ color: '#777', fontSize: '0.8rem' }}>{p.data} {p.oraInizio ? `· ${p.oraInizio}` : ''}</span><br />
-          <span className={`badge-stato ${(p.stato || '').toLowerCase()}`} style={{ marginTop: '6px' }}>{p.stato}</span>
-        </td>
-        <td style={{ padding: '12px' }}>
-          👤 {p.nominativo}<br />
-          {p.telefono && <span style={{ fontSize: '0.8rem', color: '#555' }}>📞 {p.telefono}</span>}
-        </td>
-        <td style={{ padding: '12px', fontSize: '0.82rem', color: '#555' }}>
-          {p.pacchettoNome || '—'}<br />
-          <span style={{ color: '#777' }}>{p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—'}</span>
-          {p.operatori && p.operatori.length > 0 && <><br /><span style={{ color: '#0288d1' }}>🧑‍🔧 {p.operatori.map(o => o.nome).join(', ')}</span></>}
-        </td>
-        <td style={{ padding: '12px' }}>
-          <strong style={{ color: '#0f172a' }}>€{totPagato.toFixed(2)}</strong> <span style={{ color: '#777' }}>/ €{totale.toFixed(2)}</span><br />
-          <span className="badge-stato" style={{ marginTop: '6px', background: p.statoPagamento === 'saldato' ? '#dcfce7' : p.statoPagamento === 'acconto' ? '#fef9c3' : '#fee2e2', color: p.statoPagamento === 'saldato' ? '#166534' : p.statoPagamento === 'acconto' ? '#854d0e' : '#991b1b' }}>{p.statoPagamento || 'in attesa'}</span>
-        </td>
-        <td style={{ padding: '12px', textAlign: 'center' }}>
-          <div style={{ display: 'flex', flexDirection: 'row', gap: '6px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button className="btn-modifica-inline" title="Apri" style={{ padding: '6px 9px' }} onClick={() => caricaPrenotazione(p)}>📂</button>
-            {p.stato === "FORSE" && (
-              <button className="btn-conferma" title="Conferma (prepara mail al cliente)" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p, "CONF")}>✔️</button>
-            )}
-            {p.stato === "CONF" && (
-              <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoPren(p, "FORSE")}>↩️</button>
-            )}
-            <button className="btn-modifica-inline" title={p.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '6px 9px' }} onClick={() => apriGoogleCalendar(p)}>📅</button>
-            <button type="button" onClick={() => toggleGoogleCalendarSync(p)} title={p.googleCalendarSync ? "Sincronizzato con Google Calendar (clic per correggere a mano)" : "Non ancora sincronizzato con Google Calendar (clic per correggere a mano)"} style={{ border: 'none', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 'bold', padding: '2px 6px', borderRadius: '8px', background: p.googleCalendarSync ? '#dcfce7' : '#fee2e2', color: p.googleCalendarSync ? '#166534' : '#991b1b' }}>{p.googleCalendarSync ? '✅ Sync' : '⚠️ No sync'}</button>
-            {user.ruolo === "admin" && (
-              <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => eliminaPrenotazione(p.id)}>🗑️</button>
-            )}
-          </div>
-        </td>
-      </tr>
+      <Fragment key={p.id}>
+        <tr
+          onClick={() => setRigaEspansaId(prev => prev === p.id ? null : p.id)}
+          style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}
+        >
+          <td style={{ padding: '8px 10px' }}>
+            <span className="riga-pren-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
+            {p.data}{p.oraInizio ? ` ${p.oraInizio}` : ''}{p.oraFine ? `–${p.oraFine}` : ''}
+          </td>
+          <td style={{ padding: '8px 10px' }}>
+            <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar (clic per correggere a mano)' : 'Non sincronizzato con Google Calendar (clic per correggere a mano)'} style={{ cursor: 'pointer', color: p.googleCalendarSync ? '#16a34a' : '#dc2626', fontWeight: 'bold' }} onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(p); }}>{p.googleCalendarSync ? '✓' : '⚠'}</span> <strong>{p.nominativo}</strong>
+          </td>
+          <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>
+            {p.pacchettoNome || '—'}{p.durataOre ? ` (${p.durataOre}h)` : ''}
+          </td>
+          <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>
+            {p.campoNome || p.locationCitta || '—'}
+            {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'Campo prenotato' : 'Campo da prenotare'} style={{ marginLeft: '6px', verticalAlign: 'middle' }} />}
+          </td>
+          <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#0288d1' }}>
+            {p.operatori && p.operatori.length > 0 ? p.operatori.map(o => o.nome).join(', ') : <span style={{ color: '#94a3b8' }}>—</span>}
+          </td>
+          <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+            <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
+            €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{totale.toFixed(2)}</span>
+          </td>
+        </tr>
+        {espansa && (
+          <tr className="riga-pren-dettaglio">
+            <td colSpan={6} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
+                  <div><span style={{ color: '#94a3b8' }}>Telefono </span>{p.telefono || '—'}</div>
+                  <div><span style={{ color: '#94a3b8' }}>Email </span>{p.email || '—'}</div>
+                  {p.tipoRinfresco && <div><span style={{ color: '#94a3b8' }}>Rinfresco </span>{p.tipoRinfresco}{p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} pers` : ''}</div>}
+                  {p.etaMedia && <div><span style={{ color: '#94a3b8' }}>Età media </span>{p.etaMedia}</div>}
+                  <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(p.pagamenti && p.pagamenti.length > 0) ? p.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${pg.data}`).join(', ') : 'nessuno'}</div>
+                  {p.note && <div><span style={{ color: '#94a3b8' }}>Note </span><em>{p.note}</em></div>}
+                </div>
+                <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                  <button type="button" className="btn-icona-piatta" title="Apri" onClick={() => caricaPrenotazione(p)}>📂</button>
+                  {p.stato === "FORSE" && (
+                    <button type="button" className="btn-icona-piatta" disabled={!p.statoPagamento || p.statoPagamento === 'in attesa'} title={!p.statoPagamento || p.statoPagamento === 'in attesa' ? "Serve almeno un acconto per confermare" : "Conferma (prepara mail al cliente)"} onClick={() => cambiaStatoPren(p, "CONF")}>✔️</button>
+                  )}
+                  {p.stato === "CONF" && (
+                    <button type="button" className="btn-icona-piatta" title="Riporta a FORSE" onClick={() => cambiaStatoPren(p, "FORSE")}>↩️</button>
+                  )}
+                  <button type="button" className="btn-icona-piatta" title={p.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} onClick={() => apriGoogleCalendar(p)}>📅</button>
+                  {user.ruolo === "admin" && (
+                    <button type="button" className="btn-icona-piatta" title="Elimina" onClick={() => eliminaPrenotazione(p.id)}>🗑️</button>
+                  )}
+                </div>
+              </div>
+            </td>
+          </tr>
+        )}
+      </Fragment>
     );
   };
 
@@ -549,17 +612,18 @@ function Prenotazioni({ user }) {
     <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
       <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
-          <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-            <th style={{ padding: '12px' }}>Codice / Data / Stato</th>
-            <th style={{ padding: '12px' }}>Nominativo</th>
-            <th style={{ padding: '12px' }}>Pacchetto / Location / Operatori</th>
-            <th style={{ padding: '12px' }}>Pagato / Totale</th>
-            <th style={{ padding: '12px', textAlign: 'center' }}>Azioni</th>
+          <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Data</th>
+            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Nominativo</th>
+            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Pacchetto</th>
+            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Location</th>
+            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Operatori</th>
+            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Pagato / Totale</th>
           </tr>
         </thead>
         <tbody>
           {righe.length === 0
-            ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            ? <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
             : righe.map(rigaTabellaPren)}
         </tbody>
       </table>
@@ -699,7 +763,7 @@ function Prenotazioni({ user }) {
   const btnSalva = { padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' };
   const btnNuovo = { width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' };
   const boxForm = { background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0', marginBottom: '15px' };
-  const boxTabella = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible' };
+  const boxTabella = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible', overflowX: 'auto' };
   const headerElenco = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0' };
   const btnCollassa = { width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: '0.85rem', background: '#e2e8f0', color: '#334155' };
   const btnBarraNuovo = { display: 'flex', justifyContent: 'flex-end', margin: '18px 0 12px 0' };
@@ -749,26 +813,6 @@ function Prenotazioni({ user }) {
     }).eq('id', idPacchettoInline);
     if (error) { console.error(error); return alert("Errore salvataggio pacchetto"); }
     setIdPacchettoInline(null); fetchTutto();
-  };
-
-  // ---------------- OPERATORI ----------------
-  const salvaOperatore = async (e) => {
-    e.preventDefault();
-    if (!formOperatore.nome) return alert("Inserisci il nome dell'operatore");
-    let error;
-    if (editOperatore) ({ error } = await supabase.from('pren_operatori').update(formOperatore).eq('id', editOperatore));
-    else ({ error } = await supabase.from('pren_operatori').insert([{ id: "opr_" + Date.now(), ...formOperatore }]));
-    if (error) { console.error(error); return alert("Errore salvataggio operatore"); }
-    setFormOperatore(OPERATORE_VUOTO); setEditOperatore(null); setShowFormOperatore(false); fetchTutto();
-  };
-  const nuovoOperatore = () => { setIdOperatoreInline(null); setEditOperatore(null); setFormOperatore(OPERATORE_VUOTO); setShowFormOperatore(true); };
-  const modificaOperatore = (o) => { setEditOperatore(o.id); setFormOperatore({ nome: o.nome || "", email: o.email || "", telefono: o.telefono || "" }); setShowFormOperatore(true); };
-  const rimuoviOperatore = async (id) => { if (window.confirm("Eliminare l'operatore?")) { await supabase.from('pren_operatori').delete().eq('id', id); fetchTutto(); } };
-  const iniziaInlineOperatore = (o) => { setShowFormOperatore(false); setIdOperatoreInline(o.id); setDatiOperatoreInline({ nome: o.nome || "", email: o.email || "", telefono: o.telefono || "" }); };
-  const salvaInlineOperatore = async () => {
-    const { error } = await supabase.from('pren_operatori').update(datiOperatoreInline).eq('id', idOperatoreInline);
-    if (error) { console.error(error); return alert("Errore salvataggio operatore"); }
-    setIdOperatoreInline(null); fetchTutto();
   };
 
   // ---------------- CAMPI ----------------
@@ -857,9 +901,6 @@ function Prenotazioni({ user }) {
             {puoVedere(user, 'prenotazioni', 'config', 'pacchetti') && (
               <button className={`nav-btn ${configTab === 'pacchetti' ? 'active' : ''}`} onClick={() => setConfigTab("pacchetti")}>📦 Pacchetti</button>
             )}
-            {puoVedere(user, 'prenotazioni', 'config', 'operatori') && (
-              <button className={`nav-btn ${configTab === 'operatori' ? 'active' : ''}`} onClick={() => setConfigTab("operatori")}>👤 Operatori</button>
-            )}
             {puoVedere(user, 'prenotazioni', 'config', 'campi') && (
               <button className={`nav-btn ${configTab === 'campi' ? 'active' : ''}`} onClick={() => setConfigTab("campi")}>📍 Campi</button>
             )}
@@ -875,7 +916,7 @@ function Prenotazioni({ user }) {
 
               {showListaPacchetti && (
                 <div className="admin-table-box" style={boxTabella}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                  <table style={{ width: '100%', minWidth: '850px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                     <thead><tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                       <th style={{ padding: '10px 12px' }}>Nome</th><th style={{ padding: '10px 12px' }}>Durata</th><th style={{ padding: '10px 12px' }}>Location</th><th style={{ padding: '10px 12px' }}>Prezzo</th><th style={{ padding: '10px 12px' }}>C. Ricavo</th><th style={{ padding: '10px 12px' }}>N° Part.</th><th style={{ padding: '10px 12px' }}>Rinfresco</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Azioni</th>
                     </tr></thead>
@@ -949,73 +990,6 @@ function Prenotazioni({ user }) {
             </div>
           )}
 
-          {/* --- OPERATORI --- */}
-          {configTab === "operatori" && puoVedere(user, 'prenotazioni', 'config', 'operatori') && (
-            <div>
-              <div style={headerElenco}>
-                <h3 style={{ margin: 0 }}>Operatori ({operatori.length})</h3>
-                <button className="nav-btn" style={btnCollassa} onClick={() => setShowListaOperatori(v => !v)}>{showListaOperatori ? '▼ Nascondi elenco' : '▶ Mostra elenco'}</button>
-              </div>
-
-              {showListaOperatori && (
-                <div className="admin-table-box" style={boxTabella}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
-                    <thead><tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                      <th style={{ padding: '10px 12px' }}>Nome</th><th style={{ padding: '10px 12px' }}>Email</th><th style={{ padding: '10px 12px' }}>Telefono</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Azioni</th>
-                    </tr></thead>
-                    <tbody>
-                      {operatori.map(o => idOperatoreInline === o.id ? (
-                        <tr key={o.id} style={{ borderBottom: '1px solid #eee', background: '#f0f9ff' }}>
-                          <td style={{ padding: '8px' }}><input className="table-input" value={datiOperatoreInline.nome} onChange={(e) => setDatiOperatoreInline({ ...datiOperatoreInline, nome: e.target.value })} style={{ width: '100%', height: '28px', fontSize: '0.8rem' }} /></td>
-                          <td style={{ padding: '8px' }}><input className="table-input" value={datiOperatoreInline.email} onChange={(e) => setDatiOperatoreInline({ ...datiOperatoreInline, email: e.target.value })} style={{ width: '100%', height: '28px', fontSize: '0.8rem' }} /></td>
-                          <td style={{ padding: '8px' }}><input className="table-input" value={datiOperatoreInline.telefono} onChange={(e) => setDatiOperatoreInline({ ...datiOperatoreInline, telefono: e.target.value })} style={{ width: '100%', height: '28px', fontSize: '0.8rem' }} /></td>
-                          <td style={{ padding: '8px', textAlign: 'center' }}>
-                            <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                              <button className="btn-salva-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaInlineOperatore}>Salva</button>
-                              <button className="btn-annulla-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => setIdOperatoreInline(null)}>Annulla</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (
-                        <tr key={o.id} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={{ padding: '10px 12px' }}><strong>{o.nome}</strong></td>
-                          <td style={{ padding: '10px 12px' }}>{o.email}</td>
-                          <td style={{ padding: '10px 12px' }}>{o.telefono}</td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                            <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                              <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => iniziaInlineOperatore(o)}>Modifica</button>
-                              <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviOperatore(o.id)}>Elimina</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {operatori.length === 0 && <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun operatore.</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              <div style={btnBarraNuovo}>
-                <button className="btn-preventivo" style={btnNuovo} onClick={nuovoOperatore}>➕ Nuovo operatore</button>
-              </div>
-
-              {showFormOperatore && (
-                <div className="admin-form-box" style={boxForm}>
-                  <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>{editOperatore ? 'Modifica Operatore' : 'Nuovo Operatore'}</h3>
-                  <form onSubmit={salvaOperatore} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <Campo label="Nome"><input type="text" value={formOperatore.nome} onChange={(e) => setFormOperatore({ ...formOperatore, nome: e.target.value })} style={inputStyle} /></Campo>
-                    <Campo label="Email"><input type="email" value={formOperatore.email} onChange={(e) => setFormOperatore({ ...formOperatore, email: e.target.value })} style={inputStyle} /></Campo>
-                    <Campo label="Telefono"><input type="text" value={formOperatore.telefono} onChange={(e) => setFormOperatore({ ...formOperatore, telefono: e.target.value })} style={inputStyle} /></Campo>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button type="submit" style={btnSalva}>{editOperatore ? 'Salva modifiche' : 'Salva Operatore'}</button>
-                      <button type="button" className="btn-annulla-inline" onClick={() => { setEditOperatore(null); setFormOperatore(OPERATORE_VUOTO); setShowFormOperatore(false); }}>Annulla</button>
-                    </div>
-                  </form>
-                </div>
-              )}
-            </div>
-          )}
-
           {/* --- CAMPI --- */}
           {configTab === "campi" && puoVedere(user, 'prenotazioni', 'config', 'campi') && (
             <div>
@@ -1071,7 +1045,8 @@ function Prenotazioni({ user }) {
                       {tarCampo.length > 0 && (
                         <div style={{ marginTop: '12px', borderTop: '1px dashed #ddd', paddingTop: '12px' }}>
                           <div style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#555', marginBottom: '6px' }}>Tariffe variabili (sovrascrivono la flat)</div>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                          <div style={{ overflowX: 'auto' }}>
+                          <table style={{ width: '100%', minWidth: '360px', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                             <thead><tr style={{ color: '#666' }}><th style={{ textAlign: 'left', padding: '4px' }}>Giorni</th><th style={{ textAlign: 'left', padding: '4px' }}>Fascia</th><th style={{ textAlign: 'left', padding: '4px' }}>Costo</th><th style={{ textAlign: 'right', padding: '4px' }}>Azioni</th></tr></thead>
                             <tbody>
                               {tarCampo.map(t => (
@@ -1084,6 +1059,7 @@ function Prenotazioni({ user }) {
                               ))}
                             </tbody>
                           </table>
+                          </div>
                         </div>
                       )}
 
@@ -1174,6 +1150,10 @@ function Prenotazioni({ user }) {
         const locationDaCampi = pac?.locationTipo === 'campi';
         const campoSel = locationDaCampi ? campi.find(c => c.id === formPren.campoId) : null;
         const durataOre = durataFissa ? parseFloat(pac.durataOre) : durataDaOrari(formPren.oraInizio, formPren.oraFine);
+        // Ora fine effettiva anche per i pacchetti a durata fissa (formPren.oraFine resta vuoto in quel caso), per il calcolo disponibilità operatori
+        const oraFineEffettiva = durataFissa && formPren.oraInizio && !isNaN(durataOre)
+          ? minutiAHHMM(toMinutes(formPren.oraInizio) + Math.round(durataOre * 60))
+          : formPren.oraFine;
         const sconto = parseFloat(formPren.sconto) || 0;
         const scontoFrac = 1 - sconto / 100;
         const pacHaPrezzo = pac && pac.prezzo != null && pac.prezzo !== "";
@@ -1335,16 +1315,20 @@ function Prenotazioni({ user }) {
           {/* 4. Operatori */}
           <div className="sezione">
             <h2>Operatori</h2>
+            <p className="descrizione-pagina" style={{ margin: '0 0 8px 0' }}>Elenco e disponibilità presi da Disponibilità &gt; Configuratore/Calendario. Chi risulta non disponibile viene comunque mostrato: può essere assegnato lo stesso.</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {operatori.map(o => {
                 const sel = formPren.operatoriIds.includes(o.id);
+                const disp = disponibilitaOperatore(o.id, formPren.data, formPren.oraInizio, oraFineEffettiva, locationDaCampi ? formPren.campoId : null);
+                const titolo = disp === true ? 'Disponibile' : disp === false ? 'Non disponibile' : 'Disponibilità da verificare';
                 return (
-                  <label key={o.id} className={`chip-operatore ${sel ? 'sel' : ''}`}>
+                  <label key={o.id} className={`chip-operatore ${sel ? 'sel' : ''} ${disp === false ? 'non-disponibile' : ''}`} title={titolo}>
                     <input type="checkbox" checked={sel} onChange={() => toggleOperatorePren(o.id)} /> {o.nome}
+                    <span aria-hidden="true">{disp === true ? '🟢' : disp === false ? '🔴' : '⚪'}</span>
                   </label>
                 );
               })}
-              {operatori.length === 0 && <span style={{ color: '#999', fontSize: '0.85rem' }}>Nessun operatore configurato.</span>}
+              {operatori.length === 0 && <span style={{ color: '#999', fontSize: '0.85rem' }}>Nessun bubbler configurato: attivali in Disponibilità &gt; Configuratore.</span>}
             </div>
           </div>
 
@@ -1627,21 +1611,28 @@ function Prenotazioni({ user }) {
         // e mostra solo l'orario di ciascuna prenotazione in una mini-etichetta colorata per stato,
         // così l'intero mese entra senza scroll orizzontale ma resta comunque leggibile un minimo di informazione.
         const calendarioMobileStyles = `
-          @media (max-width: 480px) {
+          @media (max-width: 768px) {
             .cal-mese-grid { min-width: 0 !important; grid-template-columns: 16px repeat(7, 1fr) !important; gap: 2px !important; }
-            .cal-mese-giorno { min-height: 46px !important; padding: 2px !important; }
+            .cal-mese-giorno { min-height: 40px !important; padding: 2px !important; }
             .cal-mese-numero { font-size: 0.6rem !important; }
             .cal-mese-giorno-header { font-size: 0.6rem !important; padding: 2px 0 !important; }
             .cal-mese-settimana, .cal-mese-settimana-label { font-size: 0.55rem !important; }
             .cal-mese-chips { display: none !important; }
             .cal-mese-puntini { display: flex !important; flex-wrap: wrap; align-content: flex-start; gap: 1px; justify-content: center; }
+            /* Riduce l'ingombro verticale della barra sopra al calendario, per lasciare più spazio alla griglia */
+            .cal-toolbar-row { gap: 4px !important; margin-bottom: 4px !important; }
+            .cal-toolbar-row h2 { font-size: 0.85rem !important; }
+            .cal-toolbar-row .btn-chiudi { padding: 3px 8px !important; }
+            .cal-toolbar-nav.modulo-subnav { padding: 4px !important; gap: 3px !important; margin-bottom: 0 !important; box-shadow: none !important; }
+            .cal-toolbar-nav .nav-btn { padding: 4px 8px !important; font-size: 0.72rem !important; }
+            .cal-legenda { margin: 4px 0 !important; font-size: 0.68rem !important; gap: 8px !important; }
           }
         `;
 
         return (
           <div className="schermata-storico no-print">
             <style>{calendarioMobileStyles}</style>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div className="cal-toolbar-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} onClick={vaiPrec}>‹</button>
                 <button className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} onClick={() => setCalDate(new Date())}>Oggi</button>
@@ -1649,14 +1640,14 @@ function Prenotazioni({ user }) {
                 <h2 style={{ margin: 0, textTransform: 'capitalize' }}>{titolo}</h2>
                 {toISODate(calDate) === oggiIso && <span style={{ fontSize: '0.7rem', background: '#2563eb', color: '#fff', padding: '2px 9px', borderRadius: '10px', fontWeight: 'bold', letterSpacing: '0.03em' }}>OGGI</span>}
               </div>
-              <div className="modulo-subnav" style={{ margin: 0 }}>
+              <div className="cal-toolbar-nav modulo-subnav" style={{ margin: 0 }}>
                 <button className={`nav-btn ${calView === 'mese' ? 'active' : ''}`} onClick={() => setCalView('mese')}>Mese</button>
                 <button className={`nav-btn ${calView === 'settimana' ? 'active' : ''}`} onClick={() => setCalView('settimana')}>Settimana</button>
                 <button className={`nav-btn ${calView === 'giorno' ? 'active' : ''}`} onClick={() => setCalView('giorno')}>Giorno</button>
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '14px', margin: '10px 0', fontSize: '0.8rem' }}>
+            <div className="cal-legenda" style={{ display: 'flex', gap: '14px', margin: '10px 0', fontSize: '0.8rem' }}>
               <span><span style={{ display: 'inline-block', width: 12, height: 12, background: '#fed7aa', border: '1px solid #f59e0b', borderRadius: 2, verticalAlign: 'middle' }}></span> FORSE</span>
               <span><span style={{ display: 'inline-block', width: 12, height: 12, background: '#dcfce7', border: '1px solid #16a34a', borderRadius: 2, verticalAlign: 'middle' }}></span> CONF</span>
             </div>
@@ -1703,10 +1694,32 @@ function Prenotazioni({ user }) {
               </div>
             )}
 
-            {/* SETTIMANA (griglia oraria 06:00 -> 00:00, blocchi proporzionali alla durata) */}
+            {/* SETTIMANA (griglia oraria 06:00 -> 00:00, blocchi proporzionali alla durata; su mobile mini-agenda a puntini per stare a schermo senza scroll) */}
             {calView === 'settimana' && (() => {
-              const ROW_H = 34;
               const giorni = Array.from({ length: 7 }, (_, i) => addGiorni(inizioSettimana(calDate), i));
+              if (calMobile) {
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '3px' }}>
+                    {giorni.map((g, i) => {
+                      const iso = toISODate(g);
+                      const isOggi = iso === oggiIso;
+                      const lista = prenDelGiorno(iso).sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
+                      return (
+                        <div key={i} onClick={() => { setCalDate(g); setCalView('giorno'); }} title="Apri giorno" style={{ cursor: 'pointer', minHeight: '54px', border: isOggi ? '2px solid #2563eb' : '1px solid #e2e8f0', borderRadius: '6px', padding: '2px', boxSizing: 'border-box', background: isOggi ? '#eff6ff' : '#fff' }}>
+                            <div style={{ textAlign: 'center', fontSize: '0.6rem', fontWeight: 'bold', color: isOggi ? '#2563eb' : '#64748b' }}>{['L', 'M', 'M', 'G', 'V', 'S', 'D'][i]} {g.getDate()}</div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1px', justifyContent: 'center', marginTop: '2px' }}>
+                              {lista.map(p => {
+                                const c = coloreStato(p.stato);
+                                return <span key={p.id} onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} · ${p.nominativo}`} style={{ display: 'inline-block', width: '9px', height: '9px', borderRadius: '2px', background: c.bg, border: `1px solid ${c.bd}` }} />;
+                              })}
+                            </div>
+                          </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
+              const ROW_H = 34;
               const altezzaGriglia = ORE_GRIGLIA.length * ROW_H;
               return (
                 <div style={{ overflowX: 'auto' }}>
@@ -1744,13 +1757,21 @@ function Prenotazioni({ user }) {
               );
             })()}
 
-            {/* GIORNO (griglia oraria 06:00 -> 00:00, blocchi proporzionali alla durata, una colonna per location) */}
+            {/* GIORNO (griglia oraria 06:00 -> 00:00, blocchi proporzionali alla durata, una colonna per location; su mobile lista verticale per stare a schermo senza scroll orizzontale) */}
             {calView === 'giorno' && (() => {
-              const ROW_H = 56;
               const iso = toISODate(calDate);
               const locLabel = (p) => p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—';
               const dayPrens = prenDelGiorno(iso);
               if (dayPrens.length === 0) return <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '20px', color: '#777' }}>Nessuna prenotazione in questa giornata.</div>;
+              if (calMobile) {
+                const ordinati = [...dayPrens].sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                    {ordinati.map(p => <Chip key={p.id} p={p} />)}
+                  </div>
+                );
+              }
+              const ROW_H = 56;
               // I campi noti (da anagrafica) vengono prima delle location libere; entro ciascun gruppo, ordine alfabetico.
               const locationCampoNoto = new Set(dayPrens.filter(p => p.campoId).map(locLabel));
               const locations = [...new Set(dayPrens.map(locLabel))].sort((a, b) => {
@@ -1839,7 +1860,7 @@ function Prenotazioni({ user }) {
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginTop: '18px', justifyContent: 'center' }}>
                     <button className="btn-modifica-inline" title="Apri" style={{ padding: '8px 12px' }} onClick={() => { caricaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>📂</button>
-                    {prenSelezionata.stato === 'FORSE' && <button className="btn-conferma" title="Conferma (prepara mail al cliente)" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'CONF'); setPrenSelezionata(null); }}>✔️</button>}
+                    {prenSelezionata.stato === 'FORSE' && <button className="btn-conferma" disabled={!prenSelezionata.statoPagamento || prenSelezionata.statoPagamento === 'in attesa'} title={!prenSelezionata.statoPagamento || prenSelezionata.statoPagamento === 'in attesa' ? "Serve almeno un acconto per confermare" : "Conferma (prepara mail al cliente)"} style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'CONF'); setPrenSelezionata(null); }}>✔️</button>}
                     {prenSelezionata.stato === 'CONF' && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'FORSE'); setPrenSelezionata(null); }}>↩️</button>}
                     <button className="btn-modifica-inline" title={prenSelezionata.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '8px 12px' }} onClick={() => apriGoogleCalendar(prenSelezionata)}>📅</button>
                     {user.ruolo === 'admin' && <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { eliminaPrenotazione(prenSelezionata.id); setPrenSelezionata(null); }}>🗑️</button>}
