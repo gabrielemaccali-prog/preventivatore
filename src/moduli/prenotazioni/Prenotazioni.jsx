@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { validaCF, fatturazioneCompletaDi } from '../../lib/utils'
 import { puoVedere } from '../../lib/permessi'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
+import Icona from '../../components/Icona'
 
 const GIORNI = [
   { n: 1, l: 'Lun' }, { n: 2, l: 'Mar' }, { n: 3, l: 'Mer' }, { n: 4, l: 'Gio' },
@@ -21,7 +22,7 @@ const PREN_VUOTA = {
   nominativo: "", email: "", telefono: "",
   campoId: "", campoPrenotato: false, locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
   operatoriIds: [], sconto: "0", prezzoManuale: "",
-  tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [],
+  tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "",
   preventivoCollegato: "", ereditaCosti: false, costoEreditato: "",
   fattTipo: "privato",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
@@ -95,8 +96,9 @@ const dettagliGoogleCalendar = (p) => {
   righe.push(`Prezzo vendita: €${(parseFloat(p.prezzoVendita) || 0).toFixed(2)}${p.sconto ? ` (sconto ${p.sconto}%)` : ''}`);
 
   righe.push('');
-  const pagatoTot = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
+  const pagatoTot = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
   righe.push(`Pagamento: ${p.statoPagamento || 'in attesa'} — pagato €${pagatoTot.toFixed(2)} / €${(parseFloat(p.prezzoVendita) || 0).toFixed(2)}`);
+  if (p.voucherCodice) righe.push(`  • voucher ${p.voucherCodice}: €${(parseFloat(p.voucherValore) || 0).toFixed(2)}`);
   (p.pagamenti || []).forEach(pg => righe.push(`  • ${pg.data}: €${(parseFloat(pg.importo) || 0).toFixed(2)}${pg.nominativo ? ` (${pg.nominativo})` : ''}`));
 
   if (p.fattTipo === 'azienda') {
@@ -159,9 +161,11 @@ const formattaOraInput = (raw) => {
 // Validazione formato email
 const validaEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e || "").trim());
 
-// Stato pagamento derivato dai versamenti rispetto al prezzo di vendita
-const statoPagamentoDi = (pagamenti, prezzoVendita) => {
-  const tot = (pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0);
+// Stato pagamento derivato dai versamenti rispetto al prezzo di vendita.
+// `valoreVoucher` è il valore dell'eventuale voucher usato sulla prenotazione: vale come pagamento
+// pur non essendo una riga della tabella pagamenti.
+const statoPagamentoDi = (pagamenti, prezzoVendita, valoreVoucher = 0) => {
+  const tot = (pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0) + (parseFloat(valoreVoucher) || 0);
   if (tot <= 0) return 'in attesa';
   if (tot + 0.001 >= (prezzoVendita || 0)) return 'saldato';
   return 'acconto';
@@ -190,23 +194,61 @@ const normalizzaOra24 = (raw) => {
 };
 
 const lblStyle = { display: 'block', fontSize: '0.78rem', fontWeight: 'bold', color: '#555', marginBottom: '3px' };
+const inputStyle = { width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' };
 // Componente a livello di modulo (non ricreato ad ogni render): un input dentro,
 // altrimenti React lo tratta come un tipo nuovo ad ogni render e l'input perde il focus a ogni carattere digitato.
 const Campo = ({ label, children }) => (
   <div><label style={lblStyle}>{label}</label>{children}</div>
 );
 
+// Campi del form Sede/Campo (condiviso tra la scheda "Nuovo Campo" e la modifica inline nella card).
+const CampoFormFields = ({ formCampo, setFormCampo }) => (
+  <>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+      <Campo label="Nome campo"><input type="text" value={formCampo.nome} onChange={(e) => setFormCampo({ ...formCampo, nome: e.target.value })} style={inputStyle} /></Campo>
+      <Campo label="Nome completo campo"><input type="text" value={formCampo.nomeCompleto} onChange={(e) => setFormCampo({ ...formCampo, nomeCompleto: e.target.value })} style={inputStyle} placeholder="Es. Padel Arena Quintosole" /></Campo>
+    </div>
+    <Campo label="Cerca indirizzo"><RicercaIndirizzo onSelect={(a) => setFormCampo(prev => ({ ...prev, indirizzo: a.indirizzo, cap: a.cap, citta: a.citta, provincia: a.provincia }))} /></Campo>
+    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 0.8fr', gap: '8px' }}>
+      <Campo label="Indirizzo"><input type="text" value={formCampo.indirizzo} onChange={(e) => setFormCampo({ ...formCampo, indirizzo: e.target.value })} style={inputStyle} /></Campo>
+      <Campo label="CAP"><input type="text" value={formCampo.cap} onChange={(e) => setFormCampo({ ...formCampo, cap: e.target.value })} style={inputStyle} /></Campo>
+      <Campo label="Città"><input type="text" value={formCampo.citta} onChange={(e) => setFormCampo({ ...formCampo, citta: e.target.value })} style={inputStyle} /></Campo>
+      <Campo label="Prov"><input type="text" value={formCampo.provincia} onChange={(e) => setFormCampo({ ...formCampo, provincia: e.target.value })} style={inputStyle} /></Campo>
+    </div>
+    <Campo label="Centro di costo"><input type="text" value={formCampo.centroCosto} onChange={(e) => setFormCampo({ ...formCampo, centroCosto: e.target.value })} style={inputStyle} /></Campo>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+      <Campo label="Costo base flat €"><input type="number" step="any" value={formCampo.costoFlat} onChange={(e) => setFormCampo({ ...formCampo, costoFlat: e.target.value })} style={inputStyle} /></Campo>
+      <Campo label="% IVA affitto campo"><input type="number" step="any" value={formCampo.ivaCampo} onChange={(e) => setFormCampo({ ...formCampo, ivaCampo: e.target.value })} style={inputStyle} /></Campo>
+      <Campo label=" "><label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', height: '36px' }}><input type="checkbox" checked={formCampo.ivaInclusaCampo} onChange={(e) => setFormCampo({ ...formCampo, ivaInclusaCampo: e.target.checked })} /> Costo campo IVA inclusa</label></Campo>
+    </div>
+    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
+      <input type="checkbox" checked={formCampo.noRinfresco} onChange={(e) => setFormCampo({ ...formCampo, noRinfresco: e.target.checked })} /> 🚫 Non è possibile fare rinfresco in questo campo
+    </label>
+    {!formCampo.noRinfresco && (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '8px' }}>
+        <Campo label="Costo merenda €/pers"><input type="number" step="any" value={formCampo.costoMerenda} onChange={(e) => setFormCampo({ ...formCampo, costoMerenda: e.target.value })} style={inputStyle} /></Campo>
+        <Campo label="Costo aperitivo €/pers"><input type="number" step="any" value={formCampo.costoAperitivo} onChange={(e) => setFormCampo({ ...formCampo, costoAperitivo: e.target.value })} style={inputStyle} /></Campo>
+        <Campo label="% IVA rinfreschi"><input type="number" step="any" value={formCampo.ivaRinfresco} onChange={(e) => setFormCampo({ ...formCampo, ivaRinfresco: e.target.value })} style={inputStyle} /></Campo>
+        <Campo label=" "><label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', height: '36px' }}><input type="checkbox" checked={formCampo.ivaInclusaRinfresco} onChange={(e) => setFormCampo({ ...formCampo, ivaInclusaRinfresco: e.target.checked })} /> Costo rinfresco IVA inclusa</label></Campo>
+      </div>
+    )}
+  </>
+);
+
 function Prenotazioni({ user }) {
-  const primaSchedaPren = ['nuova', 'config', 'gestione', 'calendario'].find(s => puoVedere(user, 'prenotazioni', s)) || 'nuova';
-  const [currentView, setCurrentView] = useState(primaSchedaPren); // config | nuova | gestione | calendario
+  const primaSchedaPren = ['gestione', 'config', 'calendario'].find(s => puoVedere(user, 'prenotazioni', s)) || 'gestione';
+  const [currentView, setCurrentView] = useState(primaSchedaPren); // config | gestione | calendario
   const primaSottoschedaConfigPren = ['pacchetti', 'campi'].find(s => puoVedere(user, 'prenotazioni', 'config', s)) || 'pacchetti';
   const [configTab, setConfigTab] = useState(primaSottoschedaConfigPren);  // pacchetti | campi
   const [gestioneTab, setGestioneTab] = useState("inAttesaPagamento"); // inAttesaPagamento | daConfermare | partiteAttive | daCompletare
+  const [showFormGestione, setShowFormGestione] = useState(false); // form Nuova/Modifica prenotazione come overlay, richiamato da Gestione
+  const [mostraErroriValidazione, setMostraErroriValidazione] = useState(false); // evidenzia di rosso i campi obbligatori mancanti, solo dopo un tentativo di salvataggio
 
   const [pacchetti, setPacchetti] = useState([]);
   const [operatori, setOperatori] = useState([]); // bubbler (utenti con flag bubbler), fonte in Disponibilità > Configuratore
   const [dispCalendario, setDispCalendario] = useState([]);
   const [dispCampi, setDispCampi] = useState([]);
+  const [dispCampiFasce, setDispCampiFasce] = useState([]);
   const [fasceDisp, setFasceDisp] = useState([]);
   const [campi, setCampi] = useState([]);
   const [tariffe, setTariffe] = useState([]);
@@ -215,9 +257,6 @@ function Prenotazioni({ user }) {
   const [showFormPacchetto, setShowFormPacchetto] = useState(false);
   const [showFormCampo, setShowFormCampo] = useState(false);
 
-  // visibilità elenchi (collassabili, aperti di default)
-  const [showListaPacchetti, setShowListaPacchetti] = useState(true);
-  const [showListaCampi, setShowListaCampi] = useState(true);
   // singole schede campo (collassate di default: mostrano solo nome/indirizzo, il dettaglio si apre al click)
   const [campiEspansi, setCampiEspansi] = useState({});
   const toggleCampoEspanso = (id) => setCampiEspansi(prev => ({ ...prev, [id]: !prev[id] }));
@@ -282,7 +321,7 @@ function Prenotazioni({ user }) {
   useEffect(() => { fetchTutto(); }, []);
 
   const fetchTutto = async () => {
-    const [p, o, c, t, pr, pv, vc, dc, dcp, df] = await Promise.all([
+    const [p, o, c, t, pr, pv, vc, dc, dcp, dcpf, df, pag] = await Promise.all([
       supabase.from('pren_pacchetti').select('*').order('nome'),
       // Operatori = bubbler configurati in Disponibilità (utenti con flag bubbler), non più una tabella a parte.
       supabase.from('utenti').select('username, nome_breve, telefono, email').eq('bubbler', true).order('nome_breve'),
@@ -293,17 +332,31 @@ function Prenotazioni({ user }) {
       supabase.from('voucher').select('*').order('codice', { ascending: false }),
       supabase.from('disp_calendario').select('*'),
       supabase.from('disp_campi').select('*'),
+      supabase.from('disp_campi_fasce').select('*'),
       supabase.from('disp_fasce').select('*').order('ordine'),
+      supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data'),
     ]);
     if (p.data) setPacchetti(p.data);
     if (o.data) setOperatori(o.data.map(b => ({ id: b.username, nome: b.nome_breve || b.username, email: b.email, telefono: b.telefono })));
     if (c.data) setCampi(c.data);
     if (t.data) setTariffe(t.data);
-    if (pr.data) setPrenotazioni([...pr.data].sort((a, b) => `${b.data}T${b.oraInizio || '00:00'}`.localeCompare(`${a.data}T${a.oraInizio || '00:00'}`)));
+    // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher): vengono agganciati
+    // qui a ogni prenotazione, così il resto del modulo continua a leggerli da p.pagamenti.
+    if (pr.data) {
+      const righePag = pag.data || [];
+      const conPagamenti = pr.data.map(p => ({
+        ...p,
+        pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "" })),
+        // valore dell'eventuale voucher usato: conta come pagamento pur non essendo una riga di pagamenti
+        voucherValore: parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherCodice))?.importo) || 0
+      }));
+      setPrenotazioni(conPagamenti.sort((a, b) => `${b.data}T${b.oraInizio || '00:00'}`.localeCompare(`${a.data}T${a.oraInizio || '00:00'}`)));
+    }
     if (pv.data) setPreventivi(pv.data);
     if (vc.data) setVoucher(vc.data);
     if (dc.data) setDispCalendario(dc.data);
     if (dcp.data) setDispCampi(dcp.data);
+    if (dcpf.data) setDispCampiFasce(dcpf.data);
     if (df.data) setFasceDisp(df.data);
   };
 
@@ -313,11 +366,15 @@ function Prenotazioni({ user }) {
   const disponibilitaOperatore = (username, iso, oraInizio, oraFine, campoId) => {
     if (campoId && !dispCampi.some(d => d.utente_username === username && d.campo_id === campoId)) return false;
     if (!iso) return null;
-    const righeGiorno = dispCalendario.filter(d => d.utente_username === username && d.data === iso);
+    // Se la location è un campo, la disponibilità di quel campo è impostata per fascia e giorno della
+    // settimana (Disponibilità > Disponibilità Campi): tiene solo le fasce ammesse per quel campo/giorno.
+    const fasceAmmesseCampo = campoId ? dispCampiFasce.filter(d => d.utente_username === username && d.campo_id === campoId && d.giorno === giornoSettimana(iso)).map(d => d.fascia) : null;
+    if (campoId && fasceAmmesseCampo.length === 0) return false;
+    const righeGiorno = dispCalendario.filter(d => d.utente_username === username && d.data === iso && (!fasceAmmesseCampo || fasceAmmesseCampo.includes(d.fascia)));
     if (righeGiorno.length === 0) return false;
     const iniMin = toMinutes(oraInizio);
     const fineMin = toMinutes(oraFine);
-    if (iniMin == null || fineMin == null) return null; // giorno con disponibilità, ma orario non ancora definito
+    if (iniMin == null || fineMin == null) return true; // giorno disponibile; l'orario preciso non è ancora impostato
     return righeGiorno.some(r => {
       const fascia = fasceDisp.find(f => f.id === r.fascia);
       const rIni = toMinutes((r.ora_inizio || '').slice(0, 5)) ?? toMinutes((fascia?.ora_inizio || '').slice(0, 5));
@@ -359,7 +416,17 @@ function Prenotazioni({ user }) {
     return `${prefix}${prossimo}`;
   };
 
-  const nuovaPrenotazione = () => { setFormPren(PREN_VUOTA); setFormPrenOriginale(null); setCodicePrenInModifica(null); };
+  const nuovaPrenotazione = () => { setFormPren(PREN_VUOTA); setFormPrenOriginale(null); setCodicePrenInModifica(null); setMostraErroriValidazione(false); };
+
+  // Apre il form di nuova prenotazione come overlay compatto (richiamato da Gestione), invece che come scheda a pagina intera.
+  const nuovaPrenotazioneOverlay = () => { nuovaPrenotazione(); setShowFormGestione(true); };
+
+  // Chiude l'overlay di Gestione, chiedendo conferma se ci sono modifiche non salvate.
+  const chiudiFormGestione = () => {
+    const modificato = JSON.stringify(formPren) !== JSON.stringify(formPrenOriginale ?? PREN_VUOTA);
+    if (modificato && !window.confirm("Ci sono modifiche non salvate. Chiudere comunque?")) return;
+    setShowFormGestione(false);
+  };
 
   const caricaPrenotazione = (p) => {
     const pac = pacchetti.find(x => x.id === p.pacchettoId);
@@ -377,7 +444,7 @@ function Prenotazioni({ user }) {
       operatoriIds: (p.operatori || []).map(o => o.id),
       sconto: String(p.sconto ?? "0"), prezzoManuale,
       tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
-      pagamenti: p.pagamenti || [],
+      pagamenti: p.pagamenti || [], voucherCodice: p.voucherCodice || "",
       preventivoCollegato: p.preventivoCollegato || "", ereditaCosti: !!p.ereditaCosti, costoEreditato: p.costoEreditato ?? "",
       fattTipo: p.fattTipo || "privato",
       fattNome: p.fattNome || "", fattCognome: p.fattCognome || "", fattIndirizzo: p.fattIndirizzo || "", fattCap: p.fattCap || "", fattCitta: p.fattCitta || "", fattProvincia: p.fattProvincia || "", fattCF: p.fattCF || "",
@@ -386,7 +453,8 @@ function Prenotazioni({ user }) {
     };
     setFormPren(caricato);
     setFormPrenOriginale(caricato);
-    setCurrentView("nuova");
+    setMostraErroriValidazione(false);
+    setShowFormGestione(true);
   };
 
   // Data in formato esteso italiano, es. "Mercoledì 09 settembre 2026"
@@ -406,9 +474,9 @@ function Prenotazioni({ user }) {
       : (p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—');
     const oraTxt = p.oraInizio ? `${p.oraInizio}${p.oraFine ? ` - ${p.oraFine}` : ''}${p.durataOre ? `   (${p.durataOre} ${p.durataOre === 1 ? 'ora' : 'ore'})` : ''}` : '—';
     const prezzoVendita = parseFloat(p.prezzoVendita) || 0;
-    const totalePagatoP = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
+    const totalePagatoP = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
     const residuo = Math.max(prezzoVendita - totalePagatoP, 0);
-    const statoPag = p.statoPagamento || statoPagamentoDi(p.pagamenti, prezzoVendita);
+    const statoPag = p.statoPagamento || statoPagamentoDi(p.pagamenti, prezzoVendita, p.voucherValore);
     const rigaPagamentoLabel = statoPag === 'saldato' ? 'Pagamento:' : 'Modalità di pagamento:';
     const rigaPagamentoValore = statoPag === 'saldato'
       ? 'SALDATO ✅'
@@ -534,14 +602,18 @@ function Prenotazioni({ user }) {
   };
   const eliminaPrenotazione = async (id) => {
     if (!window.confirm(`Eliminare la prenotazione ${id}?`)) return;
+    // Libera l'eventuale voucher usato e cancella i suoi pagamenti: non esistono vincoli a livello di DB.
+    const pren = prenotazioni.find(p => p.id === id);
     await supabase.from('prenotazioni').delete().eq('id', id);
+    await supabase.from('pagamenti').delete().eq('tipo', 'prenotazione').eq('riferimento', id);
+    if (pren?.voucherCodice) await supabase.from('voucher').update({ stato: 'emesso' }).eq('codice', pren.voucherCodice);
     fetchTutto();
   };
 
   // Riga di tabella condivisa da Storico e dalle sotto-schede di Gestione.
   // Il clic sulla riga espande un pannello con i dettagli (telefono, email, note, pagamenti) e sblocca le azioni (apri, conferma, calendario, elimina).
   const rigaTabellaPren = (p) => {
-    const totPagato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
+    const totPagato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
     const totale = parseFloat(p.prezzoVendita) || 0;
     const coloreStatoRiga = p.stato === 'CONF' ? '#16a34a' : '#f59e0b';
     const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
@@ -553,7 +625,7 @@ function Prenotazioni({ user }) {
           style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}
         >
           <td style={{ padding: '8px 10px' }}>
-            <span className="riga-pren-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
+            <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             {p.data}{p.oraInizio ? ` ${p.oraInizio}` : ''}{p.oraFine ? `–${p.oraFine}` : ''}
           </td>
           <td style={{ padding: '8px 10px' }}>
@@ -575,7 +647,7 @@ function Prenotazioni({ user }) {
           </td>
         </tr>
         {espansa && (
-          <tr className="riga-pren-dettaglio">
+          <tr className="riga-espandibile-dettaglio">
             <td colSpan={6} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
@@ -583,20 +655,25 @@ function Prenotazioni({ user }) {
                   <div><span style={{ color: '#94a3b8' }}>Email </span>{p.email || '—'}</div>
                   {p.tipoRinfresco && <div><span style={{ color: '#94a3b8' }}>Rinfresco </span>{p.tipoRinfresco}{p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} pers` : ''}</div>}
                   {p.etaMedia && <div><span style={{ color: '#94a3b8' }}>Età media </span>{p.etaMedia}</div>}
-                  <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(p.pagamenti && p.pagamenti.length > 0) ? p.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${pg.data}`).join(', ') : 'nessuno'}</div>
+                  <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{[
+                    p.voucherCodice ? `voucher ${p.voucherCodice} (€${(parseFloat(p.voucherValore) || 0).toFixed(2)})` : null,
+                    ...(p.pagamenti || []).map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${pg.data}`)
+                  ].filter(Boolean).join(', ') || 'nessuno'}</div>
                   {p.note && <div><span style={{ color: '#94a3b8' }}>Note </span><em>{p.note}</em></div>}
                 </div>
-                <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
-                  <button type="button" className="btn-icona-piatta" title="Apri" onClick={() => caricaPrenotazione(p)}>📂</button>
-                  {p.stato === "FORSE" && (
-                    <button type="button" className="btn-icona-piatta" disabled={!p.statoPagamento || p.statoPagamento === 'in attesa'} title={!p.statoPagamento || p.statoPagamento === 'in attesa' ? "Serve almeno un acconto per confermare" : "Conferma (prepara mail al cliente)"} onClick={() => cambiaStatoPren(p, "CONF")}>✔️</button>
+                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                  {p.stato === "FORSE" && p.statoPagamento && p.statoPagamento !== 'in attesa' && (
+                    <button type="button" className="btn-icon-action success" title="Conferma (prepara mail al cliente)" onClick={() => cambiaStatoPren(p, "CONF")}><Icona nome="salva" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   {p.stato === "CONF" && (
-                    <button type="button" className="btn-icona-piatta" title="Riporta a FORSE" onClick={() => cambiaStatoPren(p, "FORSE")}>↩️</button>
+                    <button type="button" className="btn-icon-action" title="Riporta a FORSE" onClick={() => cambiaStatoPren(p, "FORSE")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  <button type="button" className="btn-icona-piatta" title={p.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} onClick={() => apriGoogleCalendar(p)}>📅</button>
+                  <button type="button" className="btn-icon-action" title="Apri" onClick={() => caricaPrenotazione(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
+                  {!p.googleCalendarSync && (
+                    <button type="button" className="btn-icon-action" title="Aggiungi a Google Calendar" onClick={() => apriGoogleCalendar(p)}><Icona nome="calendario" size={16} style={{ marginRight: 0 }} /></button>
+                  )}
                   {user.ruolo === "admin" && (
-                    <button type="button" className="btn-icona-piatta" title="Elimina" onClick={() => eliminaPrenotazione(p.id)}>🗑️</button>
+                    <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => eliminaPrenotazione(p.id)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                 </div>
               </div>
@@ -607,7 +684,7 @@ function Prenotazioni({ user }) {
     );
   };
 
-  // Tabella completa (intestazione + righe) condivisa da Storico e Gestione
+  // Tabella completa (intestazione + righe) condivisa da Storico e Gestione. Il pulsante "Apri" di ogni riga richiama sempre il form come overlay.
   const tabellaPren = (righe, messaggioVuoto) => (
     <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
       <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
@@ -679,18 +756,45 @@ function Prenotazioni({ user }) {
   };
   const rimuoviPagamento = (idx) => setFormPren(prev => ({ ...prev, pagamenti: prev.pagamenti.filter((_, i) => i !== idx) }));
 
+  // Valore del voucher usato sulla prenotazione: conta come pagamento senza essere una riga di pagamenti.
+  const valoreVoucherDi = (codice) => {
+    const v = voucher.find(x => String(x.codice) === String(codice));
+    return v ? (parseFloat(v.importo) || 0) : 0;
+  };
+
+  // Allinea le righe della tabella pagamenti a quelle del form (cancella e reinserisce: le righe sono
+  // poche per prenotazione e così non serve tracciare quali sono state aggiunte o tolte).
+  const sincronizzaPagamenti = async (riferimento, righe) => {
+    await supabase.from('pagamenti').delete().eq('tipo', 'prenotazione').eq('riferimento', riferimento);
+    const daInserire = (righe || [])
+      .filter(pg => pg.data)
+      .map(pg => ({ tipo: 'prenotazione', riferimento, data: pg.data, importo: parseFloat(pg.importo) || 0, nominativo: pg.nominativo || null }));
+    if (daInserire.length > 0) await supabase.from('pagamenti').insert(daInserire);
+  };
+
+  // Un voucher passa a "usato" solo venendo selezionato su una prenotazione, e torna "emesso" se
+  // viene tolto dalla prenotazione (o se la prenotazione viene eliminata).
+  const aggiornaVoucherCollegato = async (codicePrecedente, codiceNuovo) => {
+    if (String(codicePrecedente || "") === String(codiceNuovo || "")) return;
+    if (codicePrecedente) await supabase.from('voucher').update({ stato: 'emesso' }).eq('codice', codicePrecedente);
+    if (codiceNuovo) await supabase.from('voucher').update({ stato: 'usato' }).eq('codice', codiceNuovo);
+  };
+
   const salvaPrenotazione = async () => {
     const f = formPren;
     const pac = pacchetti.find(p => p.id === f.pacchettoId);
     const durataFissa = pac && pac.durataOre != null && pac.durataOre !== "";
-    if (!f.data) return alert("Inserisci la data.");
-    if (!pac) return alert("Seleziona un pacchetto.");
-    if (!f.nominativo.trim()) return alert("Inserisci il nominativo della prenotazione.");
-    if (!f.oraInizio) return alert("Inserisci l'orario di inizio.");
-    if (!durataFissa && !f.oraFine) return alert("Per un pacchetto a durata libera inserisci anche l'orario di fine.");
-    if (pac.prevedeRinfresco && !f.tipoRinfresco) return alert("Il pacchetto prevede un rinfresco: seleziona merenda o aperitivo.");
+    // Tutti i campi obbligatori vengono controllati insieme (non uno alla volta) così l'utente
+    // li vede evidenziati di rosso tutti insieme invece di scoprirli uno a uno a ogni tentativo.
+    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim() || !f.oraInizio
+      || (!durataFissa && !f.oraFine) || (!!pac?.prevedeRinfresco && !f.tipoRinfresco);
+    if (mancaCampoObbligatorio) {
+      setMostraErroriValidazione(true);
+      return alert("Compila i campi obbligatori evidenziati in rosso.");
+    }
     if (pac.prevedeRinfresco && campi.find(c => c.id === f.campoId)?.noRinfresco) return alert("Questo campo non consente pacchetti con rinfresco: cambia campo o pacchetto.");
     if (f.fattTipo === 'privato' && f.fattCF && !validaCF(f.fattCF)) return alert("Codice Fiscale non valido.");
+    setMostraErroriValidazione(false);
 
     const IVA = 0.22;
     const durataOre = durataFissa ? parseFloat(pac.durataOre) : durataDaOrari(f.oraInizio, f.oraFine);
@@ -733,8 +837,8 @@ function Prenotazioni({ user }) {
       costoRinfresco: costoRinfrescoLordo, costoRinfrescoNetto, costoRinfrescoLordo,
       etaMedia: f.etaMedia, note: f.note,
       preventivoCollegato: f.preventivoCollegato || null, ereditaCosti: !!f.ereditaCosti, costoEreditato: f.ereditaCosti ? (parseFloat(f.costoEreditato) || 0) : null,
-      pagamenti: f.pagamenti || [],
-      statoPagamento: statoPagamentoDi(f.pagamenti, prezzoVenditaLordo),
+      voucherCodice: f.voucherCodice || null,
+      statoPagamento: statoPagamentoDi(f.pagamenti, prezzoVenditaLordo, valoreVoucherDi(f.voucherCodice)),
       stato: f.stato || "FORSE",
       fattTipo: f.fattTipo,
       fattNome: f.fattNome, fattCognome: f.fattCognome, fattIndirizzo: f.fattIndirizzo, fattCap: f.fattCap, fattCitta: f.fattCitta, fattProvincia: f.fattProvincia, fattCF: (f.fattCF || "").toUpperCase(),
@@ -743,6 +847,7 @@ function Prenotazioni({ user }) {
 
     setSalvataggioPren(true);
     let codice = codicePrenInModifica;
+    const voucherPrecedente = codice ? (prenotazioni.find(p => p.id === codice)?.voucherCodice || "") : "";
     if (!codice) {
       codice = await generaCodicePren();
       const { error } = await supabase.from('prenotazioni').insert([{ id: codice, ...rec }]);
@@ -752,6 +857,8 @@ function Prenotazioni({ user }) {
       const { error } = await supabase.from('prenotazioni').update({ ...rec, googleCalendarSync: false }).eq('id', codice);
       if (error) { console.error(error); setSalvataggioPren(false); return alert("Errore durante l'aggiornamento della prenotazione."); }
     }
+    await sincronizzaPagamenti(codice, f.pagamenti);
+    await aggiornaVoucherCollegato(voucherPrecedente, f.voucherCodice);
     setSalvataggioPren(false);
     setCodicePrenInModifica(codice);
     setFormPrenOriginale(f);
@@ -759,14 +866,10 @@ function Prenotazioni({ user }) {
     alert(`Prenotazione ${codice} salvata (stato: FORSE).`);
   };
 
-  const inputStyle = { width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' };
-  const btnSalva = { padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' };
-  const btnNuovo = { width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' };
-  const boxForm = { background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0', marginBottom: '15px' };
+  const btnSalva = { display: 'inline-flex', alignItems: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' };
+  const btnNuovo = { width: 'auto', marginTop: 0, padding: '8px 16px' };
   const boxTabella = { background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible', overflowX: 'auto' };
   const headerElenco = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0' };
-  const btnCollassa = { width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: '0.85rem', background: '#e2e8f0', color: '#334155' };
-  const btnBarraNuovo = { display: 'flex', justifyContent: 'flex-end', margin: '18px 0 12px 0' };
 
   // ---------------- PACCHETTI ----------------
   const salvaPacchetto = async (e) => {
@@ -844,13 +947,12 @@ function Prenotazioni({ user }) {
       ivaCampo: c.ivaCampo ?? "22", ivaRinfresco: c.ivaRinfresco ?? "22",
       noRinfresco: !!c.noRinfresco
     });
-    setShowFormCampo(true);
   };
   const rimuoviCampo = async (id) => {
     if (!window.confirm("Eliminare il campo e le sue tariffe?")) return;
     await supabase.from('pren_campi_tariffe').delete().eq('campoId', id);
     await supabase.from('pren_campi').delete().eq('id', id);
-    if (editCampo === id) { setEditCampo(null); setFormCampo(CAMPO_VUOTO); setShowFormCampo(false); }
+    if (editCampo === id) { setEditCampo(null); setFormCampo(CAMPO_VUOTO); }
     fetchTutto();
   };
 
@@ -869,26 +971,377 @@ function Prenotazioni({ user }) {
   const toggleGiornoTariffa = (n) => setNuovaTariffa(prev => ({ ...prev, giorni: prev.giorni.includes(n) ? prev.giorni.filter(x => x !== n) : [...prev.giorni, n] }));
   const etichettaGiorni = (str) => (str || "").split(',').filter(Boolean).map(n => GIORNI.find(g => g.n === parseInt(n))?.l || n).join(' ');
 
+  // Form Nuova/Modifica Prenotazione: stessi campi sia come scheda a pagina intera (Nuova Prenotazione)
+  // sia come overlay più compatto richiamato da Gestione (compatto=true attiva lo stile ridotto via CSS).
+  const renderFormPrenotazione = (compatto = false) => {
+        const IVA = 0.22;
+        const pac = pacchetti.find(p => p.id === formPren.pacchettoId);
+        const durataFissa = pac && pac.durataOre != null && pac.durataOre !== "";
+        const locationDaCampi = pac?.locationTipo === 'campi';
+        const campoSel = locationDaCampi ? campi.find(c => c.id === formPren.campoId) : null;
+        const durataOre = durataFissa ? parseFloat(pac.durataOre) : durataDaOrari(formPren.oraInizio, formPren.oraFine);
+        // Ora fine effettiva anche per i pacchetti a durata fissa (formPren.oraFine resta vuoto in quel caso), per il calcolo disponibilità operatori
+        const oraFineEffettiva = durataFissa && formPren.oraInizio && !isNaN(durataOre)
+          ? minutiAHHMM(toMinutes(formPren.oraInizio) + Math.round(durataOre * 60))
+          : formPren.oraFine;
+        const sconto = parseFloat(formPren.sconto) || 0;
+        const scontoFrac = 1 - sconto / 100;
+        const pacHaPrezzo = pac && pac.prezzo != null && pac.prezzo !== "";
+        // Prezzo di vendita: se dal pacchetto è IVA inclusa (lordo); se manuale è IVA esclusa (netto) -> aggiunge IVA
+        const prezzoBaseLordo = pacHaPrezzo ? parseFloat(pac.prezzo) : ((parseFloat(formPren.prezzoManuale) || 0) * (1 + IVA));
+        const prezzoLordo = prezzoBaseLordo * scontoFrac;
+        const prezzoVendita = prezzoLordo; // il cliente paga il lordo
+        // Costo rinfresco (i valori sono lordi o netti a seconda del flag ivaInclusaRinfresco del campo)
+        const campoIvaInclRinfresco = campoSel ? !!campoSel.ivaInclusaRinfresco : false;
+        // Rinfresco
+        const numPart = numOrNull(formPren.numeroPartecipanti);
+        const perPersonaRinf = campoSel ? (formPren.tipoRinfresco === 'merenda' ? (parseFloat(campoSel.costoMerenda) || 0) : formPren.tipoRinfresco === 'aperitivo' ? (parseFloat(campoSel.costoAperitivo) || 0) : 0) : 0;
+        const costoRinfrescoRaw = (pac?.prevedeRinfresco && formPren.tipoRinfresco && numPart) ? perPersonaRinf * numPart : 0;
+        const ivaRinfrescoFrac = campoSel ? fracIva(campoSel.ivaRinfresco) : IVA;
+        const costoRinfrescoLordo = campoIvaInclRinfresco ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + ivaRinfrescoFrac);
+        const errCF = formPren.fattTipo === 'privato' && formPren.fattCF && !validaCF(formPren.fattCF);
+        const emailNonValida = formPren.email && !validaEmail(formPren.email);
+        const voucherUsato = voucher.find(v => String(v.codice) === String(formPren.voucherCodice));
+        const valoreVoucher = voucherUsato ? (parseFloat(voucherUsato.importo) || 0) : 0;
+        const totalePagato = (formPren.pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0) + valoreVoucher;
+        const statoPag = statoPagamentoDi(formPren.pagamenti, prezzoVendita, valoreVoucher);
+        const setF = (patch) => setFormPren(prev => ({ ...prev, ...patch }));
+
+        // Evidenzia i campi cambiati rispetto ai valori caricati inizialmente (solo in modifica)
+        const campoModificato = (chiave) => formPrenOriginale != null && JSON.stringify(formPren[chiave]) !== JSON.stringify(formPrenOriginale[chiave]);
+        const evidenzia = (chiave) => campoModificato(chiave) ? { borderColor: '#f59e0b', borderWidth: '2px', backgroundColor: '#fffbeb' } : undefined;
+        const formModificato = formPrenOriginale != null && JSON.stringify(formPren) !== JSON.stringify(formPrenOriginale);
+
+        // Campi obbligatori mancanti: evidenziati di rosso solo dopo un tentativo di salvataggio (mostraErroriValidazione).
+        // Usa una classe (non solo lo style inline) perché una regola globale "input { border ... !important }"
+        // (per la visibilità su mobile) altrimenti vince sempre sull'inline style dei soli elementi <input>.
+        const campoRosso = (chiave, mancante) => ({
+          className: (mostraErroriValidazione && mancante) ? 'campo-errore' : '',
+          style: evidenzia(chiave),
+        });
+        const dataMancante = !formPren.data;
+        const pacchettoMancante = !pac;
+        const nominativoMancante = !formPren.nominativo.trim();
+        const oraInizioMancante = !formPren.oraInizio;
+        const oraFineMancante = !durataFissa && !formPren.oraFine;
+        const tipoRinfrescoMancante = !!pac?.prevedeRinfresco && !formPren.tipoRinfresco;
+
+        // Selezionando un preventivo si eredita subito costo e prezzo di vendita (restano poi modificabili a mano)
+        const onCambiaPreventivoCollegato = (codice) => {
+          const pv = preventivi.find(p => String(p.codice) === String(codice));
+          setF(pv
+            ? { preventivoCollegato: codice, ereditaCosti: true, prezzoManuale: String(pv.totaleVendita ?? "0"), sconto: "0", costoEreditato: String(pv.costoVivoTotale ?? "0") }
+            : { preventivoCollegato: codice, ereditaCosti: false }
+          );
+        };
+
+        return (
+        <div className={`schermata-inserimento no-print form-pren ${compatto ? 'form-pren-compatto' : ''}`}>
+          <h2 style={{ margin: 0 }}>{codicePrenInModifica ? `Modifica Prenotazione ${codicePrenInModifica}` : "Nuova Prenotazione"}</h2>
+
+          {pacchetti.length === 0 && <p className="descrizione-pagina" style={{ color: '#c62828' }}>⚠️ Nessun pacchetto configurato. Vai nel Configuratore.</p>}
+
+          <div className="form-top-grid">
+          {/* Evento: data/pacchetto/orari, età media/note, location, operatori */}
+          <div className="sezione">
+            <h2>Evento</h2>
+            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
+              <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Data
+                <input type="date" value={formPren.data} onChange={(e) => setF({ data: e.target.value })} {...campoRosso('data', dataMancante)} />
+              </label>
+              <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Pacchetto
+                <select className={`dropdown-gonfiabili ${campoRosso('pacchettoId', pacchettoMancante).className}`} value={formPren.pacchettoId} onChange={(e) => selezionaPacchettoPren(e.target.value)} style={campoRosso('pacchettoId', pacchettoMancante).style}>
+                  <option value="">-- Seleziona pacchetto --</option>
+                  {pacchetti.map(p => <option key={p.id} value={p.id}>{p.nome}{p.durataOre ? ` (${p.durataOre}h)` : ' (durata libera)'}</option>)}
+                </select>
+              </label>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '12px', alignItems: 'flex-end' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', width: '85px', flexShrink: 0 }}>Ora inizio
+                <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraInizio} onChange={(e) => setF({ oraInizio: formattaOraInput(e.target.value) })} {...campoRosso('oraInizio', oraInizioMancante)} />
+              </label>
+              {!durataFissa && (
+                <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', width: '85px', flexShrink: 0 }}>Ora fine
+                  <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraFine} onChange={(e) => setF({ oraFine: formattaOraInput(e.target.value) })} {...campoRosso('oraFine', oraFineMancante)} />
+                </label>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', color: '#555' }}>Durata
+                <div className="valore">{durataOre != null ? `${durataOre} h` : '—'} {durataFissa && <span style={{ fontSize: '0.72rem', color: '#0288d1' }}>(fissa)</span>}</div>
+              </div>
+            </div>
+
+            <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
+              <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Età media partecipanti
+                <input type="text" value={formPren.etaMedia} onChange={(e) => setF({ etaMedia: e.target.value })} style={evidenzia('etaMedia')} />
+              </label>
+            </div>
+            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Note
+              <textarea value={formPren.note} onChange={(e) => setF({ note: e.target.value })} rows="2" style={{ width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', marginTop: '5px', fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical', ...evidenzia('note') }} />
+            </label>
+
+            {/* Location */}
+            <div className="sotto-sezione">
+              <h3>Location</h3>
+              {locationDaCampi ? (
+                <>
+                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '10px' }}>Campo
+                    <select className="dropdown-gonfiabili" value={formPren.campoId} onChange={(e) => setF({ campoId: e.target.value })} style={evidenzia('campoId')}>
+                      <option value="">-- Seleziona campo --</option>
+                      {campi.map(c => <option key={c.id} value={c.id}>{c.nome}{c.citta ? ` — ${c.citta}` : ''}{pac?.prevedeRinfresco && c.noRinfresco ? ' 🚫 no rinfresco' : ''}</option>)}
+                    </select>
+                  </label>
+
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, marginBottom: '12px', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={formPren.campoPrenotato} onChange={(e) => setF({ campoPrenotato: e.target.checked })} /> 🔒 Campo prenotato
+                  </label>
+
+                  {campoSel && pac?.prevedeRinfresco && campoSel.noRinfresco && (
+                    <p style={{ color: '#c62828', fontWeight: 'bold' }}>🚫 Questo campo non consente pacchetti con rinfresco: scegli un altro campo o un pacchetto senza rinfresco.</p>
+                  )}
+
+                  {campoSel && pac?.prevedeRinfresco && !campoSel.noRinfresco && (
+                    <div className="pren-row" style={{ marginBottom: '12px' }}>
+                      <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Rinfresco *
+                        <select value={formPren.tipoRinfresco} onChange={(e) => setF({ tipoRinfresco: e.target.value })} {...campoRosso('tipoRinfresco', tipoRinfrescoMancante)}>
+                          <option value="">-- Seleziona --</option>
+                          <option value="merenda">Merenda</option>
+                          <option value="aperitivo">Aperitivo</option>
+                        </select>
+                      </label>
+                      <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>N° partecipanti
+                        <input type="number" value={formPren.numeroPartecipanti} readOnly style={{ background: '#f1f5f9', color: '#475569' }} title="Impostato dal pacchetto" />
+                      </label>
+                      {formPren.tipoRinfresco && campoSel && numPart ? <div style={{ alignSelf: 'end', padding: '10px 0', fontSize: '0.82rem', color: '#777' }}>€{perPersonaRinf.toFixed(2)}/pers × {numPart}</div> : null}
+                    </div>
+                  )}
+
+                  {campoSel && pac?.prevedeRinfresco && !campoSel.noRinfresco && formPren.tipoRinfresco && costoRinfrescoLordo === 0 && (
+                    <p style={{ color: '#c62828' }}>🍽️ Rinfresco {formPren.tipoRinfresco}: costo 0 — {!numPart ? "n° partecipanti mancante nel pacchetto" : `il campo non ha il costo ${formPren.tipoRinfresco} configurato`}.</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <RicercaIndirizzo onSelect={(a) => setF({ locationIndirizzo: a.indirizzo, locationCap: a.cap, locationCitta: a.citta, locationProvincia: a.provincia })} />
+                  <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '10px' }}>
+                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.locationIndirizzo} onChange={(e) => setF({ locationIndirizzo: e.target.value })} style={evidenzia('locationIndirizzo')} /></label>
+                    <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.locationCap} onChange={(e) => setF({ locationCap: e.target.value })} style={evidenzia('locationCap')} /></label>
+                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.locationCitta} onChange={(e) => setF({ locationCitta: e.target.value })} style={evidenzia('locationCitta')} /></label>
+                    <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.locationProvincia} onChange={(e) => setF({ locationProvincia: e.target.value })} style={evidenzia('locationProvincia')} /></label>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Operatori */}
+            <div className="sotto-sezione">
+              <h3>Operatori</h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                {operatori.map(o => {
+                  const sel = formPren.operatoriIds.includes(o.id);
+                  const disp = disponibilitaOperatore(o.id, formPren.data, formPren.oraInizio, oraFineEffettiva, locationDaCampi ? formPren.campoId : null);
+                  const titolo = disp === true ? 'Disponibile' : disp === false ? 'Non disponibile' : 'Disponibilità da verificare';
+                  return (
+                    <label key={o.id} className={`chip-operatore ${sel ? 'sel' : ''} ${disp === false ? 'non-disponibile' : ''}`} title={titolo}>
+                      <input type="checkbox" checked={sel} onChange={() => toggleOperatorePren(o.id)} /> {o.nome}
+                      <span aria-hidden="true">{disp === true ? '🟢' : disp === false ? '🔴' : '⚪'}</span>
+                    </label>
+                  );
+                })}
+                {operatori.length === 0 && <span style={{ color: '#999', fontSize: '0.85rem' }}>Nessun bubbler configurato: attivali in Disponibilità &gt; Configuratore.</span>}
+              </div>
+            </div>
+          </div>
+
+          {/* Anagrafica: contatti prenotazione + dati di fatturazione */}
+          <div className="sezione">
+            <h2>Anagrafica</h2>
+            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
+              <label style={{ flex: '2 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nominativo *
+                <input type="text" value={formPren.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} {...campoRosso('nominativo', nominativoMancante)} />
+              </label>
+              <label className="span2" style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Email
+                <input type="email" value={formPren.email} onChange={(e) => setF({ email: e.target.value })} style={emailNonValida ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('email')} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Telefono
+                <input type="text" value={formPren.telefono} onChange={(e) => setF({ telefono: e.target.value })} style={evidenzia('telefono')} />
+              </label>
+            </div>
+            {emailNonValida && <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: '#c62828' }}>⚠️ Indirizzo email non valido.</p>}
+
+            {/* Dati di fatturazione */}
+            <div className="sotto-sezione">
+              <h3>Dati di fatturazione <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777', textTransform: 'none', letterSpacing: 0 }}>(inseribili in un secondo momento)</span></h3>
+              <div style={{ display: 'flex', gap: '18px', marginBottom: '12px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.9rem' }}><input type="radio" name="fattTipo" checked={formPren.fattTipo === 'privato'} onChange={() => setF({ fattTipo: 'privato' })} /> Privato</label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.9rem' }}><input type="radio" name="fattTipo" checked={formPren.fattTipo === 'azienda'} onChange={() => setF({ fattTipo: 'azienda' })} /> Azienda</label>
+              </div>
+
+              {formPren.fattTipo === 'privato' ? (
+                <>
+                  <div className="date-grid" style={{ flexWrap: 'wrap' }}>
+                    <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome<input type="text" value={formPren.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} style={evidenzia('fattNome')} /></label>
+                    <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Cognome<input type="text" value={formPren.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} style={evidenzia('fattCognome')} /></label>
+                  </div>
+                  <div style={{ margin: '12px 0' }}>
+                    <RicercaIndirizzo onSelect={(a) => setF({ fattIndirizzo: a.indirizzo, fattCap: a.cap, fattCitta: a.citta, fattProvincia: a.provincia })} />
+                  </div>
+                  <div className="date-grid" style={{ flexWrap: 'wrap' }}>
+                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.fattIndirizzo} onChange={(e) => setF({ fattIndirizzo: e.target.value })} style={evidenzia('fattIndirizzo')} /></label>
+                    <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.fattCap} onChange={(e) => setF({ fattCap: e.target.value })} style={evidenzia('fattCap')} /></label>
+                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.fattCitta} onChange={(e) => setF({ fattCitta: e.target.value })} style={evidenzia('fattCitta')} /></label>
+                    <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.fattProvincia} onChange={(e) => setF({ fattProvincia: e.target.value })} style={evidenzia('fattProvincia')} /></label>
+                  </div>
+                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Codice Fiscale
+                    <input type="text" maxLength={16} value={formPren.fattCF} onChange={(e) => setF({ fattCF: e.target.value.toUpperCase() })} style={errCF ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('fattCF')} />
+                  </label>
+                  {errCF && <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#c62828' }}>⚠️ Codice Fiscale non valido.</p>}
+                </>
+              ) : (
+                <>
+                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem' }}>Ragione sociale<input type="text" value={formPren.ragioneSociale} onChange={(e) => setF({ ragioneSociale: e.target.value })} style={evidenzia('ragioneSociale')} /></label>
+                  <div style={{ margin: '12px 0' }}>
+                    <RicercaIndirizzo onSelect={(a) => setF({ aziIndirizzo: a.indirizzo, aziCap: a.cap, aziCitta: a.citta, aziProvincia: a.provincia })} />
+                  </div>
+                  <div className="date-grid" style={{ flexWrap: 'wrap' }}>
+                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.aziIndirizzo} onChange={(e) => setF({ aziIndirizzo: e.target.value })} style={evidenzia('aziIndirizzo')} /></label>
+                    <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.aziCap} onChange={(e) => setF({ aziCap: e.target.value })} style={evidenzia('aziCap')} /></label>
+                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.aziCitta} onChange={(e) => setF({ aziCitta: e.target.value })} style={evidenzia('aziCitta')} /></label>
+                    <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.aziProvincia} onChange={(e) => setF({ aziProvincia: e.target.value })} style={evidenzia('aziProvincia')} /></label>
+                  </div>
+                  <div className="date-grid" style={{ marginTop: '12px' }}>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Partita IVA<input type="text" value={formPren.pIva} onChange={(e) => setF({ pIva: e.target.value })} style={evidenzia('pIva')} /></label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice Fiscale<input type="text" value={formPren.cfAzienda} onChange={(e) => setF({ cfAzienda: e.target.value })} style={evidenzia('cfAzienda')} /></label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice SDI<input type="text" value={formPren.sdi} onChange={(e) => setF({ sdi: e.target.value })} style={evidenzia('sdi')} /></label>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          </div>
+
+          {/* Vendita e Pagamenti */}
+          <div className="sezione">
+            <h2>Vendita e Pagamenti</h2>
+            {!pacHaPrezzo && (
+              <>
+                <div className="date-grid" style={{ flexWrap: 'wrap', marginBottom: '12px' }}>
+                  <label style={{ flex: '2 1 240px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Preventivo collegato
+                    <select className="dropdown-gonfiabili" value={formPren.preventivoCollegato} onChange={(e) => onCambiaPreventivoCollegato(e.target.value)} style={evidenzia('preventivoCollegato')}>
+                      <option value="">-- Nessuno --</option>
+                      {preventivi.filter(pv => pv.stato === 'Confermato' || String(pv.codice) === String(formPren.preventivoCollegato)).map(pv => <option key={pv.codice} value={pv.codice}>{pv.codice} — {pv.destinazione || pv.nomeReferente || ''} (€{(parseFloat(pv.totaleVendita) || 0).toFixed(2)})</option>)}
+                    </select>
+                  </label>
+                  {formPren.preventivoCollegato && !locationDaCampi && (
+                    <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Costo noleggio
+                      <input type="number" step="any" value={formPren.costoEreditato} onChange={(e) => setF({ costoEreditato: e.target.value })} style={evidenzia('costoEreditato')} />
+                    </label>
+                  )}
+                </div>
+              </>
+            )}
+            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
+              {(pac && pac.prezzo != null && pac.prezzo !== "") ? (
+                <div style={{ flex: '1 1 160px', fontSize: '0.9rem', alignSelf: 'end', padding: '10px 0' }}>Prezzo pacchetto: <strong>€{parseFloat(pac.prezzo).toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span></div>
+              ) : (
+                <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prezzo di vendita
+                  <input type="number" step="any" value={formPren.prezzoManuale} onChange={(e) => setF({ prezzoManuale: e.target.value })} style={evidenzia('prezzoManuale')} />
+                </label>
+              )}
+              <label style={{ flex: '1 1 120px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Sconto (%)
+                <input type="number" min="0" max="100" value={formPren.sconto} onChange={(e) => setF({ sconto: e.target.value })} style={evidenzia('sconto')} />
+              </label>
+              <div style={{ flex: '1 1 220px', alignSelf: 'end', padding: '10px 0' }}>
+                Prezzo finale: <strong style={{ color: '#10b981', fontSize: '1.2rem' }}>€{prezzoLordo.toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span>
+              </div>
+            </div>
+
+            {/* Pagamenti */}
+            <div className="sotto-sezione">
+              <h3>Stato pagamento: <span style={{ fontSize: '0.8rem', fontWeight: 'bold', padding: '3px 10px', borderRadius: '10px', textTransform: 'none', letterSpacing: 0, background: statoPag === 'saldato' ? '#dcfce7' : statoPag === 'acconto' ? '#fef9c3' : '#fee2e2', color: statoPag === 'saldato' ? '#166534' : statoPag === 'acconto' ? '#854d0e' : '#991b1b' }}>{statoPag}</span></h3>
+              {(formPren.pagamenti.length > 0 || voucherUsato) && (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', marginBottom: '10px' }}>
+                  <thead><tr style={{ color: '#666', textAlign: 'left' }}><th style={{ padding: '4px' }}>Data</th><th style={{ padding: '4px' }}>Importo</th><th style={{ padding: '4px' }}>Da</th><th></th></tr></thead>
+                  <tbody>
+                    {voucherUsato && (
+                      <tr>
+                        <td style={{ padding: '4px', color: '#0288d1' }}>🎟️ {voucherUsato.codice}</td>
+                        <td style={{ padding: '4px' }}>€{valoreVoucher.toFixed(2)}</td>
+                        <td style={{ padding: '4px' }}>{voucherUsato.nominativo || '—'}</td>
+                        <td style={{ padding: '4px', textAlign: 'right' }}><button className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => setF({ voucherCodice: "" })} title="Togli il voucher dalla prenotazione">🗑</button></td>
+                      </tr>
+                    )}
+                    {formPren.pagamenti.map((pg, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: '4px' }}>{pg.data}</td>
+                        <td style={{ padding: '4px' }}>€{(parseFloat(pg.importo) || 0).toFixed(2)}</td>
+                        <td style={{ padding: '4px' }}>{pg.nominativo || '—'}</td>
+                        <td style={{ padding: '4px', textAlign: 'right' }}><button className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => rimuoviPagamento(i)}>🗑</button></td>
+                      </tr>
+                    ))}
+                    <tr><td colSpan="2" style={{ padding: '4px', fontWeight: 'bold' }}>Totale versato: €{totalePagato.toFixed(2)}</td><td colSpan="2" style={{ padding: '4px', color: '#777' }}>su €{prezzoVendita.toFixed(2)}</td></tr>
+                  </tbody>
+                </table>
+              )}
+              {statoPag !== 'saldato' && (
+                <>
+                  {!voucherUsato && (
+                    <div className="pren-row" style={{ marginBottom: '8px' }}>
+                      <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', flex: '1 1 100%' }}>Usa un voucher emesso
+                        {/* Selezionare il voucher qui è l'unico modo per usarlo: al salvataggio passa a "usato".
+                            Il suo valore vale come pagamento, quindi non genera una riga nella tabella pagamenti. */}
+                        <select value={formPren.voucherCodice} onChange={(e) => setF({ voucherCodice: e.target.value })} style={evidenzia('voucherCodice')}>
+                          <option value="">-- Nessun voucher --</option>
+                          {voucher.filter(v => v.stato === 'emesso').map(v => <option key={v.codice} value={v.codice}>{v.codice} — {v.nominativo} (€{(parseFloat(v.importo) || 0).toFixed(2)})</option>)}
+                        </select>
+                      </label>
+                    </div>
+                  )}
+                  <div className="pren-row">
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Data pagamento
+                      <input type="date" value={nuovoPagamento.data} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, data: e.target.value })} />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Importo €
+                      <input type="number" step="any" value={nuovoPagamento.importo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, importo: e.target.value })} />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Nominativo
+                      <input type="text" value={nuovoPagamento.nominativo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: e.target.value })} />
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'end' }}>
+                      <button type="button" className="btn-accent-inline" style={{ padding: '8px 14px', fontSize: '0.85rem' }} onClick={aggiungiPagamento}>+ Pagamento</button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <button className="btn-preventivo btn-accent" style={(codicePrenInModifica && formModificato) ? { width: 'auto', flex: '1 1 auto' } : undefined} onClick={salvaPrenotazione} disabled={salvataggioPren}>{salvataggioPren ? 'Salvataggio…' : (codicePrenInModifica ? '💾 Salva modifiche' : '💾 Salva Prenotazione (FORSE)')}</button>
+            {codicePrenInModifica && formModificato && (
+              <button type="button" className="btn-annulla-inline" disabled={salvataggioPren} onClick={() => { if (window.confirm("Annullare le modifiche non salvate?")) setFormPren(formPrenOriginale); }}>Annulla modifiche</button>
+            )}
+          </div>
+        </div>
+        );
+  };
+
   return (
     <>
-      <nav className="modulo-subnav no-print">
+      <nav className="modulo-subnav no-print subnav-segmented">
         {puoVedere(user, 'prenotazioni', 'config') && (
-          <button className={`nav-btn ${currentView === 'config' ? 'active' : ''}`} onClick={() => setCurrentView("config")}>⚙️ Configuratore</button>
-        )}
-        {puoVedere(user, 'prenotazioni', 'nuova') && (
-          <button className={`nav-btn ${currentView === 'nuova' ? 'active' : ''}`} onClick={() => setCurrentView("nuova")}>➕ Nuova Prenotazione</button>
+          <button className={`nav-btn ${currentView === 'config' ? 'active' : ''}`} onClick={() => setCurrentView("config")}><Icona nome="configuratore" />Configuratore</button>
         )}
         {puoVedere(user, 'prenotazioni', 'gestione') && (
-          <button className={`nav-btn ${currentView === 'gestione' ? 'active' : ''}`} onClick={() => setCurrentView("gestione")}>🔔 Gestione</button>
+          <button className={`nav-btn ${currentView === 'gestione' ? 'active' : ''}`} onClick={() => setCurrentView("gestione")}><Icona nome="gestione" />Gestione</button>
         )}
         {puoVedere(user, 'prenotazioni', 'calendario') && (
-          <button className={`nav-btn ${currentView === 'calendario' ? 'active' : ''}`} onClick={() => setCurrentView("calendario")}>📅 Calendario</button>
+          <button className={`nav-btn ${currentView === 'calendario' ? 'active' : ''}`} onClick={() => setCurrentView("calendario")}><Icona nome="calendario" />Calendario</button>
         )}
         {puoVedere(user, 'prenotazioni', 'riepiloghi') && (
-          <button className={`nav-btn ${currentView === 'riepiloghi' ? 'active' : ''}`} onClick={() => setCurrentView("riepiloghi")}>📋 Riepiloghi</button>
+          <button className={`nav-btn ${currentView === 'riepiloghi' ? 'active' : ''}`} onClick={() => setCurrentView("riepiloghi")}><Icona nome="riepiloghi" />Riepiloghi</button>
         )}
         {puoVedere(user, 'prenotazioni', 'storico') && (
-          <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}>🗂️ Storico</button>
+          <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}><Icona nome="storico" />Storico</button>
         )}
       </nav>
 
@@ -897,12 +1350,12 @@ function Prenotazioni({ user }) {
         <div className="schermata-admin no-print" style={{ padding: '20px' }}>
           <h2>Configuratore Prenotazioni</h2>
 
-          <div className="modulo-subnav" style={{ marginTop: '15px' }}>
+          <div className="modulo-subnav subnav-segmented" style={{ marginTop: '15px' }}>
             {puoVedere(user, 'prenotazioni', 'config', 'pacchetti') && (
-              <button className={`nav-btn ${configTab === 'pacchetti' ? 'active' : ''}`} onClick={() => setConfigTab("pacchetti")}>📦 Pacchetti</button>
+              <button className={`nav-btn ${configTab === 'pacchetti' ? 'active' : ''}`} onClick={() => setConfigTab("pacchetti")}><Icona nome="pacchetti" />Pacchetti</button>
             )}
             {puoVedere(user, 'prenotazioni', 'config', 'campi') && (
-              <button className={`nav-btn ${configTab === 'campi' ? 'active' : ''}`} onClick={() => setConfigTab("campi")}>📍 Campi</button>
+              <button className={`nav-btn ${configTab === 'campi' ? 'active' : ''}`} onClick={() => setConfigTab("campi")}><Icona nome="campi" />Campi</button>
             )}
           </div>
 
@@ -911,10 +1364,36 @@ function Prenotazioni({ user }) {
             <div>
               <div style={headerElenco}>
                 <h3 style={{ margin: 0 }}>Pacchetti ({pacchetti.length})</h3>
-                <button className="nav-btn" style={btnCollassa} onClick={() => setShowListaPacchetti(v => !v)}>{showListaPacchetti ? '▼ Nascondi elenco' : '▶ Mostra elenco'}</button>
+                <button className="btn-preventivo btn-accent" style={btnNuovo} onClick={nuovoPacchetto}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
               </div>
 
-              {showListaPacchetti && (
+              {showFormPacchetto && (
+                <div className="modal-form-backdrop" onClick={() => { setEditPacchetto(null); setFormPacchetto(PACCHETTO_VUOTO); setShowFormPacchetto(false); }}>
+                  <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => { setEditPacchetto(null); setFormPacchetto(PACCHETTO_VUOTO); setShowFormPacchetto(false); }}>✕</button>
+                    <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>{editPacchetto ? 'Modifica Pacchetto' : 'Nuovo Pacchetto'}</h3>
+                    <form onSubmit={salvaPacchetto} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <Campo label="Nome pacchetto"><input type="text" value={formPacchetto.nome} onChange={(e) => setFormPacchetto({ ...formPacchetto, nome: e.target.value })} style={inputStyle} /></Campo>
+                      <Campo label="Durata ore (vuoto = libera)"><input type="number" step="any" value={formPacchetto.durataOre} onChange={(e) => setFormPacchetto({ ...formPacchetto, durataOre: e.target.value })} style={inputStyle} /></Campo>
+                      <Campo label="Location"><select value={formPacchetto.locationTipo} onChange={(e) => setFormPacchetto({ ...formPacchetto, locationTipo: e.target.value })} style={inputStyle}>
+                        <option value="libera">Libera (indirizzo manuale)</option>
+                        <option value="campi">Dai campi</option>
+                      </select></Campo>
+                      <Campo label="Prezzo € (vuoto = manuale in prenotazione. Se fissato è IVA inclusa)"><input type="number" step="any" value={formPacchetto.prezzo} onChange={(e) => setFormPacchetto({ ...formPacchetto, prezzo: e.target.value })} style={inputStyle} /></Campo>
+                      <Campo label="Centro di ricavo"><input type="text" value={formPacchetto.centroRicavo} onChange={(e) => setFormPacchetto({ ...formPacchetto, centroRicavo: e.target.value })} style={inputStyle} /></Campo>
+                      <Campo label="N° partecipanti (se stabilito in anticipo)"><input type="number" step="1" value={formPacchetto.numeroPartecipanti} onChange={(e) => setFormPacchetto({ ...formPacchetto, numeroPartecipanti: e.target.value })} style={inputStyle} /></Campo>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
+                        <input type="checkbox" checked={formPacchetto.prevedeRinfresco} onChange={(e) => setFormPacchetto({ ...formPacchetto, prevedeRinfresco: e.target.checked })} /> Prevede rinfresco dopo partita
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button type="submit" style={btnSalva}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />{editPacchetto ? 'Salva modifiche' : 'Salva Pacchetto'}</button>
+                        <button type="button" className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', borderRadius: '4px', fontSize: '0.85rem' }} onClick={() => { setEditPacchetto(null); setFormPacchetto(PACCHETTO_VUOTO); setShowFormPacchetto(false); }}><Icona nome="annulla" size={16} style={{ marginRight: '6px' }} />Annulla</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
                 <div className="admin-table-box" style={boxTabella}>
                   <table style={{ width: '100%', minWidth: '850px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                     <thead><tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -932,8 +1411,8 @@ function Prenotazioni({ user }) {
                           <td style={{ padding: '8px', textAlign: 'center' }}><input type="checkbox" checked={datiPacchettoInline.prevedeRinfresco} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, prevedeRinfresco: e.target.checked })} /></td>
                           <td style={{ padding: '8px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                              <button className="btn-salva-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaInlinePacchetto}>Salva</button>
-                              <button className="btn-annulla-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => setIdPacchettoInline(null)}>Annulla</button>
+                              <button className="btn-accent-inline" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaInlinePacchetto}><Icona nome="salva" size={14} style={{ marginRight: '4px' }} />Salva</button>
+                              <button className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px', borderRadius: '4px' }} onClick={() => setIdPacchettoInline(null)}><Icona nome="annulla" size={14} style={{ marginRight: '4px' }} />Annulla</button>
                             </div>
                           </td>
                         </tr>
@@ -948,8 +1427,8 @@ function Prenotazioni({ user }) {
                           <td style={{ padding: '10px 12px' }}>{p.prevedeRinfresco ? 'Sì' : 'No'}</td>
                           <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                              <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => iniziaInlinePacchetto(p)}>Modifica</button>
-                              <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviPacchetto(p.id)}>Elimina</button>
+                              <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => iniziaInlinePacchetto(p)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                              <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviPacchetto(p.id)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                             </div>
                           </td>
                         </tr>
@@ -958,35 +1437,7 @@ function Prenotazioni({ user }) {
                     </tbody>
                   </table>
                 </div>
-              )}
 
-              <div style={btnBarraNuovo}>
-                <button className="btn-preventivo" style={btnNuovo} onClick={nuovoPacchetto}>➕ Nuovo pacchetto</button>
-              </div>
-
-              {showFormPacchetto && (
-                <div className="admin-form-box" style={boxForm}>
-                  <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>{editPacchetto ? 'Modifica Pacchetto' : 'Nuovo Pacchetto'}</h3>
-                  <form onSubmit={salvaPacchetto} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <Campo label="Nome pacchetto"><input type="text" value={formPacchetto.nome} onChange={(e) => setFormPacchetto({ ...formPacchetto, nome: e.target.value })} style={inputStyle} /></Campo>
-                    <Campo label="Durata ore (vuoto = libera)"><input type="number" step="any" value={formPacchetto.durataOre} onChange={(e) => setFormPacchetto({ ...formPacchetto, durataOre: e.target.value })} style={inputStyle} /></Campo>
-                    <Campo label="Location"><select value={formPacchetto.locationTipo} onChange={(e) => setFormPacchetto({ ...formPacchetto, locationTipo: e.target.value })} style={inputStyle}>
-                      <option value="libera">Libera (indirizzo manuale)</option>
-                      <option value="campi">Dai campi</option>
-                    </select></Campo>
-                    <Campo label="Prezzo € (vuoto = manuale in prenotazione. Se fissato è IVA inclusa)"><input type="number" step="any" value={formPacchetto.prezzo} onChange={(e) => setFormPacchetto({ ...formPacchetto, prezzo: e.target.value })} style={inputStyle} /></Campo>
-                    <Campo label="Centro di ricavo"><input type="text" value={formPacchetto.centroRicavo} onChange={(e) => setFormPacchetto({ ...formPacchetto, centroRicavo: e.target.value })} style={inputStyle} /></Campo>
-                    <Campo label="N° partecipanti (se stabilito in anticipo)"><input type="number" step="1" value={formPacchetto.numeroPartecipanti} onChange={(e) => setFormPacchetto({ ...formPacchetto, numeroPartecipanti: e.target.value })} style={inputStyle} /></Campo>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
-                      <input type="checkbox" checked={formPacchetto.prevedeRinfresco} onChange={(e) => setFormPacchetto({ ...formPacchetto, prevedeRinfresco: e.target.checked })} /> Prevede rinfresco dopo partita
-                    </label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button type="submit" style={btnSalva}>{editPacchetto ? 'Salva modifiche' : 'Salva Pacchetto'}</button>
-                      <button type="button" className="btn-annulla-inline" onClick={() => { setEditPacchetto(null); setFormPacchetto(PACCHETTO_VUOTO); setShowFormPacchetto(false); }}>Annulla</button>
-                    </div>
-                  </form>
-                </div>
-              )}
             </div>
           )}
 
@@ -995,20 +1446,36 @@ function Prenotazioni({ user }) {
             <div>
               <div style={headerElenco}>
                 <h3 style={{ margin: 0 }}>Campi ({campi.length})</h3>
-                <button className="nav-btn" style={btnCollassa} onClick={() => setShowListaCampi(v => !v)}>{showListaCampi ? '▼ Nascondi elenco' : '▶ Mostra elenco'}</button>
+                <button className="btn-preventivo btn-accent" style={btnNuovo} onClick={nuovoCampo}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
               </div>
 
-              {showListaCampi && (
+              {showFormCampo && !editCampo && (
+                <div className="modal-form-backdrop" onClick={() => { setFormCampo(CAMPO_VUOTO); setShowFormCampo(false); }}>
+                  <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => { setFormCampo(CAMPO_VUOTO); setShowFormCampo(false); }}>✕</button>
+                    <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Nuovo Campo</h3>
+                    <form onSubmit={salvaCampo} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <CampoFormFields formCampo={formCampo} setFormCampo={setFormCampo} />
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button type="submit" style={btnSalva}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Salva Campo</button>
+                        <button type="button" className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', borderRadius: '4px', fontSize: '0.85rem' }} onClick={() => { setFormCampo(CAMPO_VUOTO); setShowFormCampo(false); }}><Icona nome="annulla" size={16} style={{ marginRight: '6px' }} />Annulla</button>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.8rem', color: '#666' }}>Il costo base (flat) vale sempre; le tariffe variabili (nella scheda del campo) lo sovrascrivono in certi giorni/orari.</p>
+                    </form>
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 {gruppiCampiPerProvincia.map(([provincia, campiGruppo]) => (
                 <div key={provincia}>
                   <h4 style={{ margin: '0 0 10px 0', fontSize: '0.85rem', fontWeight: 'bold', color: '#0288d1', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '2px solid #e0f2fe', paddingBottom: '6px' }}>
-                    📌 {provincia} <span style={{ fontWeight: 'normal', color: '#888', textTransform: 'none' }}>({campiGruppo.length})</span>
+                    {provincia} <span style={{ fontWeight: 'normal', color: '#888', textTransform: 'none' }}>({campiGruppo.length})</span>
                   </h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 {campiGruppo.map(c => {
                   const tarCampo = tariffe.filter(t => t.campoId === c.id);
-                  const inModifica = editCampo === c.id && showFormCampo;
+                  const inModifica = editCampo === c.id;
                   const espanso = !!campiEspansi[c.id] || inModifica;
                   return (
                     <div key={c.id} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '15px', ...(inModifica ? { boxShadow: '0 0 0 2px #0288d1' } : {}) }}>
@@ -1016,19 +1483,28 @@ function Prenotazioni({ user }) {
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer' }} onClick={() => toggleCampoEspanso(c.id)}>
                           <span style={{ fontSize: '0.7rem', color: '#888', marginTop: '4px' }}>{espanso ? '▼' : '▶'}</span>
                           <div>
-                            <strong style={{ fontSize: '1rem' }}>📍 {c.nome}</strong>
+                            <strong style={{ fontSize: '1rem' }}>{c.nome}</strong>
+                            {c.nomeCompleto && <span style={{ marginLeft: '8px', fontSize: '0.82rem', color: '#0288d1', fontStyle: 'italic' }}>{c.nomeCompleto}</span>}
                             {c.noRinfresco && <span title="Non è possibile fare rinfresco in questo campo" style={{ marginLeft: '6px', fontSize: '0.7rem', fontWeight: 'bold', padding: '2px 7px', borderRadius: '10px', background: '#fee2e2', color: '#991b1b' }}>🚫 No rinfresco</span>}
-                            {c.nomeCompleto && <div style={{ fontSize: '0.82rem', color: '#0288d1', fontStyle: 'italic' }}>{c.nomeCompleto}</div>}
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '5px' }}>
-                          <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => modificaCampo(c)}>Modifica</button>
-                          <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviCampo(c.id)}>Elimina</button>
+                          <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => modificaCampo(c)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                          <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviCampo(c.id)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                         </div>
                       </div>
 
                       {espanso && (
                       <>
+                      {inModifica ? (
+                        <form onSubmit={salvaCampo} style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '10px', background: '#f8fafc', padding: '10px', borderRadius: '6px' }}>
+                          <CampoFormFields formCampo={formCampo} setFormCampo={setFormCampo} />
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button type="submit" style={btnSalva}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Salva modifiche</button>
+                            <button type="button" className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', borderRadius: '4px', fontSize: '0.85rem' }} onClick={() => { setEditCampo(null); setFormCampo(CAMPO_VUOTO); }}><Icona nome="annulla" size={16} style={{ marginRight: '6px' }} />Annulla</button>
+                          </div>
+                        </form>
+                      ) : (
                       <div style={{ marginTop: '8px' }}>
                         <div style={{ fontSize: '0.85rem', color: '#555' }}>{[c.indirizzo, c.cap, c.citta, c.provincia].filter(Boolean).join(', ')}</div>
                         <div style={{ fontSize: '0.8rem', color: '#777' }}>
@@ -1036,11 +1512,12 @@ function Prenotazioni({ user }) {
                           {c.costoMerenda != null && ` · Merenda €${parseFloat(c.costoMerenda).toFixed(2)}/p`}
                           {c.costoAperitivo != null && ` · Aperitivo €${parseFloat(c.costoAperitivo).toFixed(2)}/p`}
                         </div>
-                        <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
-                          <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: c.ivaInclusaCampo ? '#dcfce7' : '#fee2e2', color: c.ivaInclusaCampo ? '#166534' : '#991b1b' }}>Campo: {ivaLabel(c.ivaInclusaCampo)}</span>
-                          <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: c.ivaInclusaRinfresco ? '#dcfce7' : '#fee2e2', color: c.ivaInclusaRinfresco ? '#166534' : '#991b1b' }}>Rinfresco: {ivaLabel(c.ivaInclusaRinfresco)}</span>
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '4px', flexWrap: 'wrap' }}>
+                          <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: c.ivaInclusaCampo ? '#dcfce7' : '#fee2e2', color: c.ivaInclusaCampo ? '#166534' : '#991b1b' }}>Campo: {ivaLabel(c.ivaInclusaCampo)} ({c.ivaCampo ?? '22'}%)</span>
+                          <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: c.ivaInclusaRinfresco ? '#dcfce7' : '#fee2e2', color: c.ivaInclusaRinfresco ? '#166534' : '#991b1b' }}>Rinfresco: {ivaLabel(c.ivaInclusaRinfresco)} ({c.ivaRinfresco ?? '22'}%)</span>
                         </div>
                       </div>
+                      )}
 
                       {tarCampo.length > 0 && (
                         <div style={{ marginTop: '12px', borderTop: '1px dashed #ddd', paddingTop: '12px' }}>
@@ -1089,402 +1566,17 @@ function Prenotazioni({ user }) {
                 ))}
                 {campi.length === 0 && <p style={{ color: '#666' }}>Nessun campo configurato.</p>}
               </div>
-              )}
 
-              <div style={btnBarraNuovo}>
-                <button className="btn-preventivo" style={btnNuovo} onClick={nuovoCampo}>➕ Nuovo campo</button>
-              </div>
-
-              {showFormCampo && (
-                <div className="admin-form-box" style={boxForm}>
-                  <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>{editCampo ? 'Modifica Campo' : 'Nuovo Campo'}</h3>
-                  <form onSubmit={salvaCampo} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <Campo label="Nome campo"><input type="text" value={formCampo.nome} onChange={(e) => setFormCampo({ ...formCampo, nome: e.target.value })} style={inputStyle} /></Campo>
-                    <Campo label="Nome completo campo (usato nelle comunicazioni al cliente)"><input type="text" value={formCampo.nomeCompleto} onChange={(e) => setFormCampo({ ...formCampo, nomeCompleto: e.target.value })} style={inputStyle} placeholder="Es. Padel Arena Quintosole" /></Campo>
-                    <Campo label="Cerca indirizzo"><RicercaIndirizzo onSelect={(a) => setFormCampo(prev => ({ ...prev, indirizzo: a.indirizzo, cap: a.cap, citta: a.citta, provincia: a.provincia }))} /></Campo>
-                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 0.8fr', gap: '8px' }}>
-                      <Campo label="Indirizzo"><input type="text" value={formCampo.indirizzo} onChange={(e) => setFormCampo({ ...formCampo, indirizzo: e.target.value })} style={inputStyle} /></Campo>
-                      <Campo label="CAP"><input type="text" value={formCampo.cap} onChange={(e) => setFormCampo({ ...formCampo, cap: e.target.value })} style={inputStyle} /></Campo>
-                      <Campo label="Città"><input type="text" value={formCampo.citta} onChange={(e) => setFormCampo({ ...formCampo, citta: e.target.value })} style={inputStyle} /></Campo>
-                      <Campo label="Prov"><input type="text" value={formCampo.provincia} onChange={(e) => setFormCampo({ ...formCampo, provincia: e.target.value })} style={inputStyle} /></Campo>
-                    </div>
-                    <Campo label="Centro di costo"><input type="text" value={formCampo.centroCosto} onChange={(e) => setFormCampo({ ...formCampo, centroCosto: e.target.value })} style={inputStyle} /></Campo>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-                      <Campo label="Costo base flat €"><input type="number" step="any" value={formCampo.costoFlat} onChange={(e) => setFormCampo({ ...formCampo, costoFlat: e.target.value })} style={inputStyle} /></Campo>
-                      <Campo label="Costo merenda €/pers"><input type="number" step="any" value={formCampo.costoMerenda} onChange={(e) => setFormCampo({ ...formCampo, costoMerenda: e.target.value })} style={inputStyle} /></Campo>
-                      <Campo label="Costo aperitivo €/pers"><input type="number" step="any" value={formCampo.costoAperitivo} onChange={(e) => setFormCampo({ ...formCampo, costoAperitivo: e.target.value })} style={inputStyle} /></Campo>
-                    </div>
-                    <div style={{ display: 'flex', gap: '20px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
-                        <input type="checkbox" checked={formCampo.ivaInclusaCampo} onChange={(e) => setFormCampo({ ...formCampo, ivaInclusaCampo: e.target.checked })} /> Costo campo IVA inclusa
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
-                        <input type="checkbox" checked={formCampo.ivaInclusaRinfresco} onChange={(e) => setFormCampo({ ...formCampo, ivaInclusaRinfresco: e.target.checked })} /> Costo rinfresco IVA inclusa
-                      </label>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                      <Campo label="% IVA affitto campo"><input type="number" step="any" value={formCampo.ivaCampo} onChange={(e) => setFormCampo({ ...formCampo, ivaCampo: e.target.value })} style={inputStyle} /></Campo>
-                      <Campo label="% IVA rinfreschi"><input type="number" step="any" value={formCampo.ivaRinfresco} onChange={(e) => setFormCampo({ ...formCampo, ivaRinfresco: e.target.value })} style={inputStyle} /></Campo>
-                    </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
-                      <input type="checkbox" checked={formCampo.noRinfresco} onChange={(e) => setFormCampo({ ...formCampo, noRinfresco: e.target.checked })} /> 🚫 Non è possibile fare rinfresco in questo campo
-                    </label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button type="submit" style={btnSalva}>{editCampo ? 'Salva modifiche' : 'Salva Campo'}</button>
-                      <button type="button" className="btn-annulla-inline" onClick={() => { setEditCampo(null); setFormCampo(CAMPO_VUOTO); setShowFormCampo(false); }}>Annulla</button>
-                    </div>
-                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#666' }}>Il costo base (flat) vale sempre; le tariffe variabili (nella scheda del campo) lo sovrascrivono in certi giorni/orari.</p>
-                  </form>
-                </div>
-              )}
             </div>
           )}
         </div>
       )}
 
       {/* ===================== PLACEHOLDER ALTRE SCHEDE ===================== */}
-      {currentView === "nuova" && puoVedere(user, 'prenotazioni', 'nuova') && (() => {
-        const IVA = 0.22;
-        const pac = pacchetti.find(p => p.id === formPren.pacchettoId);
-        const durataFissa = pac && pac.durataOre != null && pac.durataOre !== "";
-        const locationDaCampi = pac?.locationTipo === 'campi';
-        const campoSel = locationDaCampi ? campi.find(c => c.id === formPren.campoId) : null;
-        const durataOre = durataFissa ? parseFloat(pac.durataOre) : durataDaOrari(formPren.oraInizio, formPren.oraFine);
-        // Ora fine effettiva anche per i pacchetti a durata fissa (formPren.oraFine resta vuoto in quel caso), per il calcolo disponibilità operatori
-        const oraFineEffettiva = durataFissa && formPren.oraInizio && !isNaN(durataOre)
-          ? minutiAHHMM(toMinutes(formPren.oraInizio) + Math.round(durataOre * 60))
-          : formPren.oraFine;
-        const sconto = parseFloat(formPren.sconto) || 0;
-        const scontoFrac = 1 - sconto / 100;
-        const pacHaPrezzo = pac && pac.prezzo != null && pac.prezzo !== "";
-        // Prezzo di vendita: se dal pacchetto è IVA inclusa (lordo); se manuale è IVA esclusa (netto) -> aggiunge IVA
-        const prezzoBaseLordo = pacHaPrezzo ? parseFloat(pac.prezzo) : ((parseFloat(formPren.prezzoManuale) || 0) * (1 + IVA));
-        const prezzoLordo = prezzoBaseLordo * scontoFrac;
-        const prezzoVendita = prezzoLordo; // il cliente paga il lordo
-        // Costo rinfresco (i valori sono lordi o netti a seconda del flag ivaInclusaRinfresco del campo)
-        const campoIvaInclRinfresco = campoSel ? !!campoSel.ivaInclusaRinfresco : false;
-        // Rinfresco
-        const numPart = numOrNull(formPren.numeroPartecipanti);
-        const perPersonaRinf = campoSel ? (formPren.tipoRinfresco === 'merenda' ? (parseFloat(campoSel.costoMerenda) || 0) : formPren.tipoRinfresco === 'aperitivo' ? (parseFloat(campoSel.costoAperitivo) || 0) : 0) : 0;
-        const costoRinfrescoRaw = (pac?.prevedeRinfresco && formPren.tipoRinfresco && numPart) ? perPersonaRinf * numPart : 0;
-        const ivaRinfrescoFrac = campoSel ? fracIva(campoSel.ivaRinfresco) : IVA;
-        const costoRinfrescoLordo = campoIvaInclRinfresco ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + ivaRinfrescoFrac);
-        const errCF = formPren.fattTipo === 'privato' && formPren.fattCF && !validaCF(formPren.fattCF);
-        const emailNonValida = formPren.email && !validaEmail(formPren.email);
-        const totalePagato = (formPren.pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0);
-        const statoPag = statoPagamentoDi(formPren.pagamenti, prezzoVendita);
-        const setF = (patch) => setFormPren(prev => ({ ...prev, ...patch }));
-        const costoEreditatoNum = formPren.ereditaCosti ? (parseFloat(formPren.costoEreditato) || 0) : 0;
-        const preventivoSelezionato = preventivi.find(pv => String(pv.codice) === String(formPren.preventivoCollegato));
-
-        // Evidenzia i campi cambiati rispetto ai valori caricati inizialmente (solo in modifica)
-        const campoModificato = (chiave) => formPrenOriginale != null && JSON.stringify(formPren[chiave]) !== JSON.stringify(formPrenOriginale[chiave]);
-        const evidenzia = (chiave) => campoModificato(chiave) ? { borderColor: '#f59e0b', borderWidth: '2px', backgroundColor: '#fffbeb' } : undefined;
-        const formModificato = formPrenOriginale != null && JSON.stringify(formPren) !== JSON.stringify(formPrenOriginale);
-
-        // Copia vendita/costo del preventivo selezionato nei campi del form (restano poi modificabili a mano)
-        const applicaEreditaCosti = (pv) => {
-          if (!pv) return;
-          setF({ prezzoManuale: String(pv.totaleVendita ?? "0"), sconto: "0", costoEreditato: String(pv.costoVivoTotale ?? "0") });
-        };
-        const onCambiaPreventivoCollegato = (codice) => {
-          setF({ preventivoCollegato: codice });
-          if (formPren.ereditaCosti) applicaEreditaCosti(preventivi.find(pv => String(pv.codice) === String(codice)));
-        };
-        const onToggleEredita = (checked) => {
-          setF({ ereditaCosti: checked });
-          if (checked) applicaEreditaCosti(preventivoSelezionato);
-        };
-
-        return (
-        <div className="schermata-inserimento no-print form-pren" style={(codicePrenInModifica && formModificato) ? { paddingBottom: '60px' } : undefined}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <h2 style={{ margin: 0 }}>{codicePrenInModifica ? `Modifica Prenotazione ${codicePrenInModifica}` : "Nuova Prenotazione"}</h2>
-            <button className="btn-chiudi" style={{ float: 'none' }} onClick={nuovaPrenotazione}>🆕 Nuova</button>
-          </div>
-
-          {pacchetti.length === 0 && <p className="descrizione-pagina" style={{ color: '#c62828' }}>⚠️ Nessun pacchetto configurato. Vai nel Configuratore.</p>}
-
-          {/* 1. Data, pacchetto, orari */}
-          <div className="sezione">
-            <h2>Evento</h2>
-            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-              <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Data
-                <input type="date" value={formPren.data} onChange={(e) => setF({ data: e.target.value })} style={evidenzia('data')} />
-              </label>
-              <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Pacchetto
-                <select className="dropdown-gonfiabili" value={formPren.pacchettoId} onChange={(e) => selezionaPacchettoPren(e.target.value)} style={evidenzia('pacchettoId')}>
-                  <option value="">-- Seleziona pacchetto --</option>
-                  {pacchetti.map(p => <option key={p.id} value={p.id}>{p.nome}{p.durataOre ? ` (${p.durataOre}h)` : ' (durata libera)'}</option>)}
-                </select>
-              </label>
-            </div>
-            <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
-              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Ora inizio
-                <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraInizio} onChange={(e) => setF({ oraInizio: formattaOraInput(e.target.value) })} style={evidenzia('oraInizio')} />
-              </label>
-              {!durataFissa && (
-                <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Ora fine
-                  <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraFine} onChange={(e) => setF({ oraFine: formattaOraInput(e.target.value) })} style={evidenzia('oraFine')} />
-                </label>
-              )}
-              <div style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', color: '#555' }}>Durata
-                <div className="valore">{durataOre != null ? `${durataOre} h` : '—'} {durataFissa && <span style={{ fontSize: '0.72rem', color: '#0288d1' }}>(fissa)</span>}</div>
-              </div>
-            </div>
-          </div>
-
-          {/* 2. Contatti */}
-          <div className="sezione">
-            <h2>Contatti prenotazione</h2>
-            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-              <label style={{ flex: '2 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nominativo *
-                <input type="text" value={formPren.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} style={evidenzia('nominativo')} />
-              </label>
-              <label className="span2" style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Email
-                <input type="email" value={formPren.email} onChange={(e) => setF({ email: e.target.value })} style={emailNonValida ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('email')} />
-              </label>
-              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Telefono
-                <input type="text" value={formPren.telefono} onChange={(e) => setF({ telefono: e.target.value })} style={evidenzia('telefono')} />
-              </label>
-            </div>
-            {emailNonValida && <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: '#c62828' }}>⚠️ Indirizzo email non valido.</p>}
-            <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
-              <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Età media partecipanti
-                <input type="text" value={formPren.etaMedia} onChange={(e) => setF({ etaMedia: e.target.value })} style={evidenzia('etaMedia')} />
-              </label>
-            </div>
-            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Note
-              <textarea value={formPren.note} onChange={(e) => setF({ note: e.target.value })} rows="2" style={{ width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', marginTop: '5px', fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical', ...evidenzia('note') }} />
-            </label>
-          </div>
-
-          {/* 3. Location */}
-          <div className="sezione">
-            <h2>Location</h2>
-            {locationDaCampi ? (
-              <>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '10px' }}>Campo
-                  <select className="dropdown-gonfiabili" value={formPren.campoId} onChange={(e) => setF({ campoId: e.target.value })} style={evidenzia('campoId')}>
-                    <option value="">-- Seleziona campo --</option>
-                    {campi.map(c => <option key={c.id} value={c.id}>{c.nome}{c.citta ? ` — ${c.citta}` : ''}{pac?.prevedeRinfresco && c.noRinfresco ? ' 🚫 no rinfresco' : ''}</option>)}
-                  </select>
-                </label>
-
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, marginBottom: '12px', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={formPren.campoPrenotato} onChange={(e) => setF({ campoPrenotato: e.target.checked })} /> 🔒 Campo prenotato
-                </label>
-
-                {campoSel && pac?.prevedeRinfresco && campoSel.noRinfresco && (
-                  <p style={{ color: '#c62828', fontWeight: 'bold' }}>🚫 Questo campo non consente pacchetti con rinfresco: scegli un altro campo o un pacchetto senza rinfresco.</p>
-                )}
-
-                {campoSel && pac?.prevedeRinfresco && !campoSel.noRinfresco && (
-                  <div className="pren-row" style={{ marginBottom: '12px' }}>
-                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Rinfresco *
-                      <select value={formPren.tipoRinfresco} onChange={(e) => setF({ tipoRinfresco: e.target.value })} style={!formPren.tipoRinfresco ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('tipoRinfresco')}>
-                        <option value="">-- Seleziona --</option>
-                        <option value="merenda">Merenda</option>
-                        <option value="aperitivo">Aperitivo</option>
-                      </select>
-                    </label>
-                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>N° partecipanti
-                      <input type="number" value={formPren.numeroPartecipanti} readOnly style={{ background: '#f1f5f9', color: '#475569' }} title="Impostato dal pacchetto" />
-                    </label>
-                    {formPren.tipoRinfresco && campoSel && numPart ? <div style={{ alignSelf: 'end', padding: '10px 0', fontSize: '0.82rem', color: '#777' }}>€{perPersonaRinf.toFixed(2)}/pers × {numPart}</div> : null}
-                  </div>
-                )}
-
-                {campoSel && pac?.prevedeRinfresco && !campoSel.noRinfresco && formPren.tipoRinfresco && costoRinfrescoLordo === 0 && (
-                  <p style={{ color: '#c62828' }}>🍽️ Rinfresco {formPren.tipoRinfresco}: costo 0 — {!numPart ? "n° partecipanti mancante nel pacchetto" : `il campo non ha il costo ${formPren.tipoRinfresco} configurato`}.</p>
-                )}
-              </>
-            ) : (
-              <>
-                <RicercaIndirizzo onSelect={(a) => setF({ locationIndirizzo: a.indirizzo, locationCap: a.cap, locationCitta: a.citta, locationProvincia: a.provincia })} />
-                <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '10px' }}>
-                  <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.locationIndirizzo} onChange={(e) => setF({ locationIndirizzo: e.target.value })} style={evidenzia('locationIndirizzo')} /></label>
-                  <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.locationCap} onChange={(e) => setF({ locationCap: e.target.value })} style={evidenzia('locationCap')} /></label>
-                  <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.locationCitta} onChange={(e) => setF({ locationCitta: e.target.value })} style={evidenzia('locationCitta')} /></label>
-                  <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.locationProvincia} onChange={(e) => setF({ locationProvincia: e.target.value })} style={evidenzia('locationProvincia')} /></label>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* 4. Operatori */}
-          <div className="sezione">
-            <h2>Operatori</h2>
-            <p className="descrizione-pagina" style={{ margin: '0 0 8px 0' }}>Elenco e disponibilità presi da Disponibilità &gt; Configuratore/Calendario. Chi risulta non disponibile viene comunque mostrato: può essere assegnato lo stesso.</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {operatori.map(o => {
-                const sel = formPren.operatoriIds.includes(o.id);
-                const disp = disponibilitaOperatore(o.id, formPren.data, formPren.oraInizio, oraFineEffettiva, locationDaCampi ? formPren.campoId : null);
-                const titolo = disp === true ? 'Disponibile' : disp === false ? 'Non disponibile' : 'Disponibilità da verificare';
-                return (
-                  <label key={o.id} className={`chip-operatore ${sel ? 'sel' : ''} ${disp === false ? 'non-disponibile' : ''}`} title={titolo}>
-                    <input type="checkbox" checked={sel} onChange={() => toggleOperatorePren(o.id)} /> {o.nome}
-                    <span aria-hidden="true">{disp === true ? '🟢' : disp === false ? '🔴' : '⚪'}</span>
-                  </label>
-                );
-              })}
-              {operatori.length === 0 && <span style={{ color: '#999', fontSize: '0.85rem' }}>Nessun bubbler configurato: attivali in Disponibilità &gt; Configuratore.</span>}
-            </div>
-          </div>
-
-          {/* 6. Prezzo */}
-          <div className="sezione">
-            <h2>Prezzo di vendita</h2>
-            {!pacHaPrezzo && (
-              <>
-                <div className="date-grid" style={{ flexWrap: 'wrap', marginBottom: '12px' }}>
-                  <label style={{ flex: '2 1 240px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Preventivo collegato
-                    <select className="dropdown-gonfiabili" value={formPren.preventivoCollegato} onChange={(e) => onCambiaPreventivoCollegato(e.target.value)} style={evidenzia('preventivoCollegato')}>
-                      <option value="">-- Nessuno --</option>
-                      {preventivi.map(pv => <option key={pv.codice} value={pv.codice}>{pv.codice} — {pv.destinazione || pv.nomeReferente || ''} (€{(parseFloat(pv.totaleVendita) || 0).toFixed(2)})</option>)}
-                    </select>
-                  </label>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, alignSelf: 'end', padding: '10px 0', cursor: preventivoSelezionato ? 'pointer' : 'not-allowed', opacity: preventivoSelezionato ? 1 : 0.5 }}>
-                    <input type="checkbox" checked={formPren.ereditaCosti} disabled={!preventivoSelezionato} onChange={(e) => onToggleEredita(e.target.checked)} /> Eredita costi e vendita dal preventivo
-                  </label>
-                </div>
-                {formPren.ereditaCosti && !locationDaCampi && (
-                  <p style={{ fontSize: '0.82rem', color: '#666', marginTop: 0 }}>📄 Costo ereditato dal preventivo (senza IVA): <strong>€{costoEreditatoNum.toFixed(2)}</strong></p>
-                )}
-              </>
-            )}
-            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-              {(pac && pac.prezzo != null && pac.prezzo !== "") ? (
-                <div style={{ flex: '1 1 160px', fontSize: '0.9rem', alignSelf: 'end', padding: '10px 0' }}>Prezzo pacchetto: <strong>€{parseFloat(pac.prezzo).toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span></div>
-              ) : (
-                <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prezzo di vendita € (IVA escl.)
-                  <input type="number" step="any" value={formPren.prezzoManuale} onChange={(e) => setF({ prezzoManuale: e.target.value })} style={evidenzia('prezzoManuale')} />
-                </label>
-              )}
-              <label style={{ flex: '1 1 120px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Sconto (%)
-                <input type="number" min="0" max="100" value={formPren.sconto} onChange={(e) => setF({ sconto: e.target.value })} style={evidenzia('sconto')} />
-              </label>
-              <div style={{ flex: '1 1 220px', alignSelf: 'end', padding: '10px 0' }}>
-                Prezzo finale: <strong style={{ color: '#10b981', fontSize: '1.2rem' }}>€{prezzoLordo.toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span>
-              </div>
-            </div>
-          </div>
-
-          {/* 6b. Pagamenti */}
-          <div className="sezione">
-            <h2>Stato pagamento: <span style={{ fontSize: '0.8rem', fontWeight: 'bold', padding: '3px 10px', borderRadius: '10px', background: statoPag === 'saldato' ? '#dcfce7' : statoPag === 'acconto' ? '#fef9c3' : '#fee2e2', color: statoPag === 'saldato' ? '#166534' : statoPag === 'acconto' ? '#854d0e' : '#991b1b' }}>{statoPag}</span></h2>
-            {formPren.pagamenti.length > 0 && (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', marginBottom: '10px' }}>
-                <thead><tr style={{ color: '#666', textAlign: 'left' }}><th style={{ padding: '4px' }}>Data</th><th style={{ padding: '4px' }}>Importo</th><th style={{ padding: '4px' }}>Da</th><th></th></tr></thead>
-                <tbody>
-                  {formPren.pagamenti.map((pg, i) => (
-                    <tr key={i}>
-                      <td style={{ padding: '4px' }}>{pg.data}</td>
-                      <td style={{ padding: '4px' }}>€{(parseFloat(pg.importo) || 0).toFixed(2)}</td>
-                      <td style={{ padding: '4px' }}>{pg.nominativo || '—'}</td>
-                      <td style={{ padding: '4px', textAlign: 'right' }}><button className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => rimuoviPagamento(i)}>🗑</button></td>
-                    </tr>
-                  ))}
-                  <tr><td colSpan="2" style={{ padding: '4px', fontWeight: 'bold' }}>Totale versato: €{totalePagato.toFixed(2)}</td><td colSpan="2" style={{ padding: '4px', color: '#777' }}>su €{prezzoVendita.toFixed(2)}</td></tr>
-                </tbody>
-              </table>
-            )}
-            {statoPag !== 'saldato' && (
-              <>
-                <div className="pren-row" style={{ marginBottom: '8px' }}>
-                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', flex: '1 1 100%' }}>Usa un voucher emesso (facoltativo)
-                    <select value="" onChange={(e) => {
-                      const v = voucher.find(x => String(x.codice) === e.target.value);
-                      if (v) setNuovoPagamento(prev => ({ ...prev, importo: String(v.importo ?? ''), nominativo: prev.nominativo || v.nominativo || '' }));
-                    }}>
-                      <option value="">-- Seleziona voucher --</option>
-                      {voucher.filter(v => v.stato !== 'usato').map(v => <option key={v.codice} value={v.codice}>{v.codice} — {v.nominativo} (€{(parseFloat(v.importo) || 0).toFixed(2)})</option>)}
-                    </select>
-                  </label>
-                </div>
-                <div className="pren-row">
-                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Data pagamento
-                    <input type="date" value={nuovoPagamento.data} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, data: e.target.value })} />
-                  </label>
-                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Importo €
-                    <input type="number" step="any" value={nuovoPagamento.importo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, importo: e.target.value })} />
-                  </label>
-                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Nominativo
-                    <input type="text" value={nuovoPagamento.nominativo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: e.target.value })} />
-                  </label>
-                  <div style={{ display: 'flex', alignItems: 'end' }}>
-                    <button type="button" className="btn-conferma" style={{ padding: '8px 14px' }} onClick={aggiungiPagamento}>+ Pagamento</button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* 8. Fatturazione */}
-          <div className="sezione">
-            <h2>Dati di fatturazione <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(facoltativi, inseribili in un secondo momento)</span></h2>
-            <div style={{ display: 'flex', gap: '18px', marginBottom: '12px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.9rem' }}><input type="radio" name="fattTipo" checked={formPren.fattTipo === 'privato'} onChange={() => setF({ fattTipo: 'privato' })} /> Privato</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.9rem' }}><input type="radio" name="fattTipo" checked={formPren.fattTipo === 'azienda'} onChange={() => setF({ fattTipo: 'azienda' })} /> Azienda</label>
-            </div>
-
-            {formPren.fattTipo === 'privato' ? (
-              <>
-                <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-                  <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome<input type="text" value={formPren.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} style={evidenzia('fattNome')} /></label>
-                  <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Cognome<input type="text" value={formPren.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} style={evidenzia('fattCognome')} /></label>
-                </div>
-                <div style={{ margin: '12px 0' }}>
-                  <RicercaIndirizzo onSelect={(a) => setF({ fattIndirizzo: a.indirizzo, fattCap: a.cap, fattCitta: a.citta, fattProvincia: a.provincia })} />
-                </div>
-                <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-                  <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.fattIndirizzo} onChange={(e) => setF({ fattIndirizzo: e.target.value })} style={evidenzia('fattIndirizzo')} /></label>
-                  <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.fattCap} onChange={(e) => setF({ fattCap: e.target.value })} style={evidenzia('fattCap')} /></label>
-                  <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.fattCitta} onChange={(e) => setF({ fattCitta: e.target.value })} style={evidenzia('fattCitta')} /></label>
-                  <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.fattProvincia} onChange={(e) => setF({ fattProvincia: e.target.value })} style={evidenzia('fattProvincia')} /></label>
-                </div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Codice Fiscale
-                  <input type="text" maxLength={16} value={formPren.fattCF} onChange={(e) => setF({ fattCF: e.target.value.toUpperCase() })} style={errCF ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('fattCF')} />
-                </label>
-                {errCF && <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#c62828' }}>⚠️ Codice Fiscale non valido.</p>}
-              </>
-            ) : (
-              <>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem' }}>Ragione sociale<input type="text" value={formPren.ragioneSociale} onChange={(e) => setF({ ragioneSociale: e.target.value })} style={evidenzia('ragioneSociale')} /></label>
-                <div style={{ margin: '12px 0' }}>
-                  <RicercaIndirizzo onSelect={(a) => setF({ aziIndirizzo: a.indirizzo, aziCap: a.cap, aziCitta: a.citta, aziProvincia: a.provincia })} />
-                </div>
-                <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-                  <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.aziIndirizzo} onChange={(e) => setF({ aziIndirizzo: e.target.value })} style={evidenzia('aziIndirizzo')} /></label>
-                  <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.aziCap} onChange={(e) => setF({ aziCap: e.target.value })} style={evidenzia('aziCap')} /></label>
-                  <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.aziCitta} onChange={(e) => setF({ aziCitta: e.target.value })} style={evidenzia('aziCitta')} /></label>
-                  <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.aziProvincia} onChange={(e) => setF({ aziProvincia: e.target.value })} style={evidenzia('aziProvincia')} /></label>
-                </div>
-                <div className="date-grid" style={{ marginTop: '12px' }}>
-                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Partita IVA<input type="text" value={formPren.pIva} onChange={(e) => setF({ pIva: e.target.value })} style={evidenzia('pIva')} /></label>
-                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice Fiscale<input type="text" value={formPren.cfAzienda} onChange={(e) => setF({ cfAzienda: e.target.value })} style={evidenzia('cfAzienda')} /></label>
-                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice SDI<input type="text" value={formPren.sdi} onChange={(e) => setF({ sdi: e.target.value })} style={evidenzia('sdi')} /></label>
-                </div>
-              </>
-            )}
-          </div>
-
-          <button className="btn-preventivo" onClick={salvaPrenotazione} disabled={salvataggioPren}>{salvataggioPren ? 'Salvataggio…' : (codicePrenInModifica ? '💾 Salva modifiche' : '💾 Salva Prenotazione (FORSE)')}</button>
-
-          {codicePrenInModifica && formModificato && (
-            <div className="no-print" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50, background: '#fff', borderTop: '1px solid #e2e8f0', boxShadow: '0 -2px 10px rgba(0,0,0,0.08)', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '12px' }}>
-              <span style={{ marginRight: 'auto', fontSize: '0.85rem', color: '#666' }}>✏️ Modifiche non salvate su {codicePrenInModifica}</span>
-              <button type="button" className="btn-annulla-inline" style={{ padding: '9px 16px' }} disabled={salvataggioPren} onClick={() => { if (window.confirm("Annullare le modifiche non salvate?")) setFormPren(formPrenOriginale); }}>Annulla modifiche</button>
-              <button className="btn-preventivo" style={{ width: 'auto', marginTop: 0 }} onClick={salvaPrenotazione} disabled={salvataggioPren}>{salvataggioPren ? 'Salvataggio…' : '💾 Salva modifiche'}</button>
-            </div>
-          )}
-        </div>
-        );
-      })()}
       {currentView === "storico" && puoVedere(user, 'prenotazioni', 'storico') && (
         <div className="schermata-storico no-print">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <h2 style={{ margin: 0 }}>🗂️ Storico Prenotazioni</h2>
+            <h2 style={{ margin: 0 }}>Storico Prenotazioni</h2>
             <button onClick={esportaExcelPren} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
           </div>
           <p className="descrizione-pagina">Consulta, apri, cambia stato o elimina le prenotazioni.</p>
@@ -1526,13 +1618,16 @@ function Prenotazioni({ user }) {
         };
         return (
           <div className="schermata-storico no-print">
-            <h2 style={{ margin: 0 }}>🔔 Gestione</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <h2 style={{ margin: 0 }}>Gestione</h2>
+              <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovaPrenotazioneOverlay}>➕ Nuovo</button>
+            </div>
             <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento o completamento dati.</p>
-            <nav className="modulo-subnav" style={{ margin: '10px 0' }}>
-              <button className={`nav-btn ${gestioneTab === 'inAttesaPagamento' ? 'active' : ''}`} onClick={() => setGestioneTab('inAttesaPagamento')}>⏳ In attesa di pagamento ({inAttesaPagamento.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'daConfermare' ? 'active' : ''}`} onClick={() => setGestioneTab('daConfermare')}>💰 Da confermare ({daConfermare.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'partiteAttive' ? 'active' : ''}`} onClick={() => setGestioneTab('partiteAttive')}>🎮 Partite attive ({partiteAttive.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'daCompletare' ? 'active' : ''}`} onClick={() => setGestioneTab('daCompletare')}>🧩 Da completare ({daCompletare.length})</button>
+            <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
+              <button className={`nav-btn ${gestioneTab === 'inAttesaPagamento' ? 'active' : ''}`} onClick={() => setGestioneTab('inAttesaPagamento')}><Icona nome="attesaPagamento" />In attesa di pagamento ({inAttesaPagamento.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'daConfermare' ? 'active' : ''}`} onClick={() => setGestioneTab('daConfermare')}><Icona nome="daConfermare" />Da confermare ({daConfermare.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'partiteAttive' ? 'active' : ''}`} onClick={() => setGestioneTab('partiteAttive')}><Icona nome="partiteAttive" />Partite attive ({partiteAttive.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'daCompletare' ? 'active' : ''}`} onClick={() => setGestioneTab('daCompletare')}><Icona nome="daCompletare" />Da completare ({daCompletare.length})</button>
             </nav>
             {tabellaPren(liste[gestioneTab], messaggiVuoto[gestioneTab])}
           </div>
@@ -1850,7 +1945,7 @@ function Prenotazioni({ user }) {
                     {prenSelezionata.tipoRinfresco && <>🍽️ Rinfresco: {prenSelezionata.tipoRinfresco}{prenSelezionata.numeroPartecipanti ? ` · ${prenSelezionata.numeroPartecipanti} pers` : ''}<br /></>}
                     {prenSelezionata.etaMedia && <>🎂 Età media: {prenSelezionata.etaMedia}<br /></>}
                     {prenSelezionata.note && <>📝 <em>{prenSelezionata.note}</em><br /></>}
-                    💶 Pagato €{((prenSelezionata.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0)).toFixed(2)} / €{(parseFloat(prenSelezionata.prezzoVendita) || 0).toFixed(2)} · <strong>{prenSelezionata.statoPagamento || 'in attesa'}</strong><br />
+                    💶 Pagato €{((prenSelezionata.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(prenSelezionata.voucherValore) || 0)).toFixed(2)} / €{(parseFloat(prenSelezionata.prezzoVendita) || 0).toFixed(2)} · <strong>{prenSelezionata.statoPagamento || 'in attesa'}</strong>{prenSelezionata.voucherCodice ? ` · 🎟️ ${prenSelezionata.voucherCodice}` : ''}<br />
                     📅 <button type="button" onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(prenSelezionata); }} title="Clic per correggere a mano lo stato di sincronizzazione" style={{ border: 'none', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: prenSelezionata.googleCalendarSync ? '#dcfce7' : '#fee2e2', color: prenSelezionata.googleCalendarSync ? '#166534' : '#991b1b' }}>{prenSelezionata.googleCalendarSync ? '✅ Sincronizzato con Google Calendar' : '⚠️ Non sincronizzato con Google Calendar'}</button>
                     {prenSelezionata.campoId && (
                       <label onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', cursor: 'pointer', fontWeight: 'bold', color: prenSelezionata.campoPrenotato ? '#166534' : '#9a3412' }}>
@@ -1935,9 +2030,9 @@ function Prenotazioni({ user }) {
                 <button className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} onClick={() => setRiepilogoData(d => addGiorni(d, 7))}>›</button>
                 <h2 style={{ margin: 0 }}>Settimana {periodoTxt}</h2>
               </div>
-              <div className="modulo-subnav" style={{ margin: 0 }}>
-                <button className={`nav-btn ${riepilogoTab === 'operatori' ? 'active' : ''}`} onClick={() => setRiepilogoTab('operatori')}>👤 Per Operatore</button>
-                <button className={`nav-btn ${riepilogoTab === 'campi' ? 'active' : ''}`} onClick={() => setRiepilogoTab('campi')}>📍 Per Campo</button>
+              <div className="modulo-subnav subnav-segmented" style={{ margin: 0 }}>
+                <button className={`nav-btn ${riepilogoTab === 'operatori' ? 'active' : ''}`} onClick={() => setRiepilogoTab('operatori')}><Icona nome="perOperatore" />Per Operatore</button>
+                <button className={`nav-btn ${riepilogoTab === 'campi' ? 'active' : ''}`} onClick={() => setRiepilogoTab('campi')}><Icona nome="perCampo" />Per Campo</button>
               </div>
             </div>
 
@@ -2057,6 +2152,16 @@ function Prenotazioni({ user }) {
                 {confermaCopiata ? '✅ Copiato!' : '📋 Copia messaggio'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* FORM NUOVA/MODIFICA PRENOTAZIONE (overlay compatto): raggiungibile da qualunque scheda (Gestione, Storico, Calendario) */}
+      {showFormGestione && (
+        <div className="modal-preventivo-backdrop" onClick={chiudiFormGestione}>
+          <div className="modal-form-pren-box" onClick={(e) => e.stopPropagation()}>
+            <button className="btn-chiudi" title="Chiudi" onClick={chiudiFormGestione}>✕</button>
+            {renderFormPrenotazione(true)}
           </div>
         </div>
       )}

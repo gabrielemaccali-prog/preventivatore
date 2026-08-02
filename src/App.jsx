@@ -8,6 +8,7 @@ import CostiRicavi from './moduli/costiricavi/CostiRicavi';
 import Disponibilita from './moduli/disponibilita/Disponibilita';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
 import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
+import Icona from './components/Icona';
 
 function App() {
   // --- AUTENTICAZIONE ---
@@ -27,6 +28,18 @@ function App() {
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     supabase.from('utenti').select('username, ruolo, bubbler').order('username').then(({ data }) => { if (data) setUtentiDev(data); });
+  }, []);
+
+  // Evita che la rotella del mouse modifichi per sbaglio un campo numerico (prezzi, costi, sconti):
+  // togliendo il focus, lo scroll continua a scorrere la pagina invece di cambiare il valore.
+  useEffect(() => {
+    const onWheel = () => {
+      if (document.activeElement?.tagName === 'INPUT' && document.activeElement.type === 'number') {
+        document.activeElement.blur();
+      }
+    };
+    document.addEventListener('wheel', onWheel, { passive: true });
+    return () => document.removeEventListener('wheel', onWheel);
   }, []);
 
   const fetchModuliConfig = useCallback(async () => {
@@ -127,7 +140,7 @@ function App() {
 
   const moduliVisibili = MODULI_REGISTRY.filter(m => moduloVisibile(user, m.id));
   const isAdmin = user.ruolo === "admin";
-  const IMPOSTAZIONI_VOCE = { id: 'impostazioni', label: 'Impostazioni', icon: '🛠️' };
+  const IMPOSTAZIONI_VOCE = { id: 'impostazioni', label: 'Impostazioni', icon: 'impostazioni' };
   const moduloCorrente = currentModule === 'impostazioni'
     ? IMPOSTAZIONI_VOCE
     : MODULI_REGISTRY.find(m => m.id === currentModule);
@@ -148,22 +161,23 @@ function App() {
               className={`sidebar-voce ${currentModule === m.id ? 'active' : ''}`}
               onClick={() => cambiaModulo(m.id)}
             >
-              <span className="sidebar-icona">{m.icon}</span> {m.label}
+              <span className="sidebar-icona"><Icona nome={m.icon} /></span> {m.label}
               {moduliConfig[m.id] && <span className="badge-sp">SP</span>}
             </button>
           ))}
-          {isAdmin && (
-            <>
-              <div className="sidebar-separatore"></div>
-              <button
-                className={`sidebar-voce ${currentModule === 'impostazioni' ? 'active' : ''}`}
-                onClick={() => cambiaModulo('impostazioni')}
-              >
-                <span className="sidebar-icona">{IMPOSTAZIONI_VOCE.icon}</span> {IMPOSTAZIONI_VOCE.label}
-              </button>
-            </>
-          )}
         </nav>
+        <div className="sidebar-footer">
+          {isAdmin && (
+            <button
+              className={`sidebar-voce ${currentModule === 'impostazioni' ? 'active' : ''}`}
+              onClick={() => cambiaModulo('impostazioni')}
+            >
+              <span className="sidebar-icona"><Icona nome={IMPOSTAZIONI_VOCE.icon} /></span> {IMPOSTAZIONI_VOCE.label}
+            </button>
+          )}
+          <p>Connesso come: <strong>{user.username}</strong></p>
+          <button className="btn-logout" onClick={handleLogout}><Icona nome="logout" />Esci</button>
+        </div>
       </aside>
 
       {/* --- TESTATA GLOBALE --- */}
@@ -171,13 +185,7 @@ function App() {
         <div className="header-brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button className="btn-hamburger" onClick={() => setSidebarAperta(true)} aria-label="Apri menu moduli">☰</button>
           <img src="/logo.png" alt="Logo" style={{ height: '45px', width: 'auto', objectFit: 'contain' }} />
-          <div>
-            <h1>{moduloCorrente?.icon} {moduloCorrente?.label}</h1>
-            <p>Connesso come: <strong>{user.username}</strong></p>
-          </div>
-        </div>
-        <div className="header-menu">
-          <button className="btn-logout" onClick={handleLogout}>Esci</button>
+          <h1>{moduloCorrente && <Icona nome={moduloCorrente.icon} size={20} />} {moduloCorrente?.label}</h1>
         </div>
       </header>
 

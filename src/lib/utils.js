@@ -21,13 +21,19 @@ export const arrotondaAllaDecina = (valore) => {
   return Math.ceil(valore / 10) * 10;
 };
 
-// Per i gonfiabili con sede di partenza "BFM - Milano" non si applica il moltiplicatore target
-export const isPartenzaBFMMilano = (partenza) => {
-  const nomeSede = (partenza?.nome || "").toLowerCase();
-  return nomeSede.includes("bfm") && nomeSede.includes("milano");
-};
+// Sedi "di proprietà" (flag BFM in anagrafica sedi): il prezzo indicato nell'anagrafica
+// gonfiabili è già il prezzo di vendita, quindi non si applica il moltiplicatore target
+// e il costo del gonfiabile resta a zero.
+export const isPartenzaBFM = (partenza) => !!partenza?.bfm;
 
-export const moltiplicatoreTargetPer = (partenza) => isPartenzaBFMMilano(partenza) ? 1 : MOLTIPLICATORE_TARGET;
+export const moltiplicatoreTargetPer = (partenza) => isPartenzaBFM(partenza) ? 1 : MOLTIPLICATORE_TARGET;
+
+// Costo vivo di una soluzione logistica: per le sedi di proprietà il prezzo del gonfiabile
+// non è un costo (resta a zero), mentre la logistica concorre sempre.
+export const costoVivoDi = (sol) => {
+  if (!sol) return 0;
+  return isPartenzaBFM(sol.partenza) ? (sol.costoKmTotale || 0) : (sol.totaleOpzione || 0);
+};
 
 // --- VALIDAZIONE CODICE FISCALE (con carattere di controllo) ---
 const CF_DISPARI = { '0': 1, '1': 0, '2': 5, '3': 7, '4': 9, '5': 13, '6': 15, '7': 17, '8': 19, '9': 21, 'A': 1, 'B': 0, 'C': 5, 'D': 7, 'E': 9, 'F': 13, 'G': 15, 'H': 17, 'I': 19, 'J': 21, 'K': 2, 'L': 4, 'M': 18, 'N': 20, 'O': 11, 'P': 3, 'Q': 6, 'R': 8, 'S': 12, 'T': 14, 'U': 16, 'V': 10, 'W': 22, 'X': 25, 'Y': 24, 'Z': 23 };

@@ -1,14 +1,24 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import html2pdf from 'html2pdf.js';
 import { supabase } from '../../lib/supabaseClient';
 import { puoVedere } from '../../lib/permessi';
 import { formattaDataIT, formattaIndirizzoPulito } from '../../lib/utils';
+import Icona from '../../components/Icona';
 
 const FORM_VUOTO = {
   nominativo: "", dedica: "", pacchettoId: "", pacchettoNome: "",
   importo: "", testoOfferta: "",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
+  pagamenti: [],
   stato: "incompleto", dataEmissione: ""
+};
+
+// Stato pagamento derivato dai versamenti rispetto all'importo del voucher (stessa logica delle prenotazioni)
+const statoPagamentoDi = (pagamenti, importo) => {
+  const tot = (pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0);
+  if (tot <= 0) return 'in attesa';
+  if (tot + 0.001 >= (parseFloat(importo) || 0)) return 'saldato';
+  return 'acconto';
 };
 
 // Validazione Codice Fiscale italiano (persona fisica) con verifica del carattere di controllo.
@@ -64,24 +74,30 @@ const dataValidita = (dataEmissione) => {
 };
 
 function Voucher({ user }) {
-  const primaSchedaVoucher = ['nuovo', 'config', 'storico'].find(s => puoVedere(user, 'voucher', s)) || 'nuovo';
-  const [currentView, setCurrentView] = useState(primaSchedaVoucher); // config | nuovo | storico
+  const primaSchedaVoucher = ['gestione', 'config', 'storico'].find(s => puoVedere(user, 'voucher', s)) || 'gestione';
+  const [currentView, setCurrentView] = useState(primaSchedaVoucher); // config | gestione | storico
+  const [gestioneTab, setGestioneTab] = useState("incompleti"); // incompleti | emessi | usati
+  const [showFormVoucher, setShowFormVoucher] = useState(false); // form Nuovo/Modifica voucher come overlay
+  const [mostraErroriValidazione, setMostraErroriValidazione] = useState(false); // evidenzia di rosso i campi obbligatori mancanti, solo dopo un tentativo di salvataggio
 
   // --- DATI ---
   const [pacchetti, setPacchetti] = useState([]);
   const [voucherSalvati, setVoucherSalvati] = useState([]);
+  const [prenotazioni, setPrenotazioni] = useState([]); // serve solo per sapere dove è stato usato un voucher
+  const [nuovoPagamento, setNuovoPagamento] = useState({ importo: "", data: "", nominativo: "" });
 
   // --- CONFIGURATORE PACCHETTI ---
   const [nuovoPacchetto, setNuovoPacchetto] = useState({ nome: "", importo: "", descrizione: "" });
-  const [showListaPacchettiCfg, setShowListaPacchettiCfg] = useState(true);
   const [showFormPacchettoCfg, setShowFormPacchettoCfg] = useState(false);
   const [idPacchettoInModifica, setIdPacchettoInModifica] = useState(null);
   const [datiPacchettoInModifica, setDatiPacchettoInModifica] = useState({ nome: "", importo: "", descrizione: "" });
 
   // --- FORM NUOVO / MODIFICA VOUCHER ---
   const [form, setForm] = useState(FORM_VUOTO);
+  const [formOriginale, setFormOriginale] = useState(null); // snapshot al caricamento, per evidenziare i campi modificati
   const [codiceInModifica, setCodiceInModifica] = useState(null); // null = creazione, valorizzato = modifica
   const [codiceGenerato, setCodiceGenerato] = useState("");        // codice definitivo dopo il salvataggio
+  const [salvataggioVoucher, setSalvataggioVoucher] = useState(false);
 
   // --- RICERCA INDIRIZZO FATTURAZIONE ---
   const [queryIndirizzo, setQueryIndirizzo] = useState("");
@@ -94,6 +110,7 @@ function Voucher({ user }) {
   const [filtroCodice, setFiltroCodice] = useState("");
   const [filtroNominativo, setFiltroNominativo] = useState("");
   const [filtroStato, setFiltroStato] = useState("");
+  const [rigaEspansaId, setRigaEspansaId] = useState(null); // codice voucher con riga dettaglio espansa (Gestione/Storico)
 
   useEffect(() => {
     fetchPacchetti();
@@ -105,10 +122,42 @@ function Voucher({ user }) {
     if (data) setPacchetti(data);
   };
 
+  // Voucher + relativi pagamenti (dalla tabella unica "pagamenti", condivisa con le prenotazioni)
+  // + le prenotazioni, per mostrare su quale prenotazione un voucher è stato usato.
   const fetchVoucher = async () => {
-    const { data } = await supabase.from('voucher').select('*').order('codice', { ascending: false });
-    if (data) setVoucherSalvati(data);
+    const [vc, pag, pr] = await Promise.all([
+      supabase.from('voucher').select('*').order('codice', { ascending: false }),
+      supabase.from('pagamenti').select('*').eq('tipo', 'voucher').order('data'),
+      supabase.from('prenotazioni').select('id, data, nominativo, voucherCodice'),
+    ]);
+    if (vc.data) {
+      const righePag = pag.data || [];
+      setVoucherSalvati(vc.data.map(v => ({
+        ...v,
+        pagamenti: righePag.filter(x => x.riferimento === v.codice).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "" }))
+      })));
+    }
+    if (pr.data) setPrenotazioni(pr.data);
   };
+
+  // Allinea le righe della tabella pagamenti a quelle del form (cancella e reinserisce: sono poche per voucher)
+  const sincronizzaPagamenti = async (codice, righe) => {
+    await supabase.from('pagamenti').delete().eq('tipo', 'voucher').eq('riferimento', codice);
+    const daInserire = (righe || [])
+      .filter(pg => pg.data)
+      .map(pg => ({ tipo: 'voucher', riferimento: codice, data: pg.data, importo: parseFloat(pg.importo) || 0, nominativo: pg.nominativo || null }));
+    if (daInserire.length > 0) await supabase.from('pagamenti').insert(daInserire);
+  };
+
+  const aggiungiPagamento = () => {
+    if (nuovoPagamento.importo === "" || !nuovoPagamento.data) return alert("Inserisci importo e data del pagamento.");
+    setForm(prev => ({ ...prev, pagamenti: [...(prev.pagamenti || []), { importo: parseFloat(nuovoPagamento.importo) || 0, data: nuovoPagamento.data, nominativo: nuovoPagamento.nominativo }] }));
+    setNuovoPagamento({ importo: "", data: "", nominativo: "" });
+  };
+  const rimuoviPagamento = (idx) => setForm(prev => ({ ...prev, pagamenti: prev.pagamenti.filter((_, i) => i !== idx) }));
+
+  // Prenotazione su cui il voucher è stato usato (è l'unico modo per passare a "usato")
+  const prenotazioneDelVoucher = (codice) => prenotazioni.find(p => String(p.voucherCodice) === String(codice));
 
   // ====================== CONFIGURATORE PACCHETTI ======================
   const addPacchetto = async (e) => {
@@ -154,10 +203,23 @@ function Voucher({ user }) {
 
   const resetForm = () => {
     setForm(FORM_VUOTO);
+    setFormOriginale(null);
     setCodiceInModifica(null);
     setCodiceGenerato("");
     setQueryIndirizzo("");
     setRisultatiRicerca([]);
+    setNuovoPagamento({ importo: "", data: "", nominativo: "" });
+    setMostraErroriValidazione(false);
+  };
+
+  // Apre il form di nuovo voucher come overlay compatto (richiamato da Gestione)
+  const nuovoVoucherOverlay = () => { resetForm(); setShowFormVoucher(true); };
+
+  // Chiude l'overlay, chiedendo conferma se ci sono modifiche non salvate.
+  const chiudiFormVoucher = () => {
+    const modificato = JSON.stringify(form) !== JSON.stringify(formOriginale ?? FORM_VUOTO);
+    if (modificato && !window.confirm("Ci sono modifiche non salvate. Chiudere comunque?")) return;
+    setShowFormVoucher(false);
   };
 
   // --- RICERCA INDIRIZZO (Nominatim, come nel preventivatore) ---
@@ -208,10 +270,15 @@ function Voucher({ user }) {
   };
 
   const salvaVoucher = async () => {
-    if (!form.nominativo.trim()) return alert("Il nominativo di intestazione è obbligatorio.");
-    if (!form.pacchettoId && form.importo === "") return alert("Seleziona un pacchetto gioco.");
+    // Tutti i campi obbligatori vengono controllati insieme (non uno alla volta) così l'utente
+    // li vede evidenziati di rosso tutti insieme invece di scoprirli uno a uno a ogni tentativo.
+    if (!form.nominativo.trim() || !form.pacchettoNome) {
+      setMostraErroriValidazione(true);
+      return alert("Compila i campi obbligatori evidenziati in rosso.");
+    }
     const erroreCodiceFiscale = erroreCF(form.fattCF);
     if (erroreCodiceFiscale) return alert(erroreCodiceFiscale);
+    setMostraErroriValidazione(false);
 
     const stato = calcolaStato(form, codiceInModifica ? form.stato : "incompleto");
 
@@ -228,9 +295,11 @@ function Voucher({ user }) {
       fattCitta: form.fattCitta,
       fattProvincia: form.fattProvincia,
       fattCF: (form.fattCF || "").toUpperCase(),
+      statoPagamento: statoPagamentoDi(form.pagamenti, form.importo),
       stato
     };
 
+    setSalvataggioVoucher(true);
     let codiceFinale = codiceInModifica;
 
     if (!codiceInModifica) {
@@ -242,26 +311,33 @@ function Voucher({ user }) {
         console.error(error);
         codiceFinale = await generaCodiceVoucher();
         const retry = await supabase.from('voucher').insert([{ codice: codiceFinale, ...payload }]);
-        if (retry.error) { alert("Errore durante il salvataggio del voucher."); return; }
+        if (retry.error) { setSalvataggioVoucher(false); alert("Errore durante il salvataggio del voucher."); return; }
       }
     } else {
       // MODIFICA
       const { error } = await supabase.from('voucher').update(payload).eq('codice', codiceInModifica);
-      if (error) { console.error(error); alert("Errore durante l'aggiornamento del voucher."); return; }
+      if (error) { console.error(error); setSalvataggioVoucher(false); alert("Errore durante l'aggiornamento del voucher."); return; }
     }
 
-    setForm(prev => ({ ...prev, stato, dataEmissione: prev.dataEmissione || new Date().toISOString() }));
+    await sincronizzaPagamenti(codiceFinale, form.pagamenti);
+
+    const salvato = { ...form, stato, dataEmissione: form.dataEmissione || new Date().toISOString() };
+    setForm(salvato);
+    setFormOriginale(salvato);
+    setSalvataggioVoucher(false);
     setCodiceInModifica(codiceFinale);
     setCodiceGenerato(codiceFinale);
     fetchVoucher();
     alert(`Voucher ${codiceFinale} salvato (stato: ${stato}).`);
   };
 
+  // Apre un voucher esistente nel form overlay (dalle righe di Gestione e Storico)
   const caricaVoucherInForm = (v) => {
-    setForm({
+    const caricato = {
       nominativo: v.nominativo || "",
       dedica: v.dedica || "",
-      pacchettoId: "",
+      // il pacchetto è salvato per nome sul voucher: si risale all'id per riselezionarlo nella tendina
+      pacchettoId: pacchetti.find(p => p.nome === v.pacchettoNome)?.id || "",
       pacchettoNome: v.pacchettoNome || "",
       importo: v.importo ?? "",
       testoOfferta: v.testoOfferta || "",
@@ -272,12 +348,19 @@ function Voucher({ user }) {
       fattCitta: v.fattCitta || "",
       fattProvincia: v.fattProvincia || "",
       fattCF: v.fattCF || "",
+      pagamenti: v.pagamenti || [],
       stato: v.stato || "incompleto",
       dataEmissione: v.dataEmissione || ""
-    });
+    };
+    setForm(caricato);
+    setFormOriginale(caricato);
     setCodiceInModifica(v.codice);
     setCodiceGenerato(v.codice);
-    setCurrentView("nuovo");
+    setQueryIndirizzo("");
+    setRisultatiRicerca([]);
+    setNuovoPagamento({ importo: "", data: "", nominativo: "" });
+    setMostraErroriValidazione(false);
+    setShowFormVoucher(true);
   };
 
   // ====================== STAMPA PDF ======================
@@ -322,15 +405,84 @@ function Voucher({ user }) {
   const eliminaVoucher = async (codice) => {
     if (!window.confirm(`Eliminare definitivamente il voucher ${codice}?`)) return;
     await supabase.from('voucher').delete().eq('codice', codice);
+    await supabase.from('pagamenti').delete().eq('tipo', 'voucher').eq('riferimento', codice);
     fetchVoucher();
   };
 
-  const cambiaStatoVoucher = async (v, nuovoStato) => {
-    // Se si esce da "usato", ricalcola lo stato in base ai dati di fatturazione
-    const stato = nuovoStato === "auto" ? calcolaStato(v, "incompleto") : nuovoStato;
-    await supabase.from('voucher').update({ stato }).eq('codice', v.codice);
-    fetchVoucher();
+  // ====================== TABELLA CONDIVISA (Gestione / Storico) ======================
+  // Il clic sulla riga espande il pannello con i dettagli di fatturazione e le azioni.
+  // Il pulsante "Apri" richiama sempre il form come overlay.
+  const rigaTabellaVoucher = (v) => {
+    const espansa = rigaEspansaId === v.codice;
+    const prenUso = prenotazioneDelVoucher(v.codice);
+    const totPagato = (v.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
+    const statoPag = statoPagamentoDi(v.pagamenti, v.importo);
+    const pagColore = statoPag === 'saldato' ? '#16a34a' : statoPag === 'acconto' ? '#ca8a04' : '#dc2626';
+    // Banda laterale con lo stato del voucher, come nelle righe delle prenotazioni
+    const coloreStatoRiga = v.stato === 'emesso' ? '#16a34a' : v.stato === 'usato' ? '#94a3b8' : '#f59e0b';
+    return (
+      <Fragment key={v.codice}>
+        <tr onClick={() => setRigaEspansaId(prev => prev === v.codice ? null : v.codice)} style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}>
+          <td style={{ padding: '12px' }}>
+            <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
+            <strong>{v.codice}</strong>
+          </td>
+          <td style={{ padding: '12px', color: '#777', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{formattaDataIT(v.dataEmissione)}</td>
+          <td style={{ padding: '12px' }}>👤 {v.nominativo}</td>
+          <td style={{ padding: '12px', fontSize: '0.85rem', color: '#555' }}>{v.pacchettoNome} — €{parseFloat(v.importo).toFixed(2)}</td>
+          <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
+            <span title={`pagamento ${statoPag}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
+            €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{(parseFloat(v.importo) || 0).toFixed(2)}</span>
+          </td>
+        </tr>
+        {espansa && (
+          <tr className="riga-espandibile-dettaglio" style={{ borderLeft: `3px solid ${coloreStatoRiga}` }}>
+            <td colSpan={5} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
+                  <div style={{ marginBottom: '2px' }}><span className={`badge-stato ${v.stato}`}>{v.stato}</span></div>
+                  <div><span style={{ color: '#94a3b8' }}>Fatturazione </span>{v.fattNome || v.fattCognome ? `${v.fattNome || ''} ${v.fattCognome || ''}`.trim() : <em style={{ color: '#999' }}>Da completare</em>}</div>
+                  {(v.fattNome || v.fattCognome) && v.fattIndirizzo && <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{v.fattIndirizzo}</div>}
+                  {(v.fattNome || v.fattCognome) && v.fattCF && <div><span style={{ color: '#94a3b8' }}>Codice fiscale </span>{v.fattCF}</div>}
+                  <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(v.pagamenti && v.pagamenti.length > 0) ? v.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${pg.data}`).join(', ') : 'nessuno'} <em style={{ color: '#94a3b8' }}>({statoPag})</em></div>
+                  {v.stato === 'usato' && (
+                    <div><span style={{ color: '#94a3b8' }}>Usato su </span>{prenUso ? `${prenUso.id} — ${prenUso.nominativo || ''} (${prenUso.data || ''})` : <em style={{ color: '#999' }}>prenotazione non trovata</em>}</div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                  <button type="button" className="btn-icon-action" title="Apri" onClick={() => caricaVoucherInForm(v)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
+                  {user.ruolo === "admin" && (
+                    <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => eliminaVoucher(v.codice)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
+                  )}
+                </div>
+              </div>
+            </td>
+          </tr>
+        )}
+      </Fragment>
+    );
   };
+
+  const tabellaVoucher = (righe, messaggioVuoto) => (
+    <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+      <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+        <thead>
+          <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+            <th style={{ padding: '12px' }}>Codice</th>
+            <th style={{ padding: '12px' }}>Data</th>
+            <th style={{ padding: '12px' }}>Intestatario</th>
+            <th style={{ padding: '12px' }}>Pacchetto</th>
+            <th style={{ padding: '12px' }}>Pagato / Totale</th>
+          </tr>
+        </thead>
+        <tbody>
+          {righe.length === 0
+            ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            : righe.map(rigaTabellaVoucher)}
+        </tbody>
+      </table>
+    </div>
+  );
 
   // ====================== FILTRI STORICO ======================
   const voucherFiltrati = voucherSalvati.filter(v => {
@@ -341,19 +493,188 @@ function Voucher({ user }) {
   });
 
   const importoPDF = datiPDF ? (parseFloat(datiPDF.importo) || 0) : 0;
-  const fatturazioneCompleta = fatturazioneCompletaDi(form);
+
+  // Form Nuovo/Modifica Voucher, mostrato come overlay compatto (stesso stile del form prenotazione).
+  const renderFormVoucher = (compatto = false) => {
+    const fatturazioneCompleta = fatturazioneCompletaDi(form);
+    const pagamentiForm = form.pagamenti || [];
+    const importoVoucher = parseFloat(form.importo) || 0;
+    const totalePagato = pagamentiForm.reduce((s, p) => s + (parseFloat(p.importo) || 0), 0);
+    const statoPag = statoPagamentoDi(pagamentiForm, importoVoucher);
+
+    const formModificato = formOriginale != null && JSON.stringify(form) !== JSON.stringify(formOriginale);
+
+    // Stato visivo di un campo: rosso se obbligatorio e mancante (solo dopo un tentativo di salvataggio),
+    // altrimenti giallo se modificato rispetto ai valori caricati (solo in modifica).
+    // Sono classi e non style inline perché la regola globale "input { border ... !important }"
+    // (per la visibilità su mobile) vincerebbe sempre sull'inline style degli <input>.
+    const evidenzia = (chiave, mancante = false) => {
+      if (mostraErroriValidazione && mancante) return 'campo-errore';
+      const modificato = formOriginale != null && JSON.stringify(form[chiave]) !== JSON.stringify(formOriginale[chiave]);
+      return modificato ? 'campo-modificato' : '';
+    };
+    const nominativoMancante = !form.nominativo.trim();
+    const pacchettoMancante = !form.pacchettoNome;
+    const setF = (patch) => setForm(prev => ({ ...prev, ...patch }));
+
+    return (
+      <div className={`schermata-inserimento no-print form-pren ${compatto ? 'form-pren-compatto' : ''}`}>
+        <h2 style={{ margin: 0 }}>{codiceInModifica ? `Modifica Voucher ${codiceInModifica}` : "Nuovo Voucher"}</h2>
+        <p className="descrizione-pagina">Il codice viene assegnato automaticamente al salvataggio. Anteprima: <strong>{codiceGenerato || `VCH-${new Date().getFullYear()}-XXXX`}</strong></p>
+
+        {pacchetti.length === 0 && <p className="descrizione-pagina" style={{ color: '#c62828' }}>⚠️ Nessun pacchetto configurato. Vai nel Configuratore.</p>}
+
+        <div className="form-top-grid">
+          {/* Dati del voucher: intestatario, dedica, pacchetto */}
+          <div className="sezione">
+            <h2>Dati del Voucher</h2>
+            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '12px' }}>Nominativo di intestazione (festeggiato) *
+              <input type="text" value={form.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} placeholder="Es. Mario Rossi" className={evidenzia('nominativo', nominativoMancante)} />
+            </label>
+            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '12px' }}>Dedica personalizzata (facoltativa)
+              <textarea value={form.dedica} onChange={(e) => setF({ dedica: e.target.value })} rows="2" placeholder="Es. Buon compleanno!" className={evidenzia('dedica')} style={{ marginTop: '5px', fontFamily: 'inherit' }} />
+            </label>
+            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem' }}>Pacchetto gioco *
+              <select className={`dropdown-gonfiabili ${evidenzia('pacchettoId', pacchettoMancante)}`} value={form.pacchettoId} onChange={(e) => selezionaPacchetto(e.target.value)}>
+                <option value="">-- Seleziona pacchetto --</option>
+                {pacchetti.map(p => <option key={p.id} value={p.id}>{p.nome} (€{parseFloat(p.importo).toFixed(2)})</option>)}
+              </select>
+            </label>
+          </div>
+
+          {/* Dati di fatturazione dell'acquirente: senza questi il voucher resta incompleto */}
+          <div className="sezione">
+            <h2>Dati di Fatturazione (acquirente)</h2>
+            <p className="descrizione-pagina" style={{ marginTop: 0 }}>Facoltativi in fase di creazione: senza questi dati il voucher resta <strong>incompleto</strong>.</p>
+            <div className="date-grid">
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome
+                <input type="text" value={form.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} className={evidenzia('fattNome')} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Cognome
+                <input type="text" value={form.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} className={evidenzia('fattCognome')} />
+              </label>
+            </div>
+
+            <div style={{ margin: '12px 0' }}>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '5px' }}>Cerca indirizzo di residenza</label>
+              <div className="ricerca-box">
+                <input type="text" placeholder="Scrivi via, civico, città..." value={queryIndirizzo} onChange={(e) => setQueryIndirizzo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), cercaIndirizzoFatt())} />
+                <button type="button" onClick={cercaIndirizzoFatt}>Cerca</button>
+              </div>
+              {risultatiRicerca.length > 0 && (
+                <ul className="risultati-ricerca">
+                  {risultatiRicerca.map(luogo => (
+                    <li key={luogo.place_id} onClick={() => selezionaIndirizzoFatt(luogo)}>{formattaIndirizzoPulito(luogo)}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="date-grid">
+              <label style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo (via e civico)
+                <input type="text" value={form.fattIndirizzo} onChange={(e) => setF({ fattIndirizzo: e.target.value })} className={evidenzia('fattIndirizzo')} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP
+                <input type="text" value={form.fattCap} onChange={(e) => setF({ fattCap: e.target.value })} className={evidenzia('fattCap')} />
+              </label>
+            </div>
+            <div className="date-grid" style={{ marginTop: '12px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città
+                <input type="text" value={form.fattCitta} onChange={(e) => setF({ fattCitta: e.target.value })} className={evidenzia('fattCitta')} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Provincia
+                <input type="text" value={form.fattProvincia} onChange={(e) => setF({ fattProvincia: e.target.value })} className={evidenzia('fattProvincia')} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Codice Fiscale
+                <input
+                  type="text"
+                  value={form.fattCF}
+                  maxLength={16}
+                  onChange={(e) => setF({ fattCF: e.target.value.toUpperCase() })}
+                  className={erroreCF(form.fattCF) ? 'campo-errore' : evidenzia('fattCF')}
+                />
+              </label>
+            </div>
+            {erroreCF(form.fattCF) && (
+              <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', color: '#c62828' }}>
+                ⚠️ {erroreCF(form.fattCF)}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Pagamenti del voucher: righe della tabella unica "pagamenti" (nessun voucher usabile come pagamento, ovviamente) */}
+        <div className="sezione">
+          <h2>Pagamenti</h2>
+          <div className="sotto-sezione" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
+            <h3>Stato pagamento: <span style={{ fontSize: '0.8rem', fontWeight: 'bold', padding: '3px 10px', borderRadius: '10px', textTransform: 'none', letterSpacing: 0, background: statoPag === 'saldato' ? '#dcfce7' : statoPag === 'acconto' ? '#fef9c3' : '#fee2e2', color: statoPag === 'saldato' ? '#166534' : statoPag === 'acconto' ? '#854d0e' : '#991b1b' }}>{statoPag}</span></h3>
+            {pagamentiForm.length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', marginBottom: '10px' }}>
+                <thead><tr style={{ color: '#666', textAlign: 'left' }}><th style={{ padding: '4px' }}>Data</th><th style={{ padding: '4px' }}>Importo</th><th style={{ padding: '4px' }}>Da</th><th></th></tr></thead>
+                <tbody>
+                  {pagamentiForm.map((pg, i) => (
+                    <tr key={i}>
+                      <td style={{ padding: '4px' }}>{pg.data}</td>
+                      <td style={{ padding: '4px' }}>€{(parseFloat(pg.importo) || 0).toFixed(2)}</td>
+                      <td style={{ padding: '4px' }}>{pg.nominativo || '—'}</td>
+                      <td style={{ padding: '4px', textAlign: 'right' }}><button className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => rimuoviPagamento(i)}>🗑</button></td>
+                    </tr>
+                  ))}
+                  <tr><td colSpan="2" style={{ padding: '4px', fontWeight: 'bold' }}>Totale versato: €{totalePagato.toFixed(2)}</td><td colSpan="2" style={{ padding: '4px', color: '#777' }}>su €{importoVoucher.toFixed(2)}</td></tr>
+                </tbody>
+              </table>
+            )}
+            {statoPag !== 'saldato' && (
+              <div className="pren-row">
+                <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Data pagamento
+                  <input type="date" value={nuovoPagamento.data} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, data: e.target.value })} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Importo €
+                  <input type="number" step="any" value={nuovoPagamento.importo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, importo: e.target.value })} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Nominativo
+                  <input type="text" value={nuovoPagamento.nominativo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: e.target.value })} />
+                </label>
+                <div style={{ display: 'flex', alignItems: 'end' }}>
+                  <button type="button" className="btn-accent-inline" style={{ padding: '8px 14px', fontSize: '0.85rem' }} onClick={aggiungiPagamento}>+ Pagamento</button>
+                </div>
+              </div>
+            )}
+            {form.stato === 'usato' && (
+              <p className="descrizione-pagina" style={{ margin: '10px 0 0 0' }}>
+                🎟️ Voucher già usato{prenotazioneDelVoucher(codiceInModifica) ? ` sulla prenotazione ${prenotazioneDelVoucher(codiceInModifica).id}` : ''}.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn-preventivo btn-accent" style={{ width: 'auto', flex: '1 1 auto', marginTop: 0 }} onClick={salvaVoucher} disabled={salvataggioVoucher}>{salvataggioVoucher ? 'Salvataggio…' : (codiceInModifica ? '💾 Salva modifiche' : '💾 Salva Voucher')}</button>
+          {codiceInModifica && formModificato && (
+            <button type="button" className="btn-annulla-inline" disabled={salvataggioVoucher} onClick={() => { if (window.confirm("Annullare le modifiche non salvate?")) setForm(formOriginale); }}>Annulla modifiche</button>
+          )}
+          <button className="btn-stampa" style={{ marginTop: 0 }} onClick={stampaFormCorrente} disabled={!codiceGenerato || !fatturazioneCompleta}>🖨️ Scarica PDF</button>
+        </div>
+        {codiceGenerato && !fatturazioneCompleta && (
+          <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: '#c62828' }}>
+            ⚠️ Per scaricare il PDF è necessario completare tutti i dati di fatturazione.
+          </p>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
-      <nav className="modulo-subnav no-print">
+      <nav className="modulo-subnav no-print subnav-segmented">
         {puoVedere(user, 'voucher', 'config') && (
-          <button className={`nav-btn ${currentView === 'config' ? 'active' : ''}`} onClick={() => setCurrentView("config")}>⚙️ Configuratore Pacchetti</button>
+          <button className={`nav-btn ${currentView === 'config' ? 'active' : ''}`} onClick={() => setCurrentView("config")}><Icona nome="configuratore" />Configuratore</button>
         )}
-        {puoVedere(user, 'voucher', 'nuovo') && (
-          <button className={`nav-btn ${currentView === 'nuovo' ? 'active' : ''}`} onClick={() => setCurrentView("nuovo")}>🎟️ Nuovo Voucher</button>
+        {puoVedere(user, 'voucher', 'gestione') && (
+          <button className={`nav-btn ${currentView === 'gestione' ? 'active' : ''}`} onClick={() => setCurrentView("gestione")}><Icona nome="gestione" />Gestione</button>
         )}
         {puoVedere(user, 'voucher', 'storico') && (
-          <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}>🗂️ Storico Voucher</button>
+          <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}><Icona nome="storico" />Storico Voucher</button>
         )}
       </nav>
 
@@ -364,12 +685,26 @@ function Voucher({ user }) {
           <p className="descrizione-pagina">Definisci i pacchetti: importo e descrizione (testo che apparirà sul voucher).</p>
 
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0', gap: '10px', flexWrap: 'wrap' }}>
               <h3 style={{ margin: 0 }}>Pacchetti ({pacchetti.length})</h3>
-              <button className="nav-btn" style={{ width: 'auto', padding: '6px 12px', fontSize: '0.85rem', background: '#e2e8f0', color: '#334155' }} onClick={() => setShowListaPacchettiCfg(v => !v)}>{showListaPacchettiCfg ? '▼ Nascondi elenco' : '▶ Mostra elenco'}</button>
+              <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={() => setShowFormPacchettoCfg(true)}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
             </div>
 
-            {showListaPacchettiCfg && (
+            {showFormPacchettoCfg && (
+              <div className="modal-form-backdrop" onClick={() => setShowFormPacchettoCfg(false)}>
+                <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" className="modal-form-close" onClick={() => setShowFormPacchettoCfg(false)} aria-label="Chiudi">✕</button>
+                  <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Aggiungi Pacchetto</h3>
+                  <form onSubmit={addPacchetto} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <input type="text" placeholder="Nome pacchetto" value={nuovoPacchetto.nome} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, nome: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                    <input type="number" step="any" placeholder="Importo (€)" value={nuovoPacchetto.importo} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, importo: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                    <textarea placeholder="Descrizione / testo offerta da stampare" value={nuovoPacchetto.descrizione} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, descrizione: e.target.value })} rows="3" style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', resize: 'vertical', fontFamily: 'inherit' }} />
+                    <button type="submit" style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Salva Pacchetto</button>
+                  </form>
+                </div>
+              </div>
+            )}
+
             <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
@@ -390,8 +725,8 @@ function Voucher({ user }) {
                           <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiPacchettoInModifica.descrizione} onChange={(e) => setDatiPacchettoInModifica({ ...datiPacchettoInModifica, descrizione: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                           <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                              <button className="btn-salva-inline" onClick={salvaModificaPacchetto} style={{ fontSize: '0.8rem', padding: '4px 8px' }}>Salva</button>
-                              <button className="btn-annulla-inline" onClick={() => setIdPacchettoInModifica(null)} style={{ fontSize: '0.8rem', padding: '4px 8px' }}>Annulla</button>
+                              <button className="btn-accent-inline" onClick={salvaModificaPacchetto} style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px' }}><Icona nome="salva" size={14} style={{ marginRight: '4px' }} />Salva</button>
+                              <button className="btn-outline-annulla" onClick={() => setIdPacchettoInModifica(null)} style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px', borderRadius: '4px' }}><Icona nome="annulla" size={14} style={{ marginRight: '4px' }} />Annulla</button>
                             </div>
                           </td>
                         </>
@@ -402,8 +737,8 @@ function Voucher({ user }) {
                           <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#555' }}>{p.descrizione}</td>
                           <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                             <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                              <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => { setIdPacchettoInModifica(p.id); setDatiPacchettoInModifica({ nome: p.nome, importo: p.importo, descrizione: p.descrizione || "" }); }}>Modifica</button>
-                              <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviPacchetto(p.id)}>Elimina</button>
+                              <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdPacchettoInModifica(p.id); setDatiPacchettoInModifica({ nome: p.nome, importo: p.importo, descrizione: p.descrizione || "" }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                              <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviPacchetto(p.id)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                             </div>
                           </td>
                         </>
@@ -414,143 +749,42 @@ function Voucher({ user }) {
                 </tbody>
               </table>
             </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '18px 0 12px 0' }}>
-              <button className="btn-preventivo" style={{ width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' }} onClick={() => setShowFormPacchettoCfg(v => !v)}>➕ Nuovo pacchetto</button>
-            </div>
-
-            {showFormPacchettoCfg && (
-              <div className="admin-form-box" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-                <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Aggiungi Pacchetto</h3>
-                <form onSubmit={addPacchetto} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <input type="text" placeholder="Nome pacchetto" value={nuovoPacchetto.nome} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, nome: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                  <input type="number" step="any" placeholder="Importo (€)" value={nuovoPacchetto.importo} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, importo: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                  <textarea placeholder="Descrizione / testo offerta da stampare" value={nuovoPacchetto.descrizione} onChange={(e) => setNuovoPacchetto({ ...nuovoPacchetto, descrizione: e.target.value })} rows="3" style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', resize: 'vertical', fontFamily: 'inherit' }} />
-                  <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>Salva Pacchetto</button>
-                </form>
-              </div>
-            )}
           </div>
         </div>
       )}
 
-      {/* ===================== NUOVO / MODIFICA VOUCHER ===================== */}
-      {currentView === "nuovo" && puoVedere(user, 'voucher', 'nuovo') && (
-        <div className="schermata-inserimento no-print">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <h2 style={{ margin: 0 }}>{codiceInModifica ? `Modifica Voucher ${codiceInModifica}` : "Nuovo Voucher"}</h2>
-            {codiceInModifica && <button className="btn-chiudi" style={{ float: 'none' }} onClick={resetForm}>🆕 Nuovo</button>}
-          </div>
-          <p className="descrizione-pagina">Il codice viene assegnato automaticamente al salvataggio. Anteprima: <strong>{codiceGenerato || `VCH-${new Date().getFullYear()}-XXXX`}</strong></p>
-
-          <div className="sezione">
-            <h2>1. Dati del Voucher</h2>
-            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px' }}>
-              Nominativo di intestazione (festeggiato) *
-              <input type="text" value={form.nominativo} onChange={(e) => setForm({ ...form, nominativo: e.target.value })} placeholder="Es. Mario Rossi" />
-            </label>
-            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px' }}>
-              Dedica personalizzata (facoltativa)
-              <textarea value={form.dedica} onChange={(e) => setForm({ ...form, dedica: e.target.value })} rows="2" placeholder="Es. Buon compleanno!" style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '6px', marginTop: '5px', fontFamily: 'inherit', fontSize: '1rem', resize: 'vertical', boxSizing: 'border-box' }} />
-            </label>
-            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px' }}>
-              Pacchetto gioco *
-              <select className="dropdown-gonfiabili" value={form.pacchettoId} onChange={(e) => selezionaPacchetto(e.target.value)}>
-                <option value="">-- Seleziona pacchetto --</option>
-                {pacchetti.map(p => <option key={p.id} value={p.id}>{p.nome} (€{parseFloat(p.importo).toFixed(2)})</option>)}
-              </select>
-            </label>
-            {(form.importo !== "" || form.testoOfferta) && (
-              <div className="info-percorso-riepilogo">
-                <p>💶 Importo: <strong>€{(parseFloat(form.importo) || 0).toFixed(2)}</strong></p>
-                {form.testoOfferta && <p>🎁 Offerta: <strong>{form.testoOfferta}</strong></p>}
-              </div>
-            )}
-          </div>
-
-          <div className="sezione">
-            <h2>2. Dati di Fatturazione (acquirente)</h2>
-            <p className="descrizione-pagina" style={{ marginTop: 0 }}>Facoltativi in fase di creazione: senza questi dati il voucher resta <strong>incompleto</strong>.</p>
-            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-              <label style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
-                Nome
-                <input type="text" value={form.fattNome} onChange={(e) => setForm({ ...form, fattNome: e.target.value })} />
-              </label>
-              <label style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
-                Cognome
-                <input type="text" value={form.fattCognome} onChange={(e) => setForm({ ...form, fattCognome: e.target.value })} />
-              </label>
+      {/* ===================== GESTIONE (sotto-schede per stato) ===================== */}
+      {currentView === "gestione" && puoVedere(user, 'voucher', 'gestione') && (() => {
+        const incompleti = voucherSalvati.filter(v => v.stato === 'incompleto');
+        const emessi = voucherSalvati.filter(v => v.stato === 'emesso');
+        const usati = voucherSalvati.filter(v => v.stato === 'usato');
+        const liste = { incompleti, emessi, usati };
+        const messaggiVuoto = {
+          incompleti: "Nessun voucher da completare.",
+          emessi: "Nessun voucher emesso in attesa di essere usato.",
+          usati: "Nessun voucher usato.",
+        };
+        return (
+          <div className="schermata-storico no-print">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <h2 style={{ margin: 0 }}>Gestione</h2>
+              <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovoVoucherOverlay}>➕ Nuovo</button>
             </div>
-            <div style={{ margin: '12px 0' }}>
-              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem', marginBottom: '5px' }}>Cerca indirizzo di residenza</label>
-              <div className="ricerca-box">
-                <input type="text" placeholder="Scrivi via, civico, città..." value={queryIndirizzo} onChange={(e) => setQueryIndirizzo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), cercaIndirizzoFatt())} />
-                <button type="button" onClick={cercaIndirizzoFatt}>Cerca</button>
-              </div>
-              {risultatiRicerca.length > 0 && (
-                <ul className="risultati-ricerca">
-                  {risultatiRicerca.map(luogo => (
-                    <li key={luogo.place_id} onClick={() => selezionaIndirizzoFatt(luogo)}>{formattaIndirizzoPulito(luogo)}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-              <label style={{ flex: '2 1 240px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
-                Indirizzo (via e civico)
-                <input type="text" value={form.fattIndirizzo} onChange={(e) => setForm({ ...form, fattIndirizzo: e.target.value })} />
-              </label>
-              <label style={{ flex: '1 1 100px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
-                CAP
-                <input type="text" value={form.fattCap} onChange={(e) => setForm({ ...form, fattCap: e.target.value })} />
-              </label>
-            </div>
-            <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
-              <label style={{ flex: '2 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
-                Città
-                <input type="text" value={form.fattCitta} onChange={(e) => setForm({ ...form, fattCitta: e.target.value })} />
-              </label>
-              <label style={{ flex: '1 1 100px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.9rem' }}>
-                Provincia
-                <input type="text" value={form.fattProvincia} onChange={(e) => setForm({ ...form, fattProvincia: e.target.value })} />
-              </label>
-            </div>
-
-            <label style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem', marginTop: '12px' }}>
-              Codice Fiscale
-              <input
-                type="text"
-                value={form.fattCF}
-                maxLength={16}
-                onChange={(e) => setForm({ ...form, fattCF: e.target.value.toUpperCase() })}
-                style={erroreCF(form.fattCF) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined}
-              />
-            </label>
-            {erroreCF(form.fattCF) && (
-              <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', color: '#c62828' }}>
-                ⚠️ {erroreCF(form.fattCF)}
-              </p>
-            )}
+            <p className="descrizione-pagina">Voucher raggruppati per stato: completa i dati di fatturazione e registra i pagamenti. Un voucher passa a <strong>usato</strong> solo quando viene selezionato su una prenotazione.</p>
+            <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
+              <button className={`nav-btn ${gestioneTab === 'incompleti' ? 'active' : ''}`} onClick={() => setGestioneTab('incompleti')}><Icona nome="daCompletare" />Incompleti ({incompleti.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'emessi' ? 'active' : ''}`} onClick={() => setGestioneTab('emessi')}><Icona nome="nuovoVoucher" />Emessi ({emessi.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'usati' ? 'active' : ''}`} onClick={() => setGestioneTab('usati')}><Icona nome="completate" />Usati ({usati.length})</button>
+            </nav>
+            {tabellaVoucher(liste[gestioneTab], messaggiVuoto[gestioneTab])}
           </div>
-
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '10px' }}>
-            <button className="btn-preventivo" style={{ flex: '1 1 220px', marginTop: 0 }} onClick={salvaVoucher}>💾 Salva Voucher</button>
-            <button className="btn-stampa" style={{ flex: '1 1 220px' }} onClick={stampaFormCorrente} disabled={!codiceGenerato || !fatturazioneCompleta}>🖨️ Scarica PDF</button>
-          </div>
-          {codiceGenerato && !fatturazioneCompleta && (
-            <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: '#c62828' }}>
-              ⚠️ Per scaricare il PDF è necessario completare tutti i dati di fatturazione.
-            </p>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       {/* ===================== STORICO VOUCHER ===================== */}
       {currentView === "storico" && puoVedere(user, 'voucher', 'storico') && (
         <div className="schermata-storico no-print">
-          <h2 style={{ margin: 0 }}>🗂️ Storico Voucher</h2>
+          <h2 style={{ margin: 0 }}>Storico Voucher</h2>
           <p className="descrizione-pagina">Consulta, completa, modifica, ristampa o elimina i voucher emessi.</p>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
@@ -573,55 +807,16 @@ function Voucher({ user }) {
             </div>
           </div>
 
-          <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
-            <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
-              <thead>
-                <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '12px' }}>Codice / Data</th>
-                  <th style={{ padding: '12px' }}>Intestatario / Pacchetto</th>
-                  <th style={{ padding: '12px' }}>Fatturazione</th>
-                  <th style={{ padding: '12px' }}>Stato</th>
-                  <th style={{ padding: '12px', textAlign: 'center' }}>Azioni</th>
-                </tr>
-              </thead>
-              <tbody>
-                {voucherFiltrati.length === 0 ? (
-                  <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessun voucher trovato.</td></tr>
-                ) : voucherFiltrati.map(v => (
-                  <tr key={v.codice} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={{ padding: '12px' }}>
-                      <strong>{v.codice}</strong><br />
-                      <span style={{ color: '#777', fontSize: '0.8rem' }}>{formattaDataIT(v.dataEmissione)}</span>
-                    </td>
-                    <td style={{ padding: '12px' }}>
-                      👤 {v.nominativo}<br />
-                      <span style={{ fontSize: '0.8rem', color: '#555' }}>{v.pacchettoNome} — €{parseFloat(v.importo).toFixed(2)}</span>
-                    </td>
-                    <td style={{ padding: '12px', fontSize: '0.8rem', color: '#555' }}>
-                      {v.fattNome || v.fattCognome ? (
-                        <>{v.fattNome} {v.fattCognome}<br />{v.fattIndirizzo}<br />{v.fattCF}</>
-                      ) : <em style={{ color: '#999' }}>Da completare</em>}
-                    </td>
-                    <td style={{ padding: '12px' }}>
-                      <span className={`badge-stato ${v.stato}`}>{v.stato}</span>
-                    </td>
-                    <td style={{ padding: '12px', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', flexDirection: 'row', gap: '6px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
-                        <button className="btn-modifica-inline" title="Apri" style={{ padding: '6px 9px' }} onClick={() => caricaVoucherInForm(v)}>📂</button>
-                        {v.stato !== "usato" ? (
-                          <button className="btn-conferma" title="Segna usato" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoVoucher(v, "usato")}>✔️</button>
-                        ) : (
-                          <button className="btn-ripristina" title="Riattiva" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => cambiaStatoVoucher(v, "auto")}>↩️</button>
-                        )}
-                        {user.ruolo === "admin" && (
-                          <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '6px 9px' }} onClick={() => eliminaVoucher(v.codice)}>🗑️</button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {tabellaVoucher(voucherFiltrati, "Nessun voucher trovato.")}
+        </div>
+      )}
+
+      {/* ===================== FORM NUOVO/MODIFICA VOUCHER (overlay compatto) ===================== */}
+      {showFormVoucher && (
+        <div className="modal-preventivo-backdrop" onClick={chiudiFormVoucher}>
+          <div className="modal-form-pren-box" onClick={(e) => e.stopPropagation()}>
+            <button className="btn-chiudi" title="Chiudi" onClick={chiudiFormVoucher}>✕</button>
+            {renderFormVoucher(true)}
           </div>
         </div>
       )}

@@ -103,17 +103,26 @@ body {
 .sidebar-chiudi:hover { background: #e2e8f0; }
 .sidebar-nav { display: flex; flex-direction: column; padding: 15px; gap: 8px; }
 .sidebar-voce {
-  background: #1e293b; color: #cbd5e1; text-align: left;
+  background: transparent; color: #cbd5e1; text-align: left;
   padding: 14px 16px; border-radius: 8px; font-size: 1rem; font-weight: 600;
+  position: relative; transition: background 0.15s;
 }
-.sidebar-voce:hover { background: #334155; color: #fff; }
-.sidebar-voce.active { background: #2563eb; color: #fff; }
+.sidebar-voce:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.sidebar-voce.active { background: rgba(56,189,248,0.12); color: #fff; }
+.sidebar-voce.active::before {
+  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
+  background: #38bdf8; border-radius: 2px;
+}
 .sidebar-icona { margin-right: 8px; }
 .sidebar-separatore { border-top: 1px solid #334155; margin: 6px 4px; }
 .badge-sp {
   margin-left: 8px; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.03em;
   background: #fde68a; color: #92400e; padding: 2px 6px; border-radius: 4px; vertical-align: middle;
 }
+.sidebar-footer { margin-top: auto; padding: 15px 20px; border-top: 1px solid #1e293b; }
+.sidebar-footer p { margin: 0 0 10px 0; font-size: 0.85rem; color: #94a3b8; }
+.sidebar-footer p strong { color: #f8fafc; }
+.sidebar-footer .btn-logout { width: 100%; }
 
 /* --- FORM COMPATTO PRENOTAZIONI --- */
 .form-pren .sezione {
@@ -154,6 +163,184 @@ body {
 .form-pren .span2 { grid-column: span 2; }
 .form-pren .full { grid-column: 1 / -1; }
 .form-pren .valore { padding: 8px 0; font-size: 0.9rem; color: #334155; }
+/* Campo obbligatorio mancante al salvataggio: la specificità (classe, non solo elemento) serve a vincere
+   sulla regola globale "input { border: ... !important }" più sotto, pensata per la visibilità su mobile. */
+.form-pren .campo-errore { border: 2px solid #ef4444 !important; background-color: #fef2f2 !important; }
+/* Campo modificato rispetto ai valori caricati: come sopra, serve la classe (e !important) perché
+   sugli <input> lo stile inline perderebbe contro la stessa regola globale. */
+.form-pren .campo-modificato { border: 2px solid #f59e0b !important; background-color: #fffbeb !important; }
+
+/* Overlay del form Nuova/Modifica Prenotazione richiamato da Gestione */
+.modal-form-pren-box {
+  position: relative; background: #fff; max-width: 900px; width: 100%;
+  margin: 20px auto; border-radius: 10px; padding: 36px 20px 20px; box-sizing: border-box;
+}
+.modal-form-pren-box .btn-chiudi { position: absolute; top: 10px; right: 10px; padding: 4px 10px; z-index: 1; }
+.modal-form-pren-box .schermata-inserimento { padding: 0; box-shadow: none; }
+
+/* --- Blocchi del preventivatore riusati dentro al form (overlay Gestione e scheda Vendita) ---
+   Nascono per il pannello scuro ".riepilogo" e per pagine a tutta larghezza: dentro al form
+   vanno riportati su fondo chiaro e su misure compatte, come le altre sezioni. */
+.form-pren .blocco-dettaglio-calcolo { gap: 8px; margin-bottom: 12px; }
+.form-pren .scheda-riepilogo-prodotto { background: #f8fafc; border: 1px solid #e2e8f0; border-left: 3px solid #3b82f6; padding: 10px 12px; }
+.form-pren .scheda-riepilogo-prodotto h4 { color: #1d4ed8; font-size: 0.85rem; }
+.form-pren .voci-prezzo p { color: #475569; font-size: 0.8rem; }
+.form-pren .subtotale-prodotto { border-top-color: #e2e8f0; color: #0f172a !important; }
+.form-pren .extra-box-dettaglio { border-left-color: #94a3b8; }
+.form-pren .extra-box-dettaglio h4,
+.form-pren .extra-box-dettaglio p { color: #475569; }
+.form-pren .extra-box-dettaglio p { font-size: 0.8rem; }
+.form-pren .totale-box-finale { border-top: 1px solid #e2e8f0; padding-top: 10px; }
+.form-pren .totale-box-finale h3 { font-size: 0.95rem; color: #0f172a; }
+.form-pren .totale-box-finale h3 span { color: #059669; }
+.form-pren .item-scelto { padding: 6px 10px; font-size: 0.85rem; }
+.form-pren .lista-scelti-container { margin-top: 10px; }
+.form-pren .btn-preventivo { padding: 10px 18px; font-size: 0.9rem; }
+
+/* --- Tabella Vendita: costo vivo e prezzo di vendita affiancati, una riga per articolo --- */
+.tabella-vendita-box { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+/* Larghezze fisse: le colonne numeriche restano strette e l'articolo si prende lo spazio libero.
+   Con layout automatico Qtà e Prezzo si allargavano ben oltre il contenuto. */
+.tabella-vendita { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 0.82rem; table-layout: fixed; }
+.tabella-vendita th:nth-child(2) { width: 96px; }  /* Qtà (stepper) / Costo vivo */
+.tabella-vendita th:nth-child(3) { width: 72px; }  /* Km / Prezzo */
+.tabella-vendita th:nth-child(4) { width: 96px; }  /* Trasporto / Sconto */
+.tabella-vendita th:nth-child(5) { width: 96px; }  /* Noleggio / Totale */
+.tabella-vendita th:nth-child(6) { width: 42px; }  /* azioni */
+.tabella-vendita td { overflow: hidden; text-overflow: ellipsis; }
+
+/* Ogni gioco sta su due righe: sopra la logistica, sotto la parte commerciale.
+   Le due righe si leggono come un blocco unico, quindi il separatore è solo in fondo alla coppia. */
+.tabella-vendita .riga-articolo td { border-bottom: none; padding-bottom: 2px; }
+.tabella-vendita .riga-articolo .secondaria { font-size: 0.72rem; }
+.tabella-vendita .riga-prezzi td { padding-top: 2px; }
+.tabella-vendita .riga-servizio td { padding-top: 6px; }
+/* L'intestazione della tabella descrive la prima riga: nella seconda ogni valore ha la sua etichetta */
+.tabella-vendita .mini-etichetta {
+  display: block; font-size: 0.62rem; text-transform: uppercase;
+  letter-spacing: 0.03em; color: #94a3b8; margin-bottom: 1px;
+}
+.tabella-vendita .cella-etichettata { white-space: nowrap; }
+.tabella-vendita th {
+  padding: 8px 10px; text-align: left; font-weight: 600; color: #64748b;
+  background: #f8fafc; border-bottom: 1px solid #e2e8f0; white-space: nowrap;
+}
+.tabella-vendita td { padding: 6px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.tabella-vendita tbody tr:last-child td { border-bottom: none; }
+.tabella-vendita .num { text-align: right; }
+.tabella-vendita .secondaria { color: #94a3b8; font-weight: normal; }
+.tabella-vendita .qta { color: #64748b; font-weight: normal; }
+.tabella-vendita .totale { font-weight: bold; color: #2e7d32; white-space: nowrap; }
+.tabella-vendita .warning-testo { display: block; margin-top: 2px; font-size: 0.7rem; }
+.tabella-vendita tfoot td {
+  padding: 8px 10px; background: #f8fafc; border-top: 1px solid #e2e8f0;
+  font-weight: 600; color: #334155;
+}
+/* Gli input di prezzo/sconto/quantità stanno dentro la cella: stretti e allineati a destra */
+.tabella-vendita input.input-vendita,
+.tabella-vendita input.input-qta {
+  height: 26px !important; padding: 2px 5px !important;
+  font-size: 0.78rem !important; text-align: right; margin: 0;
+  border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;
+}
+.tabella-vendita input.input-vendita { width: 66px; }
+.tabella-vendita input.input-vendita.error { border-color: #ef4444 !important; background: #fef2f2 !important; }
+
+/* Quantità: campo minimo con i due pulsanti di passo, così la colonna resta stretta.
+   Le frecce native del type=number sarebbero ridondanti e ruberebbero larghezza. */
+.tabella-vendita .stepper-qta { display: inline-flex; align-items: center; gap: 2px; }
+.tabella-vendita input.input-qta { width: 44px; text-align: center; padding: 2px !important; font-weight: 600; }
+.tabella-vendita input.input-qta::-webkit-outer-spin-button,
+.tabella-vendita input.input-qta::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.tabella-vendita input.input-qta { -moz-appearance: textfield; appearance: textfield; }
+/* Pulsanti di passo ridotti al minimo: lo spazio serve al numero, che deve restare leggibile */
+.tabella-vendita .stepper-qta button {
+  width: 16px; height: 22px; padding: 0; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.75rem; font-weight: bold; line-height: 1;
+  background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; border-radius: 3px;
+}
+.tabella-vendita .stepper-qta button:hover { background: #e2e8f0; color: #0f172a; }
+
+/* Intestazioni di gruppo (Giochi / Servizi accessori) dentro al corpo della tabella */
+.tabella-vendita .riga-gruppo td {
+  padding: 6px 10px; background: #eef2f6; border-bottom: 1px solid #e2e8f0;
+  font-size: 0.7rem; font-weight: bold; text-transform: uppercase;
+  letter-spacing: 0.04em; color: #0288d1;
+}
+/* Riga sempre in coda al gruppo: da qui si aggiunge la voce successiva */
+.tabella-vendita .riga-aggiunta td { padding: 6px 10px; background: #fcfdfe; }
+.tabella-vendita .riga-aggiunta select {
+  width: 100%; max-width: 340px; height: 30px; padding: 3px 8px;
+  font-size: 0.8rem; border: 1px dashed #94a3b8; border-radius: 6px;
+  background: #fff; color: #334155; cursor: pointer; box-sizing: border-box;
+}
+.tabella-vendita .riga-aggiunta select:disabled { color: #94a3b8; border-style: solid; cursor: default; }
+.tabella-vendita .btn-icon-action { width: 26px; height: 26px; }
+
+/* Su mobile il modulo trasforma ogni <table> in schede impilate (thead nascosto): qui servono
+   le intestazioni di colonna per capire costo e prezzo, quindi la tabella resta tale e scorre. */
+@media (max-width: 768px) {
+  .tabella-vendita { display: table !important; width: 100%; min-width: 620px; border: none !important; }
+  .tabella-vendita thead { display: table-header-group !important; }
+  .tabella-vendita tbody { display: table-row-group !important; }
+  .tabella-vendita tfoot { display: table-footer-group !important; }
+  .tabella-vendita tr {
+    display: table-row !important; margin: 0 !important; border: none !important;
+    border-radius: 0 !important; box-shadow: none !important; background: none !important;
+  }
+  .tabella-vendita th,
+  .tabella-vendita td {
+    display: table-cell !important; width: auto !important;
+    padding: 6px 8px !important; border-bottom: 1px solid #f1f5f9 !important;
+  }
+  .tabella-vendita .num { text-align: right !important; }
+  .tabella-vendita input.input-vendita { width: 72px; }
+}
+
+/* Luogo di consegna già fissato: si mostra come dato, non più come campo modificabile */
+.luogo-confermato {
+  display: flex; align-items: center; gap: 6px; padding: 7px 10px;
+  background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px;
+  font-size: 0.85rem; color: #166534;
+}
+
+/* Scelte di presentazione dell'offerta, sopra alla tabella */
+.opzioni-vendita { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.opzioni-vendita .opzione-riga {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 0.85rem; font-weight: 600; cursor: pointer;
+}
+.opzioni-vendita .descrizione-pagina { margin: 0 0 4px 24px; }
+
+/* Variante compatta del form, usata solo nell'overlay: sezioni, testi e controlli più piccoli
+   per vedere più campi possibile senza scorrere troppo dentro alla finestra modale. */
+.form-pren-compatto .sezione { margin-bottom: 10px !important; padding: 10px 12px !important; }
+.form-pren-compatto h2 { font-size: 0.85rem !important; margin: 0 0 8px 0 !important; padding-bottom: 6px !important; }
+.form-pren-compatto .date-grid,
+.form-pren-compatto .pren-row { gap: 8px !important; }
+.form-pren-compatto label { font-size: 0.76rem !important; }
+.form-pren-compatto input:not([type="checkbox"]):not([type="radio"]),
+.form-pren-compatto select { height: 30px !important; font-size: 0.8rem !important; padding: 4px 8px !important; }
+.form-pren-compatto textarea { font-size: 0.8rem !important; padding: 5px 8px !important; }
+.form-pren-compatto .chip-operatore { padding: 4px 10px !important; font-size: 0.76rem !important; }
+.form-pren-compatto .valore { padding: 4px 0 !important; font-size: 0.8rem !important; }
+.form-pren-compatto .descrizione-pagina { font-size: 0.72rem !important; }
+.form-pren-compatto .sotto-sezione { margin-top: 10px !important; padding-top: 8px !important; }
+.form-pren-compatto .sotto-sezione h3 { font-size: 0.68rem !important; margin: 0 0 6px 0 !important; }
+
+/* Struttura fissa del form: Evento a sinistra, Anagrafica a destra, Vendita e Pagamenti sotto a tutta larghezza. */
+.form-top-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+@media (max-width: 640px) {
+  .form-top-grid { grid-template-columns: 1fr; }
+}
+
+/* Sotto-sezioni annidate dentro Evento/Anagrafica/Vendita (es. Location e Operatori dentro Evento). */
+.form-pren .sotto-sezione { margin-top: 16px; padding-top: 14px; border-top: 1px dashed #e2e8f0; }
+.form-pren .sotto-sezione h3 {
+  margin: 0 0 10px 0; font-size: 0.8rem; font-weight: bold;
+  color: #0288d1; text-transform: uppercase; letter-spacing: 0.03em;
+}
 
 /* --- SOTTO-NAVIGAZIONE INTERNA AL MODULO --- */
 .modulo-subnav {
@@ -192,12 +379,38 @@ body {
   }
   .schermata-storico td:last-child { border-bottom: none; background: #f8fafc; border-radius: 0 0 8px 8px; }
   .schermata-storico td:last-child > div { width: 100%; }
+
+  /* La tabella di dettaglio annidata (gonfiabili del preventivo) resta una vera tabella anche su mobile */
+  .schermata-storico .tabella-dettaglio-gonfiabili { display: table; }
+  .schermata-storico .tabella-dettaglio-gonfiabili thead { display: table-header-group; }
+  .schermata-storico .tabella-dettaglio-gonfiabili tbody { display: table-row-group; }
+  .schermata-storico .tabella-dettaglio-gonfiabili tr {
+    display: table-row; margin: 0; border: none; border-radius: 0; box-shadow: none; background: none;
+  }
+  .schermata-storico .tabella-dettaglio-gonfiabili th,
+  .schermata-storico .tabella-dettaglio-gonfiabili td {
+    display: table-cell; width: auto; padding: 5px 8px !important;
+    border-bottom: 1px solid #f1f5f9; background: none; border-radius: 0;
+  }
+  /* Km, Costo e Ricavo restano allineati a destra */
+  .schermata-storico .tabella-dettaglio-gonfiabili th:nth-child(n+3),
+  .schermata-storico .tabella-dettaglio-gonfiabili td:nth-child(n+3) { text-align: right !important; }
 }
 
 .nav-btn { background-color: #e2e8f0; color: #475569; }
 .nav-btn.active { background-color: #0f172a; color: white; }
-.btn-logout { background-color: #ef4444; font-size: 0.9rem; padding: 8px 15px; }
-.btn-logout:hover { background-color: #dc2626; }
+
+/* --- PROVA: sotto-navigazione a "segmented control" (per ora solo dove applicata la classe) --- */
+.subnav-segmented { display: inline-flex; gap: 2px; background: #e2e8f0; padding: 4px; border-radius: 10px; box-shadow: none; }
+.subnav-segmented .nav-btn { background: transparent; color: #475569; border-radius: 7px; }
+.subnav-segmented .nav-btn:hover:not(.active) { background: rgba(255,255,255,0.6); }
+.subnav-segmented .nav-btn.active { background: #fff; color: #0f172a; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+.btn-logout {
+  background: transparent; border: 1px solid rgba(255,255,255,0.14); color: #cbd5e1;
+  font-size: 0.9rem; font-weight: 500; padding: 9px 15px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+.btn-logout:hover { background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.4); color: #fca5a5; }
 
 /* PANNELLO ADMIN SCHEDA CONFIGURAZIONE */
 .schermata-admin {
@@ -243,6 +456,15 @@ h2 { font-size: 1.15rem; color: #334155; margin-top: 0; }
 .date-grid label { display: flex; flex-direction: column; flex: 1; font-weight: 600; font-size: 0.9rem; }
 input[type="date"], input[type="text"], .dropdown-gonfiabili {
   width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 5px; font-size: 1rem;
+}
+/* Niente frecce su/giù sui campi numerici (prezzi, costi, sconti, ecc.): si digita solo l'importo. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
 }
 .info-giorni { margin: 8px 0; font-size: 0.9rem; color: #64748b; }
 .checkbox-logistica {
@@ -290,6 +512,16 @@ button:hover { background-color: #1d4ed8; }
 .btn-preventivo { width: 100%; padding: 14px; background-color: #10b981; font-size: 1.1rem; margin-top: 20px; }
 .btn-preventivo:hover { background-color: #059669; }
 .btn-preventivo:disabled { background-color: #334155; color: #64748b; cursor: not-allowed; }
+.btn-preventivo.btn-accent { background-color: #0288d1; }
+.btn-preventivo.btn-accent:hover { background-color: #0277bd; }
+.btn-accent-inline { background-color: #0288d1; font-size: 0.8rem; padding: 5px 10px; }
+.btn-accent-inline:hover { background-color: #0277bd; }
+
+/* --- MODALE FORM CONFIGURATORE (Nuovo elemento) --- */
+.modal-form-backdrop { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.6); overflow-y: auto; padding: 40px 20px; z-index: 999; display: flex; align-items: flex-start; justify-content: center; box-sizing: border-box; }
+.modal-form-box { background: #f9f9f9; width: 100%; max-width: 700px; border-radius: 8px; border: 1px solid #e0e0e0; box-shadow: 0 20px 40px rgba(0,0,0,0.3); padding: 18px; position: relative; box-sizing: border-box; }
+.modal-form-close { position: absolute; top: 10px; right: 12px; background: none; border: none; font-size: 1.4rem; line-height: 1; cursor: pointer; color: #64748b; padding: 4px; }
+.modal-form-close:hover { color: #334155; }
 
 /* --- MODALE PREVENTIVO STAMPABILE --- */
 .modal-preventivo-backdrop { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.6); overflow-y: auto; padding: 40px 20px; z-index: 999; }
@@ -330,14 +562,24 @@ button:hover { background-color: #1d4ed8; }
 .btn-annulla-inline:hover { background-color: #475569; }
 td { padding: 8px 12px; vertical-align: middle; }
 
+/* --- AZIONI A ICONA (Opzione 1: quadrate outline, in pilota su Preventivatore) --- */
+.btn-icon-action { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; background: #fff; border: 1px solid #cbd5e1; border-radius: 6px; color: #475569; cursor: pointer; }
+.btn-icon-action:hover { background: #f1f5f9; border-color: #94a3b8; }
+.btn-icon-action.danger { border-color: #fca5a5; color: #dc2626; }
+.btn-icon-action.danger:hover { background: #fef2f2; border-color: #ef4444; }
+.btn-icon-action.success { border-color: #86efac; color: #16a34a; }
+.btn-icon-action.success:hover { background: #f0fdf4; border-color: #22c55e; }
+.btn-outline-annulla { background: transparent; border: 1px solid #cbd5e1; color: #475569; }
+.btn-outline-annulla:hover { background: #f1f5f9; border-color: #94a3b8; }
+
 /* --- Icone azione senza sfondo (righe tabelle Storico/Gestione/Completate) --- */
 .btn-icona-piatta { background: none; border: none; color: #475569; font-size: 0.95rem; padding: 4px 6px; cursor: pointer; border-radius: 4px; }
 .btn-icona-piatta:hover { background: #f1f5f9; }
 .btn-icona-piatta:disabled { opacity: 0.35; cursor: not-allowed; }
 .btn-icona-piatta:disabled:hover { background: none; }
-.storico-table tbody tr:not(.riga-pren-dettaglio):hover { background: #f8fafc; }
-.riga-pren-chevron { display: inline-block; width: 14px; color: #94a3b8; transition: transform 0.15s; margin-right: 2px; }
-.riga-pren-dettaglio td { padding: 12px 16px 12px 30px; background: #eef2f6; border-bottom: 1px solid #e2e8f0; border-top: 1px dashed #cbd5e1; box-shadow: inset 0 4px 6px -6px rgba(0,0,0,0.15); }
+.storico-table tbody tr:not(.riga-espandibile-dettaglio):hover { background: #f8fafc; }
+.riga-espandibile-chevron { display: inline-block; width: 14px; color: #94a3b8; transition: transform 0.15s; margin-right: 2px; }
+.riga-espandibile-dettaglio td { padding: 12px 16px 12px 30px; background: #eef2f6; border-bottom: 1px solid #e2e8f0; border-top: 1px dashed #cbd5e1; box-shadow: inset 0 4px 6px -6px rgba(0,0,0,0.15); }
 
 /* ==========================================================================
    --- NUOVO LAYOUT E SPECIFICHE GRAFICHE PER LA PAGINA VENDITA ---
@@ -517,6 +759,12 @@ td { padding: 8px 12px; vertical-align: middle; }
 .badge-stato.confermato {
   background-color: #bbf7d0;
   color: #166534;
+}
+
+/* Stato derivato: preventivo non confermato oltre la validità dell'offerta */
+.badge-stato.scaduto {
+  background-color: #e2e8f0;
+  color: #475569;
 }
 
 /* Stati prenotazioni */

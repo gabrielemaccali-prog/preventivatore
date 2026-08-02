@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import { fatturazioneCompletaDi } from '../../lib/utils'
+import Icona from '../../components/Icona'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell
@@ -67,12 +68,18 @@ function CostiRicavi({ user }) {
   useEffect(() => { fetchTutto(); }, []);
 
   const fetchTutto = async () => {
-    const [pr, pa, ca] = await Promise.all([
+    const [pr, pa, ca, pag] = await Promise.all([
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
       supabase.from('pren_pacchetti').select('*').order('nome'),
       supabase.from('pren_campi').select('*').order('nome'),
+      supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data'),
     ]);
-    if (pr.data) setPrenotazioni(pr.data);
+    // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher), non più
+    // nella colonna jsonb prenotazioni.pagamenti: vengono agganciati qui a ogni prenotazione.
+    if (pr.data) setPrenotazioni(pr.data.map(p => ({
+      ...p,
+      pagamenti: (pag.data || []).filter(x => x.riferimento === p.id).map(x => ({ data: x.data, importo: x.importo, nominativo: x.nominativo || "" }))
+    })));
     if (pa.data) setPacchetti(pa.data);
     if (ca.data) setCampi(ca.data);
   };
@@ -233,15 +240,15 @@ function CostiRicavi({ user }) {
 
   return (
     <>
-      <nav className="modulo-subnav no-print">
+      <nav className="modulo-subnav no-print subnav-segmented">
         {puoVedere(user, 'costiricavi', 'tabella') && (
-          <button className={`nav-btn ${currentView === 'tabella' ? 'active' : ''}`} onClick={() => setCurrentView("tabella")}>🗂️ Tabella</button>
+          <button className={`nav-btn ${currentView === 'tabella' ? 'active' : ''}`} onClick={() => setCurrentView("tabella")}><Icona nome="tabella" />Tabella</button>
         )}
         {puoVedere(user, 'costiricavi', 'andamento') && (
-          <button className={`nav-btn ${currentView === 'andamento' ? 'active' : ''}`} onClick={() => setCurrentView("andamento")}>📈 Andamento</button>
+          <button className={`nav-btn ${currentView === 'andamento' ? 'active' : ''}`} onClick={() => setCurrentView("andamento")}><Icona nome="andamento" />Andamento</button>
         )}
         {puoVedere(user, 'costiricavi', 'completate') && (
-          <button className={`nav-btn ${currentView === 'completate' ? 'active' : ''}`} onClick={() => setCurrentView("completate")}>✅ Completate</button>
+          <button className={`nav-btn ${currentView === 'completate' ? 'active' : ''}`} onClick={() => setCurrentView("completate")}><Icona nome="completate" />Completate</button>
         )}
       </nav>
 
@@ -249,7 +256,7 @@ function CostiRicavi({ user }) {
       {currentView === "tabella" && puoVedere(user, 'costiricavi', 'tabella') && (
         <div className="schermata-storico no-print">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <h2 style={{ margin: 0 }}>💰 Costi / Ricavi <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(valori senza IVA)</span></h2>
+            <h2 style={{ margin: 0 }}>Costi / Ricavi <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(valori senza IVA)</span></h2>
             <button onClick={esportaExcel} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
           </div>
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
@@ -265,7 +272,7 @@ function CostiRicavi({ user }) {
       {/* ===================== COMPLETATE ===================== */}
       {currentView === "completate" && puoVedere(user, 'costiricavi', 'completate') && (
         <div className="schermata-storico no-print">
-          <h2 style={{ margin: 0 }}>✅ Partite completate</h2>
+          <h2 style={{ margin: 0 }}>Partite completate</h2>
           <p className="descrizione-pagina">Partite confermate, già disputate, saldate e con dati di fatturazione completi.</p>
           {tabellaCR(righeCompletate, "Nessuna partita completata.")}
         </div>
@@ -274,7 +281,7 @@ function CostiRicavi({ user }) {
       {/* ===================== ANDAMENTO ===================== */}
       {currentView === "andamento" && puoVedere(user, 'costiricavi', 'andamento') && (
         <div className="schermata-storico no-print">
-          <h2 style={{ margin: '0 0 15px 0' }}>📈 Andamento Costi / Ricavi <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(valori senza IVA)</span></h2>
+          <h2 style={{ margin: '0 0 15px 0' }}>Andamento Costi / Ricavi <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(valori senza IVA)</span></h2>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
             <div className="filtro-group" style={{ flex: '1 1 140px' }}>

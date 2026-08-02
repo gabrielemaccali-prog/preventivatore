@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
+import Icona from '../../components/Icona'
 
 const MESI = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
 const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -19,6 +20,29 @@ const FASCE_ORDINE = ['mattina', 'pomeriggio', 'sera'];
 const FASCIA_COLORE = { mattina: { bg: '#fef3c7', bd: '#f59e0b', tx: '#92400e' }, pomeriggio: { bg: '#dbeafe', bd: '#0ea5e9', tx: '#075985' }, sera: { bg: '#e0e7ff', bd: '#6366f1', tx: '#3730a3' } };
 const FASCIA_LETTERA = { mattina: 'M', pomeriggio: 'P', sera: 'S' };
 
+// Stessa convenzione di Prenotazioni.jsx: 1=Lun..7=Dom, salvati come stringa "1,3,5"
+const GIORNI = [
+  { n: 1, l: 'Lun' }, { n: 2, l: 'Mar' }, { n: 3, l: 'Mer' }, { n: 4, l: 'Gio' },
+  { n: 5, l: 'Ven' }, { n: 6, l: 'Sab' }, { n: 7, l: 'Dom' }
+];
+const giornoSettimana = (dataStr) => { const d = new Date(dataStr).getDay(); return d === 0 ? 7 : d; };
+
+// Definiti fuori dal componente: se stessero dentro, ad ogni render Disponibilita ne ricreerebbe
+// una nuova identità di funzione e React li rimonterebbe da capo, facendo perdere il focus mentre si scrive.
+const BadgeFascia = ({ attiva, fasciaId, onClick, title, size = 16, particolare = false }) => {
+  const c = FASCIA_COLORE[fasciaId];
+  return (
+    <span className="badge-fascia" onClick={onClick} title={title} style={{ cursor: onClick ? 'pointer' : 'default', display: 'inline-block', boxSizing: 'border-box', minWidth: `${size}px`, height: `${size}px`, lineHeight: `${size}px`, textAlign: 'center', padding: particolare ? `0 ${size * 0.12}px` : 0, borderRadius: '5px', fontSize: `${size * 0.62}px`, fontWeight: 'bold', background: attiva ? c.bg : '#f1f5f9', border: `1px solid ${attiva ? c.bd : '#e2e8f0'}`, color: attiva ? c.tx : '#94a3b8' }}>
+      {FASCIA_LETTERA[fasciaId]}{particolare ? '*' : ''}
+    </span>
+  );
+};
+
+// Campo orario testuale HH:MM (24h): niente widget nativo, niente AM/PM possibile in nessun sistema/browser.
+const InputOra24 = ({ value, onChange, style }) => (
+  <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={value} onChange={(e) => onChange(formattaInputOra(e.target.value))} style={style} />
+);
+
 function Disponibilita({ user }) {
   // Visibilità della scheda: segue i permessi del ruolo, come nel resto dell'app.
   const schedaConsentita = (s) => puoVedere(user, 'disponibilita', s);
@@ -32,22 +56,25 @@ function Disponibilita({ user }) {
   const [bubblers, setBubblers] = useState([]);
   const [campi, setCampi] = useState([]);
   const [dispCampi, setDispCampi] = useState([]);
+  const [dispCampiFasce, setDispCampiFasce] = useState([]);
   const [dispCalendario, setDispCalendario] = useState([]);
 
   useEffect(() => { fetchTutto(); }, []);
 
   const fetchTutto = async () => {
-    const [fasceRes, bubblersRes, campiRes, dCampiRes, dCalRes] = await Promise.all([
+    const [fasceRes, bubblersRes, campiRes, dCampiRes, dCampiFasceRes, dCalRes] = await Promise.all([
       supabase.from('disp_fasce').select('*').order('ordine'),
       supabase.from('utenti').select('username, nome_breve, telefono, email, bubbler').eq('bubbler', true).order('username'),
       supabase.from('pren_campi').select('id, nome, citta, provincia').order('nome'),
       supabase.from('disp_campi').select('*'),
+      supabase.from('disp_campi_fasce').select('*'),
       supabase.from('disp_calendario').select('*'),
     ]);
     if (fasceRes.data) setFasce(fasceRes.data);
     if (bubblersRes.data) setBubblers(bubblersRes.data);
     if (campiRes.data) setCampi(campiRes.data);
     if (dCampiRes.data) setDispCampi(dCampiRes.data);
+    if (dCampiFasceRes.data) setDispCampiFasce(dCampiFasceRes.data);
     if (dCalRes.data) setDispCalendario(dCalRes.data);
   };
 
@@ -90,12 +117,34 @@ function Disponibilita({ user }) {
 
   // ====================== DISPONIBILITA' CAMPI (utente collegato) ======================
   const mieiCampi = dispCampi.filter(d => d.utente_username === user.username).map(d => d.campo_id);
+  // Selezionando un campo si attivano automaticamente tutte le fasce di tutti i giorni (tutto verde di default);
+  // deselezionandolo si ripulisce anche il dettaglio giorno/fascia.
   const toggleMioCampo = async (campoId) => {
     if (mieiCampi.includes(campoId)) {
+      await supabase.from('disp_campi_fasce').delete().eq('utente_username', user.username).eq('campo_id', campoId);
       await supabase.from('disp_campi').delete().eq('utente_username', user.username).eq('campo_id', campoId);
     } else {
-      const { error } = await supabase.from('disp_campi').insert([{ utente_username: user.username, campo_id: campoId }]);
-      if (error) { console.error(error); return alert('Errore salvataggio disponibilità campo'); }
+      const { error: errCampo } = await supabase.from('disp_campi').insert([{ utente_username: user.username, campo_id: campoId }]);
+      if (errCampo) { console.error(errCampo); return alert('Errore salvataggio disponibilità campo'); }
+      const righe = [];
+      GIORNI.forEach(g => FASCE_ORDINE.forEach(fid => righe.push({ utente_username: user.username, campo_id: campoId, giorno: g.n, fascia: fid })));
+      const { error: errFasce } = await supabase.from('disp_campi_fasce').insert(righe);
+      if (errFasce) { console.error(errFasce); return alert('Errore salvataggio disponibilità campo'); }
+    }
+    fetchTutto();
+  };
+  const mioCampoFasciaAttiva = (campoId, giornoNum, fasciaId) => dispCampiFasce.some(d => d.utente_username === user.username && d.campo_id === campoId && d.giorno === giornoNum && d.fascia === fasciaId);
+  // Attiva/disattiva una singola fascia in un giorno della settimana per un campo. Se non resta più
+  // nulla di attivo per quel campo, lo deseleziona del tutto (non avrebbe senso restare "selezionato" a vuoto).
+  const toggleFasciaGiornoMioCampo = async (campoId, giornoNum, fasciaId) => {
+    const rigaEsistente = dispCampiFasce.find(d => d.utente_username === user.username && d.campo_id === campoId && d.giorno === giornoNum && d.fascia === fasciaId);
+    if (rigaEsistente) {
+      await supabase.from('disp_campi_fasce').delete().eq('id', rigaEsistente.id);
+      const restanti = dispCampiFasce.filter(d => d.utente_username === user.username && d.campo_id === campoId && d.id !== rigaEsistente.id);
+      if (restanti.length === 0) await supabase.from('disp_campi').delete().eq('utente_username', user.username).eq('campo_id', campoId);
+    } else {
+      const { error } = await supabase.from('disp_campi_fasce').insert([{ utente_username: user.username, campo_id: campoId, giorno: giornoNum, fascia: fasciaId }]);
+      if (error) { console.error(error); return alert('Errore salvataggio disponibilità'); }
     }
     fetchTutto();
   };
@@ -177,26 +226,13 @@ function Disponibilita({ user }) {
     impostaDisponibilitaGiorni(giorni, fasciaBulk, disponibile);
   };
 
-  const BadgeFascia = ({ attiva, fasciaId, onClick, title, size = 16, particolare = false }) => {
-    const c = FASCIA_COLORE[fasciaId];
-    return (
-      <span className="badge-fascia" onClick={onClick} title={title} style={{ cursor: onClick ? 'pointer' : 'default', display: 'inline-block', boxSizing: 'border-box', minWidth: `${size}px`, height: `${size}px`, lineHeight: `${size}px`, textAlign: 'center', padding: particolare ? `0 ${size * 0.12}px` : 0, borderRadius: '5px', fontSize: `${size * 0.62}px`, fontWeight: 'bold', background: attiva ? c.bg : '#f1f5f9', border: `1px solid ${attiva ? c.bd : '#e2e8f0'}`, color: attiva ? c.tx : '#94a3b8' }}>
-        {FASCIA_LETTERA[fasciaId]}{particolare ? '*' : ''}
-      </span>
-    );
-  };
-
-  // Campo orario testuale HH:MM (24h): niente widget nativo, niente AM/PM possibile in nessun sistema/browser.
-  const InputOra24 = ({ value, onChange, style }) => (
-    <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={value} onChange={(e) => onChange(formattaInputOra(e.target.value))} style={style} />
-  );
-
   // ====================== RIEPILOGO ======================
   const [dettaglioRiepilogo, setDettaglioRiepilogo] = useState(null); // { username, iso }
   const [filtroProvincia, setFiltroProvincia] = useState("");
   const [filtroCampo, setFiltroCampo] = useState("");
   const bubblersOrdinati = [...bubblers].sort((a, b) => (a.nome_breve || a.username).localeCompare(b.nome_breve || b.username));
-  const campiDiBubbler = (username) => dispCampi.filter(d => d.utente_username === username).map(d => campi.find(c => c.id === d.campo_id)).filter(Boolean);
+  const righeCampiDi = (username) => dispCampi.filter(d => d.utente_username === username);
+  const campiDiBubbler = (username) => righeCampiDi(username).map(d => campi.find(c => c.id === d.campo_id)).filter(Boolean);
 
   const campiFiltroDisponibili = filtroProvincia ? campi.filter(c => (c.provincia || 'Senza provincia') === filtroProvincia) : campi;
   const bubblersFiltrati = (!filtroProvincia && !filtroCampo) ? bubblersOrdinati : bubblersOrdinati.filter(b => {
@@ -204,14 +240,25 @@ function Disponibilita({ user }) {
     if (filtroCampo) return idCampiBubbler.includes(filtroCampo);
     return campiDiBubbler(b.username).some(c => (c.provincia || 'Senza provincia') === filtroProvincia);
   });
+  // Quando è attivo un filtro campo/provincia, tiene conto delle fasce attive per giorno della settimana
+  // impostate in Disponibilità Campi. Senza filtro campo/provincia non si applica alcuna restrizione,
+  // perché non c'è un campo specifico a cui riferire giorni/fasce.
+  const bubblerDisponibilePerGiornoFascia = (username, iso, fasciaId) => {
+    if (!filtroCampo && !filtroProvincia) return true;
+    const giorno = giornoSettimana(iso);
+    const righeRilevanti = filtroCampo
+      ? dispCampiFasce.filter(d => d.utente_username === username && d.campo_id === filtroCampo && d.giorno === giorno && d.fascia === fasciaId)
+      : dispCampiFasce.filter(d => d.utente_username === username && d.giorno === giorno && d.fascia === fasciaId && (campi.find(c => c.id === d.campo_id)?.provincia || 'Senza provincia') === filtroProvincia);
+    return righeRilevanti.length > 0;
+  };
 
   return (
     <>
-      <nav className="modulo-subnav no-print">
-        {schedaConsentita('config') && <button className={`nav-btn ${currentView === 'config' ? 'active' : ''}`} onClick={() => setCurrentView('config')}>⚙️ Configuratore</button>}
-        {schedaConsentita('campi') && <button className={`nav-btn ${currentView === 'campi' ? 'active' : ''}`} onClick={() => setCurrentView('campi')}>📍 Disponibilità Campi</button>}
-        {schedaConsentita('calendario') && <button className={`nav-btn ${currentView === 'calendario' ? 'active' : ''}`} onClick={() => setCurrentView('calendario')}>📅 Disponibilità Calendario</button>}
-        {schedaConsentita('riepilogo') && <button className={`nav-btn ${currentView === 'riepilogo' ? 'active' : ''}`} onClick={() => setCurrentView('riepilogo')}>📊 Riepilogo</button>}
+      <nav className="modulo-subnav no-print subnav-segmented">
+        {schedaConsentita('config') && <button className={`nav-btn ${currentView === 'config' ? 'active' : ''}`} onClick={() => setCurrentView('config')}><Icona nome="configuratore" />Configuratore</button>}
+        {schedaConsentita('campi') && <button className={`nav-btn ${currentView === 'campi' ? 'active' : ''}`} onClick={() => setCurrentView('campi')}><Icona nome="campi" />Disponibilità Campi</button>}
+        {schedaConsentita('calendario') && <button className={`nav-btn ${currentView === 'calendario' ? 'active' : ''}`} onClick={() => setCurrentView('calendario')}><Icona nome="calendario" />Disponibilità Calendario</button>}
+        {schedaConsentita('riepilogo') && <button className={`nav-btn ${currentView === 'riepilogo' ? 'active' : ''}`} onClick={() => setCurrentView('riepilogo')}><Icona nome="riepilogo" />Riepilogo</button>}
       </nav>
 
       {/* ===================== CONFIGURATORE ===================== */}
@@ -239,8 +286,8 @@ function Disponibilita({ user }) {
                         <td style={{ padding: '10px 12px' }}><InputOra24 value={datiFasciaInline.ora_fine} onChange={(v) => setDatiFasciaInline({ ...datiFasciaInline, ora_fine: v })} style={{ height: '30px', width: '70px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.85rem' }} /></td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                            <button className="btn-salva-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaInlineFascia}>Salva</button>
-                            <button className="btn-annulla-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => setIdFasciaInline(null)}>Annulla</button>
+                            <button className="btn-accent-inline" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaInlineFascia}><Icona nome="salva" size={14} style={{ marginRight: '4px' }} />Salva</button>
+                            <button className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px', borderRadius: '4px' }} onClick={() => setIdFasciaInline(null)}><Icona nome="annulla" size={14} style={{ marginRight: '4px' }} />Annulla</button>
                           </div>
                         </td>
                       </>
@@ -250,7 +297,7 @@ function Disponibilita({ user }) {
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{oraHHMM(f.ora_inizio)}</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{oraHHMM(f.ora_fine)}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => iniziaInlineFascia(f)}>Modifica</button>
+                          <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => iniziaInlineFascia(f)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
                         </td>
                       </>
                     )}
@@ -285,8 +332,8 @@ function Disponibilita({ user }) {
                         <td style={{ padding: '10px 12px' }}><input type="email" className="table-input" value={datiBubblerInline.email} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, email: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                            <button className="btn-salva-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaInlineBubbler}>Salva</button>
-                            <button className="btn-annulla-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => setIdBubblerInline(null)}>Annulla</button>
+                            <button className="btn-accent-inline" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaInlineBubbler}><Icona nome="salva" size={14} style={{ marginRight: '4px' }} />Salva</button>
+                            <button className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px', borderRadius: '4px' }} onClick={() => setIdBubblerInline(null)}><Icona nome="annulla" size={14} style={{ marginRight: '4px' }} />Annulla</button>
                           </div>
                         </td>
                       </>
@@ -297,7 +344,7 @@ function Disponibilita({ user }) {
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.telefono || '—'}</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.email || '—'}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => iniziaInlineBubbler(b)}>Modifica</button>
+                          <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => iniziaInlineBubbler(b)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
                         </td>
                       </>
                     )}
@@ -320,19 +367,53 @@ function Disponibilita({ user }) {
       {currentView === 'campi' && schedaConsentita('campi') && !richiedeBubbler('campi') && (
         <div className="schermata-admin no-print" style={{ padding: '20px' }}>
           <h2>Disponibilità Campi</h2>
-          <p className="descrizione-pagina">Seleziona i campi registrati in cui sei disponibile a lavorare.</p>
+          <p className="descrizione-pagina">Seleziona i campi registrati in cui sei disponibile a lavorare. Appena selezioni un campo, tutte le fasce di tutti i giorni sono attive di default: clicca su una lettera per disattivarla (o riattivarla).</p>
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '14px', fontSize: '0.75rem' }}>
+            {FASCE_ORDINE.map(fid => <span key={fid} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><BadgeFascia attiva fasciaId={fid} size={14} /> {fasciaInfo(fid)?.label}</span>)}
+          </div>
           {gruppiCampiPerProvincia.map(([provincia, campiGruppo]) => (
             <div key={provincia} style={{ marginBottom: '18px' }}>
               <h3 style={{ fontSize: '0.85rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.03em', margin: '0 0 8px 0' }}>
                 📌 {provincia} <span style={{ fontWeight: 'normal', color: '#888', textTransform: 'none' }}>({campiGruppo.length})</span>
               </h3>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '8px' }}>
-                {campiGruppo.map(c => (
-                  <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '9px 12px', fontSize: '0.85rem', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={mieiCampi.includes(c.id)} onChange={() => toggleMioCampo(c.id)} />
-                    {c.nome}{c.citta ? <span style={{ color: '#888' }}> — {c.citta}</span> : ''}
-                  </label>
-                ))}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '8px' }}>
+                {campiGruppo.map(c => {
+                  const selezionato = mieiCampi.includes(c.id);
+                  return (
+                    <div key={c.id} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '9px 12px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={selezionato} onChange={() => toggleMioCampo(c.id)} />
+                        {c.nome}{c.citta ? <span style={{ color: '#888' }}> — {c.citta}</span> : ''}
+                      </label>
+                      {selezionato && (
+                        <div style={{ marginTop: '8px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '3px' }}>
+                            {GIORNI.map(g => <div key={g.n} style={{ fontSize: '0.6rem', fontWeight: 'bold', color: '#94a3b8', textAlign: 'center' }}>{g.l}</div>)}
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+                            {GIORNI.map(g => (
+                              <div key={g.n} style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center' }}>
+                                {FASCE_ORDINE.map(fid => {
+                                  const attivo = mioCampoFasciaAttiva(c.id, g.n, fid);
+                                  return (
+                                    <BadgeFascia
+                                      key={fid}
+                                      attiva={attivo}
+                                      fasciaId={fid}
+                                      size={16}
+                                      onClick={() => toggleFasciaGiornoMioCampo(c.id, g.n, fid)}
+                                      title={`${g.l} ${fasciaInfo(fid)?.label}: ${attivo ? 'disponibile (clic per rimuovere)' : 'non disponibile (clic per aggiungere)'}`}
+                                    />
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -499,7 +580,7 @@ function Disponibilita({ user }) {
                         {settimana.map((giorno, di) => {
                           const iso = toISODate(giorno);
                           const fuoriMese = giorno.getMonth() !== calDate.getMonth();
-                          const disponibili = bubblersFiltrati.filter(b => rigaDisp(b.username, iso, fid));
+                          const disponibili = bubblersFiltrati.filter(b => rigaDisp(b.username, iso, fid) && bubblerDisponibilePerGiornoFascia(b.username, iso, fid));
                           return (
                             <div key={di} style={{ minWidth: 0, minHeight: '22px', opacity: fuoriMese ? 0.35 : 1, background: disponibili.length > 0 ? c.bg : '#f8fafc', border: `1px solid ${disponibili.length > 0 ? c.bd : '#e2e8f0'}`, boxShadow: iso === oggiIso ? 'inset 0 0 0 2px #2563eb' : 'none', borderRadius: '4px', padding: '2px 4px' }}>
                               {disponibili.length > 0 && (
@@ -542,7 +623,11 @@ function Disponibilita({ user }) {
                     <button className="btn-chiudi" title="Chiudi" style={{ float: 'none', padding: '4px 9px' }} onClick={() => setDettaglioRiepilogo(null)}>✕</button>
                   </div>
                   <p style={{ fontSize: '0.8rem', color: '#666', margin: '0 0 14px 0' }}>
-                    📍 Campi: {campiBubbler.length > 0 ? campiBubbler.map(c => c.nome).join(', ') : 'nessuno configurato'}
+                    📍 Campi: {campiBubbler.length > 0 ? campiBubbler.map(c => {
+                      const giorno = giornoSettimana(iso);
+                      const lettereFasce = FASCE_ORDINE.filter(fid => dispCampiFasce.some(d => d.utente_username === username && d.campo_id === c.id && d.giorno === giorno && d.fascia === fid)).map(fid => FASCIA_LETTERA[fid]).join(' ');
+                      return `${c.nome}${lettereFasce ? ` (${lettereFasce})` : ' (nessuna fascia oggi)'}`;
+                    }).join(', ') : 'nessuno configurato'}
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {FASCE_ORDINE.map(fid => {

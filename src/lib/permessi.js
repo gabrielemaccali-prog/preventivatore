@@ -1,10 +1,10 @@
 // --- REGISTRO MODULI (metadati per sidebar e tab "Moduli" di Impostazioni) ---
 export const MODULI_REGISTRY = [
-  { id: 'preventivatore', label: 'Preventivatore', icon: '🎈' },
-  { id: 'voucher', label: 'Voucher', icon: '🎟️' },
-  { id: 'prenotazioni', label: 'Prenotazioni', icon: '📅' },
-  { id: 'costiricavi', label: 'Costi/Ricavi', icon: '💰' },
-  { id: 'disponibilita', label: 'Disponibilità', icon: '🙋' },
+  { id: 'preventivatore', label: 'Preventivatore', icon: 'preventivatore' },
+  { id: 'voucher', label: 'Voucher', icon: 'voucher' },
+  { id: 'prenotazioni', label: 'Prenotazioni', icon: 'prenotazioni' },
+  { id: 'disponibilita', label: 'Disponibilità', icon: 'disponibilita' },
+  { id: 'costiricavi', label: 'Costi/Ricavi', icon: 'costiricavi' },
 ];
 
 // --- REGISTRO SCHEDE/SOTTOSCHEDE PER MODULO (usato per costruire la matrice permessi in Impostazioni > Ruoli) ---
@@ -22,13 +22,14 @@ export const SCHEDE_REGISTRY = {
         ],
       },
       { id: 'sales', label: 'Vendita' },
+      { id: 'gestione', label: 'Gestione' },
       { id: 'storico', label: 'Storico Preventivi' },
     ],
   },
   voucher: {
     schede: [
       { id: 'config', label: 'Configuratore Pacchetti' },
-      { id: 'nuovo', label: 'Nuovo Voucher' },
+      { id: 'gestione', label: 'Gestione' },
       { id: 'storico', label: 'Storico Voucher' },
     ],
   },
@@ -42,7 +43,6 @@ export const SCHEDE_REGISTRY = {
           { id: 'campi', label: 'Campi' },
         ],
       },
-      { id: 'nuova', label: 'Nuova Prenotazione' },
       { id: 'gestione', label: 'Gestione' },
       { id: 'calendario', label: 'Calendario' },
       { id: 'riepiloghi', label: 'Riepiloghi' },

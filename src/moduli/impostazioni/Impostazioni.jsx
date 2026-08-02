@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient';
 import { MODULI_REGISTRY, SCHEDE_REGISTRY } from '../../lib/permessi';
+import Icona from '../../components/Icona';
 
 const permessiVuoti = () => {
   const base = {};
@@ -18,7 +19,7 @@ function MatricePermessi({ permessi, onToggleScheda, onToggleSottoscheda }) {
         const mod = permessi[modulo.id] || { schede: [], sottoschede: [] };
         return (
           <div key={modulo.id} style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '10px 12px' }}>
-            <strong>{modulo.icon} {modulo.label}</strong>
+            <strong><Icona nome={modulo.icon} /> {modulo.label}</strong>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
               {SCHEDE_REGISTRY[modulo.id].schede.map(scheda => (
                 <div key={scheda.id}>
@@ -174,10 +175,10 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
 
   return (
     <>
-      <nav className="modulo-subnav no-print">
-        <button className={`nav-btn ${currentView === 'utenti' ? 'active' : ''}`} onClick={() => setCurrentView("utenti")}>👤 Utenti</button>
-        <button className={`nav-btn ${currentView === 'ruoli' ? 'active' : ''}`} onClick={() => setCurrentView("ruoli")}>🛡️ Ruoli</button>
-        <button className={`nav-btn ${currentView === 'moduli' ? 'active' : ''}`} onClick={() => setCurrentView("moduli")}>📦 Moduli</button>
+      <nav className="modulo-subnav no-print subnav-segmented">
+        <button className={`nav-btn ${currentView === 'utenti' ? 'active' : ''}`} onClick={() => setCurrentView("utenti")}><Icona nome="utenti" />Utenti</button>
+        <button className={`nav-btn ${currentView === 'ruoli' ? 'active' : ''}`} onClick={() => setCurrentView("ruoli")}><Icona nome="ruoli" />Ruoli</button>
+        <button className={`nav-btn ${currentView === 'moduli' ? 'active' : ''}`} onClick={() => setCurrentView("moduli")}><Icona nome="moduli" />Moduli</button>
       </nav>
 
       {/* ===================== UTENTI ===================== */}
@@ -343,7 +344,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
               <tbody>
                 {MODULI_REGISTRY.map(m => (
                   <tr key={m.id} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{m.icon} {m.label}</td>
+                    <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}><Icona nome={m.icon} /> {m.label}</td>
                     <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                       <input type="checkbox" checked={!!moduliConfig[m.id]} onChange={() => toggleSperimentale(m.id, !!moduliConfig[m.id])} />
                     </td>
