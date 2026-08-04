@@ -8,6 +8,7 @@ import Icona from '../../components/Icona';
 import {
   formattaDataIT,
   calcolaGiorni,
+  oreDaOrari,
   arrotondaAllaDecina,
   moltiplicatoreTargetPer,
   isPartenzaBFM,
@@ -45,6 +46,7 @@ function Preventivatore({ user }) {
   
   const [nomeRiferimento, setNomeRiferimento] = useState("");
   const [indirizzoEmail, setIndirizzoEmail] = useState("");
+  const [telefonoRiferimento, setTelefonoRiferimento] = useState("");
 
   // --- STATI DEL FORM DI INSERIMENTO ---
   const [nuovaSede, setNuovaSede] = useState({ nome: "", citta: "", referente: "", lat: "", lon: "", costoKm: "", bfm: false });
@@ -78,6 +80,10 @@ function Preventivatore({ user }) {
   const [quantitaGonfiabili, setQuantitaGonfiabili] = useState({}); // quantità di pezzi per ciascun gonfiabile (chiave = nome)
   const [dataInizio, setDataInizio] = useState("");
   const [dataFine, setDataFine] = useState("");
+  // Orario di servizio giornaliero: è un dato del documento, non entra nel calcolo dei costi
+  // (che restano legati ai giorni di noleggio e ai trasporti).
+  const [oraInizio, setOraInizio] = useState("");
+  const [oraFine, setOraFine] = useState("");
   const [unSoloTrasporto, setUnSoloTrasporto] = useState(false);
   const [extraSelezionati, setExtraSelezionati] = useState([]);
   const [costiExtraLiberi, setCostiExtraLiberi] = useState({}); // costo inserito manualmente per gli extra "a costo libero" (chiave = id extra)
@@ -91,6 +97,9 @@ function Preventivatore({ user }) {
   const [idPreventivo, setIdPreventivo] = useState({ codice: "", dettagliLogistici: null });
   // Data di emissione del preventivo aperto: il PDF ristampato deve riportare la data originale, non quella odierna
   const [dataEmissionePreventivo, setDataEmissionePreventivo] = useState(null);
+  // Stato a database del preventivo aperto: correggere un preventivo già confermato non lo
+  // riporta a "Registrato", la conferma si toglie solo dal pulsante apposito in Gestione.
+  const [statoDocumento, setStatoDocumento] = useState("Registrato");
   const [salvataggioPreventivo, setSalvataggioPreventivo] = useState(false);
   // Stato di lavoro al momento del caricamento/salvataggio: serve per "Annulla modifiche"
   const [statoOriginale, setStatoOriginale] = useState(null);
@@ -103,6 +112,14 @@ function Preventivatore({ user }) {
   const [giocoOffertaSelezionato, setGiocoOffertaSelezionato] = useState("");
   const [soluzioneGiocoOfferta, setSoluzioneGiocoOfferta] = useState(null);
   const [venditaGiocoOfferta, setVenditaGiocoOfferta] = useState({ prezzo: "", sconto: "0" });
+
+  // --- PREZZO CONCORDATO ---
+  // Sblocca sede e costo su ogni riga di vendita, per riscrivere a mano quanto calcolato dal
+  // sistema quando con un fornitore è stato pattuito un importo diverso. Le righe che non si
+  // toccano restano quelle calcolate: l'importo digitato è il costo pieno (trasporto compreso).
+  const [prezzoConcordato, setPrezzoConcordato] = useState(false);
+  const [sediConcordate, setSediConcordate] = useState({}); // sede scelta a mano (chiave = nome gonfiabile, valore = id sede)
+  const [costiConcordati, setCostiConcordati] = useState({}); // costo pattuito (chiave = nome gonfiabile)
 
   // --- STATI PER I FILTRI DELLO STORICO ---
   const [filtroId, setFiltroId] = useState("");
@@ -137,6 +154,9 @@ function Preventivatore({ user }) {
         destinazione: p.destinazione,
         periodo: p.periodo,
         giorni: p.giorni,
+        oraInizio: p.oraInizio,
+        oraFine: p.oraFine,
+        oreNoleggio: p.oreNoleggio,
         gonfiabili: p.gonfiabili,
         extras: p.extras,
         totaleVendita: parseFloat(p.totaleVendita),
@@ -144,10 +164,12 @@ function Preventivatore({ user }) {
         stato: p.stato,
         nomeReferente: p.nomeReferente,
         emailReferente: p.emailReferente,
+        telefonoReferente: p.telefonoReferente,
         costoVivoTotale: parseFloat(p.costoVivoTotale),
         kmAndata: parseFloat(p.kmAndata),
         unSoloTrasporto: p.unSoloTrasporto,
         mostraComeOpzioni: p.mostraComeOpzioni,
+        prezzoConcordato: p.prezzoConcordato,
         mostraGiocoOfferta: p.mostraGiocoOfferta,
         giocoOfferta: p.giocoOfferta
       }));
@@ -164,6 +186,8 @@ function Preventivatore({ user }) {
     setQuantitaGonfiabili({});
     setDataInizio("");
     setDataFine("");
+    setOraInizio("");
+    setOraFine("");
     setUnSoloTrasporto(false);
     setExtraSelezionati([]);
     setCostiExtraLiberi({});
@@ -174,6 +198,7 @@ function Preventivatore({ user }) {
     setNotePreventivo("");
     setIdPreventivo({ codice: "", dettagliLogistici: null });
     setDataEmissionePreventivo(null);
+    setStatoDocumento("Registrato");
     setStatoOriginale(null);
     setVenditaGonfiabili({});
     setVenditaExtras({});
@@ -182,19 +207,24 @@ function Preventivatore({ user }) {
     setGiocoOffertaSelezionato("");
     setSoluzioneGiocoOfferta(null);
     setVenditaGiocoOfferta({ prezzo: "", sconto: "0" });
+    setPrezzoConcordato(false);
+    setSediConcordate({});
+    setCostiConcordati({});
     setNomeRiferimento("");
     setIndirizzoEmail("");
+    setTelefonoRiferimento("");
     setModalitaModifica(false);
   };
 
   // --- SNAPSHOT DELLO STATO DI LAVORO (per "Annulla modifiche") ---
   // Fotografa tutto ciò che l'utente può cambiare nel form, così da poterlo confrontare e ripristinare.
   const snapshotPreventivo = () => ({
-    serviziSelezionati, quantitaGonfiabili, dataInizio, dataFine, unSoloTrasporto,
+    serviziSelezionati, quantitaGonfiabili, dataInizio, dataFine, oraInizio, oraFine, unSoloTrasporto,
     extraSelezionati, costiExtraLiberi, destinazione, soluzioniMigliori,
     venditaGonfiabili, venditaExtras, mostraComeOpzioni, mostraGiocoOfferta,
     giocoOffertaSelezionato, soluzioneGiocoOfferta, venditaGiocoOfferta,
-    nomeRiferimento, indirizzoEmail, notePreventivo
+    prezzoConcordato, sediConcordate, costiConcordati,
+    nomeRiferimento, indirizzoEmail, telefonoRiferimento, notePreventivo
   });
 
   // Costi e chilometraggi sono ricalcolati da OSRM: variano da soli e non sono modifiche dell'utente,
@@ -215,6 +245,8 @@ function Preventivatore({ user }) {
     setQuantitaGonfiabili(snap.quantitaGonfiabili);
     setDataInizio(snap.dataInizio);
     setDataFine(snap.dataFine);
+    setOraInizio(snap.oraInizio);
+    setOraFine(snap.oraFine);
     setUnSoloTrasporto(snap.unSoloTrasporto);
     setExtraSelezionati(snap.extraSelezionati);
     setCostiExtraLiberi(snap.costiExtraLiberi);
@@ -227,8 +259,12 @@ function Preventivatore({ user }) {
     setGiocoOffertaSelezionato(snap.giocoOffertaSelezionato);
     setSoluzioneGiocoOfferta(snap.soluzioneGiocoOfferta);
     setVenditaGiocoOfferta(snap.venditaGiocoOfferta);
+    setPrezzoConcordato(snap.prezzoConcordato);
+    setSediConcordate(snap.sediConcordate);
+    setCostiConcordati(snap.costiConcordati);
     setNomeRiferimento(snap.nomeRiferimento);
     setIndirizzoEmail(snap.indirizzoEmail);
+    setTelefonoRiferimento(snap.telefonoRiferimento);
     setNotePreventivo(snap.notePreventivo);
   };
 
@@ -268,19 +304,30 @@ function Preventivatore({ user }) {
     const soluzioni = {};
     const quantita = {};
     const vendita = {};
+    // Righe a prezzo concordato: si ricostruiscono sede e importo digitati, così restano modificabili
+    const sediConc = {};
+    const costiConc = {};
     gonf.forEach(g => {
       const costoBase = parseFloat(g.costoNoleggio) || 0;
       const costoKm = parseFloat(g.costoLogistica) || 0;
+      const sedeSalvata = sedi.find(s => s.nome === g.sedePartenza);
       soluzioni[g.nome] = {
-        prodotto: gonfiabili.find(x => x.nome === g.nome) || { prezzo: 0 },
+        // L'istanza va ripresa dalla sede salvata: è quella di cui il PDF riporta la scheda tecnica
+        prodotto: gonfiabili.find(x => x.nome === g.nome && x.locationId === sedeSalvata?.id)
+          || gonfiabili.find(x => x.nome === g.nome)
+          || { prezzo: 0 },
         // Il flag "di proprietà" va riletto dall'anagrafica sedi: nel preventivo si salva solo il nome
-        partenza: { nome: g.sedePartenza || "—", bfm: !!sedi.find(s => s.nome === g.sedePartenza)?.bfm },
+        partenza: { nome: g.sedePartenza || "—", bfm: !!sedeSalvata?.bfm },
         kmAndata: parseFloat(g.kmCalcolati) || 0,
         costoKmTotale: costoKm,
         costoBaseMoltiplicato: costoBase,
         quantita: g.quantita || 1,
         totaleOpzione: costoBase + costoKm
       };
+      if (g.concordato) {
+        sediConc[g.nome] = sedeSalvata?.id || "";
+        costiConc[g.nome] = String(costoBase);
+      }
       quantita[g.nome] = g.quantita || 1;
       vendita[g.nome] = { prezzo: String(g.prezzoVendita ?? ""), sconto: "0" };
     });
@@ -325,6 +372,8 @@ function Preventivatore({ user }) {
       quantitaGonfiabili: quantita,
       dataInizio: inizio,
       dataFine: fine,
+      oraInizio: p.oraInizio || "",
+      oraFine: p.oraFine || "",
       unSoloTrasporto: !!p.unSoloTrasporto,
       extraSelezionati: idsExtra,
       costiExtraLiberi: costiLiberiEx,
@@ -333,12 +382,16 @@ function Preventivatore({ user }) {
       venditaGonfiabili: vendita,
       venditaExtras: venditaEx,
       mostraComeOpzioni: !!p.mostraComeOpzioni,
+      prezzoConcordato: !!p.prezzoConcordato,
+      sediConcordate: sediConc,
+      costiConcordati: costiConc,
       mostraGiocoOfferta: !!(p.mostraGiocoOfferta && p.giocoOfferta),
       giocoOffertaSelezionato: p.giocoOfferta?.nome || "",
       soluzioneGiocoOfferta: soluzioneGO,
       venditaGiocoOfferta: venditaGO,
       nomeRiferimento: p.nomeReferente || "",
       indirizzoEmail: p.emailReferente || "",
+      telefonoRiferimento: p.telefonoReferente || "",
       notePreventivo: p.note || ""
     };
 
@@ -346,6 +399,8 @@ function Preventivatore({ user }) {
     ripristinaSnapshot(snap);
     setStatoOriginale(snap);
     setDataEmissionePreventivo(p.dataEmissione || null);
+    // A database esistono solo "Registrato" e "Confermato": "Scaduto" è derivato e non va risalvato.
+    setStatoDocumento(p.stato === "Confermato" ? "Confermato" : "Registrato");
     setIdPreventivo({ codice, dettagliLogistici: (typeof p.id === 'object' ? p.id.dettagliLogistici : null) });
     return codice;
   };
@@ -363,6 +418,11 @@ function Preventivatore({ user }) {
 
   const giorniNoleggio = calcolaGiorni(dataInizio, dataFine);
 
+  // Conteggio ore: è la durata della fascia oraria giornaliera e resta tale anche su più giorni
+  // (2 giorni dalle 15 alle 18 sono "2 giorni · 3 ore", non 6). Null finché mancano gli orari.
+  const oreNoleggio = oreDaOrari(oraInizio, oraFine);
+  const formattaOre = (n) => String(n).replace('.', ',');
+
   // --- CALCOLO PERCORSI STRADALI ---
   // Con `mantieniEsistenti` i risultati si sommano a quelli già presenti invece di sostituirli:
   // serve sui preventivi salvati, dove i costi degli articoli originali non vanno ricalcolati.
@@ -376,7 +436,9 @@ function Preventivatore({ user }) {
 
     try {
       for (const nomeGonfiabile of nomiScelti) {
-        const istanzeProdotto = gonfiabili.filter(g => g.nome === nomeGonfiabile);
+        // Un gonfiabile a prezzo 0 non è quotabile: vincerebbe sempre il confronto fra le sedi
+        // falsando i costi. Resta selezionabile solo a prezzo concordato, digitando l'importo.
+        const istanzeProdotto = gonfiabili.filter(g => g.nome === nomeGonfiabile && (parseFloat(g.prezzo) || 0) > 0);
         const calcoliIstanze = istanzeProdotto.map(async (istanza) => {
           const sedePartenza = sedi.find(s => s.id === istanza.locationId);
           if (!sedePartenza) return null;
@@ -592,7 +654,56 @@ function Preventivatore({ user }) {
       delete clone[nome];
       return clone;
     });
+    setSediConcordate(prev => {
+      const clone = { ...prev };
+      delete clone[nome];
+      return clone;
+    });
+    setCostiConcordati(prev => {
+      const clone = { ...prev };
+      delete clone[nome];
+      return clone;
+    });
   };
+
+  // --- SOLUZIONE EFFETTIVA DI UNA RIGA ---
+  // A prezzo concordato la riga vale quanto pattuito a mano: sede scelta dall'utente e costo pieno
+  // digitato, senza km né trasporto. Finché non si tocca nulla resta valida la soluzione calcolata,
+  // così le righe già quotate non vanno ridigitate. Ovunque servano i costi di un gonfiabile si
+  // passa da qui, non da soluzioniMigliori.
+  const soluzioneDi = (nome) => {
+    const automatica = soluzioniMigliori[nome];
+    if (!prezzoConcordato) return automatica;
+
+    const idSede = sediConcordate[nome];
+    const costoDigitato = costiConcordati[nome];
+    const sedeScelta = sedi.find(s => s.id === idSede);
+    // Nessuna scelta manuale su questa riga: vale quanto calcolato dal sistema
+    if (!sedeScelta && (costoDigitato === undefined || costoDigitato === "")) return automatica;
+
+    const partenza = sedeScelta || automatica?.partenza || { nome: "—", bfm: false };
+    const prodotto = gonfiabili.find(g => g.nome === nome && g.locationId === idSede)
+      || automatica?.prodotto
+      || gonfiabili.find(g => g.nome === nome)
+      || { prezzo: 0 };
+    const costo = parseFloat(costoDigitato) || 0;
+    return {
+      prodotto,
+      partenza,
+      kmAndata: 0,
+      costoKmTotale: 0,
+      costoBaseMoltiplicato: costo,
+      quantita: quantitaGonfiabili[nome] || 1,
+      totaleOpzione: costo,
+      concordata: true
+    };
+  };
+
+  // L'arrotondamento alla decina serve a smussare i costi stimati dal sistema. Un costo concordato
+  // è invece un importo pattuito con il fornitore e vale esattamente quello: non si arrotonda.
+  const costoVivoArrotondato = (sol) => sol?.concordata ? costoVivoDi(sol) : arrotondaAllaDecina(costoVivoDi(sol));
+  // Base su cui si propone il prezzo di vendita (il prezzo proposto resta arrotondato alla decina).
+  const baseCalcoloPrezzo = (sol) => !sol ? 0 : (sol.concordata ? sol.totaleOpzione : arrotondaAllaDecina(sol.totaleOpzione));
 
   // --- CALCOLI TOTALI E ARROTONDAMENTI ---
   // Per i gonfiabili in partenza da una sede di proprietà (flag BFM) il prezzo del gonfiabile concorre
@@ -600,8 +711,8 @@ function Preventivatore({ user }) {
   // conta unicamente la logistica (vedi costoVivoDi).
   let totaleComplessivoCostiBase = 0;
   serviziSelezionati.forEach(nome => {
-    const sol = soluzioniMigliori[nome];
-    if (sol) totaleComplessivoCostiBase += arrotondaAllaDecina(costoVivoDi(sol));
+    const sol = soluzioneDi(nome);
+    if (sol) totaleComplessivoCostiBase += costoVivoArrotondato(sol);
   });
   
   // Per gli extra "a costo libero" il costo non è quello configurato in anagrafica,
@@ -617,8 +728,9 @@ function Preventivatore({ user }) {
 
   let totaleVenditaComplessivo = 0;
   serviziSelezionati.forEach(nome => {
-    const cost = soluzioniMigliori[nome] ? arrotondaAllaDecina(soluzioniMigliori[nome].totaleOpzione) : 0;
-    const defaultPrezzo = arrotondaAllaDecina(cost * moltiplicatoreTargetPer(soluzioniMigliori[nome]?.partenza));
+    const sol = soluzioneDi(nome);
+    const cost = baseCalcoloPrezzo(sol);
+    const defaultPrezzo = arrotondaAllaDecina(cost * moltiplicatoreTargetPer(sol?.partenza, sol?.concordata));
     
     const vPrezzo = (venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "") 
       ? parseFloat(venditaGonfiabili[nome].prezzo) 
@@ -668,23 +780,25 @@ function Preventivatore({ user }) {
     }
 
     const dettagliGonfiabili = serviziSelezionati.map(nome => {
-      const sol = soluzioniMigliori[nome];
-      const costTotal = sol ? arrotondaAllaDecina(sol.totaleOpzione) : 0;
-      const defaultPrezzo = arrotondaAllaDecina(costTotal * moltiplicatoreTargetPer(sol?.partenza));
-      
-      const vPrezzo = (venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "") 
-        ? parseFloat(venditaGonfiabili[nome].prezzo) 
+      const sol = soluzioneDi(nome);
+      const costTotal = baseCalcoloPrezzo(sol);
+      const defaultPrezzo = arrotondaAllaDecina(costTotal * moltiplicatoreTargetPer(sol?.partenza, sol?.concordata));
+
+      const vPrezzo = (venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "")
+        ? parseFloat(venditaGonfiabili[nome].prezzo)
         : defaultPrezzo;
       const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
-      
+
       return {
         nome,
         quantita: quantitaGonfiabili[nome] || 1,
         sedePartenza: sol?.partenza?.nome || "",
-        // Sedi di proprietà: il noleggio non è un costo, resta a zero
-        costoNoleggio: isPartenzaBFM(sol?.partenza) ? 0 : (sol?.costoBaseMoltiplicato || 0),
+        // Il costo concordato è pattuito col fornitore: si salva com'è, anche da sede di proprietà.
+        // Sedi di proprietà quotate dal sistema: il noleggio non è un costo, resta a zero.
+        costoNoleggio: sol?.concordata ? (sol.costoBaseMoltiplicato || 0) : (isPartenzaBFM(sol?.partenza) ? 0 : (sol?.costoBaseMoltiplicato || 0)),
         costoLogistica: sol?.costoKmTotale || 0,
         kmCalcolati: sol?.kmAndata || 0,
+        concordato: !!sol?.concordata,
         prezzoVendita: vPrezzo * (1 - vSconto / 100)
       };
     });
@@ -707,7 +821,7 @@ function Preventivatore({ user }) {
     });
 
     // Calcolo del kilometraggio totale andata per il database
-    const totaleKmAndata = serviziSelezionati.reduce((acc, nome) => acc + (soluzioniMigliori[nome]?.kmAndata || 0), 0);
+    const totaleKmAndata = serviziSelezionati.reduce((acc, nome) => acc + (soluzioneDi(nome)?.kmAndata || 0), 0);
 
     // Snapshot del gioco in offerta (se attivo)
     let giocoOffertaSnap = null;
@@ -734,8 +848,8 @@ function Preventivatore({ user }) {
     const dettagliLogistici = serviziSelezionati.map(nome => ({
       nome,
       quantita: quantitaGonfiabili[nome] || 1,
-      kmAndata: soluzioniMigliori[nome]?.kmAndata,
-      costoVivoTotale: costoVivoDi(soluzioniMigliori[nome])
+      kmAndata: soluzioneDi(nome)?.kmAndata,
+      costoVivoTotale: costoVivoDi(soluzioneDi(nome))
     }));
 
     // La data di emissione è quella del primo salvataggio: un preventivo riaperto e corretto
@@ -748,18 +862,23 @@ function Preventivatore({ user }) {
       destinazione: destinazione?.nome || "N/D",
       periodo: `Dal ${formattaDataIT(dataInizio)} al ${formattaDataIT(dataFine)}`,
       giorni: giorniNoleggio,
+      oraInizio: oraInizio || null,
+      oraFine: oraFine || null,
+      oreNoleggio,
       gonfiabili: dettagliGonfiabili,
       extras: dettagliExtra,
       totaleVendita: totaleVenditaComplessivo,
       note: notePreventivo,
-      stato: "Registrato",
+      stato: statoDocumento,
       nomeReferente: nomeRiferimento,
       emailReferente: indirizzoEmail,
+      telefonoReferente: telefonoRiferimento,
       costoVivoTotale: totaleComplessivoCostoFlotta,
       kmAndata: totaleKmAndata, // Salvataggio kilometraggio
       dettagliLogistici,
       unSoloTrasporto: unSoloTrasporto,
       mostraComeOpzioni: mostraComeOpzioni,
+      prezzoConcordato: prezzoConcordato,
       mostraGiocoOfferta: mostraGiocoOfferta,
       giocoOfferta: giocoOffertaSnap
     };
@@ -857,8 +976,11 @@ function Preventivatore({ user }) {
         DataEmissione: formattaDataIT(item.dataEmissione),
         Referente: item.nomeReferente || "",
         Email: item.emailReferente || "",
+        Telefono: item.telefonoReferente || "",
         Destinazione: item.destinazione,
         Periodo: item.periodo,
+        Orario: item.oraInizio && item.oraFine ? `${item.oraInizio} - ${item.oraFine}` : "",
+        Ore: item.oreNoleggio != null ? parseFloat(item.oreNoleggio) : "",
         TotaleVendita: item.totaleVendita.toFixed(2),
         DettaglioCostiVivi: dettaglioCostiVivi,
         CostoVivoTotale: (item.costoVivoTotale || 0).toFixed(2),
@@ -939,7 +1061,18 @@ function Preventivatore({ user }) {
   const rimuoviExtra = async (id) => { await supabase.from('extras').delete().eq('id', id); fetchData(); };
 
   const nomiUniciGonfiabili = Array.from(new Set(gonfiabili.map(g => g.nome)));
-  const gonfiabiliDisponibiliInDropdown = nomiUniciGonfiabili.filter(nome => !serviziSelezionati.includes(nome));
+  // Un gonfiabile presente solo a prezzo 0 non è quotabile dal sistema: compare fra i selezionabili
+  // soltanto a prezzo concordato, dove il costo lo si digita a mano.
+  const quotabileAutomaticamente = (nome) => gonfiabili.some(g => g.nome === nome && (parseFloat(g.prezzo) || 0) > 0);
+  const gonfiabiliDisponibiliInDropdown = nomiUniciGonfiabili
+    .filter(nome => !serviziSelezionati.includes(nome))
+    .filter(nome => prezzoConcordato || quotabileAutomaticamente(nome));
+
+  // Sedi presso cui esiste un dato gonfiabile: sono i fornitori con cui si può pattuire il prezzo
+  const sediDiGonfiabile = (nome) => gonfiabili
+    .filter(g => g.nome === nome)
+    .map(g => sedi.find(s => s.id === g.locationId))
+    .filter(Boolean);
 
   // ====================== BLOCCHI RIUSABILI DEL PREVENTIVO ======================
   // Gli stessi blocchi compongono sia le schede a sé stanti (Preventivatore / Vendita)
@@ -947,15 +1080,31 @@ function Preventivatore({ user }) {
 
   const renderDateLogistica = () => (
     <>
-      <div className="date-grid">
+      {/* Le due date appaiate sulla prima riga, gli orari corrispondenti su quella sotto */}
+      <div className="date-grid coppia">
         <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Inizio
           <input type="date" value={dataInizio} onChange={(e) => setDataInizio(e.target.value)} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Fine
           <input type="date" value={dataFine} onChange={(e) => setDataFine(e.target.value)} />
         </label>
-        <div style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', color: '#555' }}>Durata
-          <div className="valore">{giorniNoleggio} {giorniNoleggio === 1 ? 'giorno' : 'giorni'}</div>
+      </div>
+      <div className="date-grid coppia">
+        <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Ora inizio
+          <input type="time" value={oraInizio} onChange={(e) => setOraInizio(e.target.value)} />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Ora fine
+          <input type="time" value={oraFine} onChange={(e) => setOraFine(e.target.value)} />
+        </label>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', color: '#555', marginTop: '12px' }}>Durata
+        <div className="valore">
+          {giorniNoleggio} {giorniNoleggio === 1 ? 'giorno' : 'giorni'}
+          {oreNoleggio != null && (
+            <span style={{ color: '#64748b', fontWeight: 500 }}>
+              {` · ${formattaOre(oreNoleggio)} ${oreNoleggio === 1 ? 'ora' : 'ore'}`}
+            </span>
+          )}
         </div>
       </div>
       <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, marginTop: '12px', cursor: 'pointer' }}>
@@ -1061,7 +1210,7 @@ function Preventivatore({ user }) {
     <>
       <div className="blocco-dettaglio-calcolo">
         {serviziSelezionati.map(nome => {
-          const sol = soluzioniMigliori[nome];
+          const sol = soluzioneDi(nome);
           return (
             <div key={nome} className="scheda-riepilogo-prodotto">
               <h4>{nome}</h4>
@@ -1069,8 +1218,15 @@ function Preventivatore({ user }) {
                 <div className="voci-prezzo">
                   <p>Magazzino: <em>{sol.partenza.nome}</em></p>
                   <p>Quantità: <span>{sol.quantita || 1} pz</span></p>
-                  <p>• Noleggio ({sol.quantita || 1} × €{parseFloat(sol.prodotto.prezzo).toFixed(2)} × {giorniNoleggio}gg): <span>€{(isPartenzaBFM(sol.partenza) ? 0 : sol.costoBaseMoltiplicato).toFixed(2)}</span></p>
-                  <p>• Logistica ({sol.kmAndata.toFixed(1)} km):<span>€{sol.costoKmTotale.toFixed(2)}</span></p>
+                  {/* Su una riga concordata non c'è nessuna scomposizione: vale l'importo pattuito */}
+                  {sol.concordata ? (
+                    <p>• Costo concordato: <span>€{(sol.costoBaseMoltiplicato || 0).toFixed(2)}</span></p>
+                  ) : (
+                    <>
+                      <p>• Noleggio ({sol.quantita || 1} × €{parseFloat(sol.prodotto.prezzo).toFixed(2)} × {giorniNoleggio}g): <span>€{(isPartenzaBFM(sol.partenza) ? 0 : sol.costoBaseMoltiplicato).toFixed(2)}</span></p>
+                      <p>• Logistica ({sol.kmAndata.toFixed(1)} km):<span>€{sol.costoKmTotale.toFixed(2)}</span></p>
+                    </>
+                  )}
                   <p className="subtotale-prodotto">Subtotale: <strong>€{costoVivoDi(sol).toFixed(2)}</strong></p>
                 </div>
               ) : <p className="avviso-calcolo">Inserisci la destinazione per calcolare i costi.</p>}
@@ -1097,9 +1253,9 @@ function Preventivatore({ user }) {
   // Per le sedi di proprietà il prezzo di anagrafica è già di vendita, quindi la proposta parte
   // dal totale (noleggio + logistica) anche se come costo il noleggio resta a zero.
   const rigaVenditaGonfiabile = (nome) => {
-    const sol = soluzioniMigliori[nome];
-    const costo = arrotondaAllaDecina(costoVivoDi(sol));
-    const proposto = arrotondaAllaDecina((sol ? arrotondaAllaDecina(sol.totaleOpzione) : 0) * moltiplicatoreTargetPer(sol?.partenza));
+    const sol = soluzioneDi(nome);
+    const costo = costoVivoArrotondato(sol);
+    const proposto = arrotondaAllaDecina(baseCalcoloPrezzo(sol) * moltiplicatoreTargetPer(sol?.partenza, sol?.concordata));
     const prezzo = venditaGonfiabili[nome]?.prezzo ?? proposto.toFixed(2);
     const sconto = venditaGonfiabili[nome]?.sconto ?? "0";
     const effettivo = prezzo !== "" ? parseFloat(prezzo) : proposto;
@@ -1135,14 +1291,23 @@ function Preventivatore({ user }) {
 
     // Coppia di righe di un gioco: `chiave` distingue i gonfiabili del preventivo (per nome)
     // dal gioco in offerta, che ha stato e regole proprie ma si presenta allo stesso modo.
-    const righeGioco = ({ chiave, nome, sol, costo, proposto, prezzo, sconto, totale, sottoCosto, qta, onQta, onPrezzo, onSconto, onRimuovi, titoloRimuovi }) => {
-      const noleggio = sol ? (isPartenzaBFM(sol.partenza) ? 0 : (sol.costoBaseMoltiplicato || 0)) : null;
+    const righeGioco = ({ chiave, nome, sol, costo, proposto, prezzo, sconto, totale, sottoCosto, qta, onQta, onPrezzo, onSconto, onRimuovi, titoloRimuovi, concordabile }) => {
+      const noleggio = sol ? (sol.concordata ? (sol.costoBaseMoltiplicato || 0) : (isPartenzaBFM(sol.partenza) ? 0 : (sol.costoBaseMoltiplicato || 0))) : null;
       return (
         <Fragment key={chiave}>
           <tr className="riga-articolo">
             <td>
               <strong>{nome}</strong>
-              <div className="secondaria">{sol?.partenza?.nome ? `da ${sol.partenza.nome}` : 'sede non definita'}</div>
+              {/* A prezzo concordato la sede si sceglie: è il fornitore con cui si è pattuito l'importo */}
+              {concordabile ? (
+                <select className="select-sede-concordata" value={sediConcordate[nome] ?? ""}
+                  onChange={(e) => setSediConcordate(prev => ({ ...prev, [nome]: e.target.value }))}>
+                  <option value="">{sol?.partenza?.nome ? `da ${sol.partenza.nome} (calcolata)` : "Scegli il fornitore…"}</option>
+                  {sediDiGonfiabile(nome).map(s => <option key={s.id} value={s.id}>da {s.nome}</option>)}
+                </select>
+              ) : (
+                <div className="secondaria">{sol?.partenza?.nome ? `da ${sol.partenza.nome}` : 'sede non definita'}</div>
+              )}
             </td>
             <td className="num">
               {onQta ? (
@@ -1154,8 +1319,9 @@ function Preventivatore({ user }) {
                 </div>
               ) : <span className="secondaria">{qta}</span>}
             </td>
-            <td className="num secondaria">{sol ? sol.kmAndata.toFixed(1) : '—'}</td>
-            <td className="num secondaria">{sol ? `€${(sol.costoKmTotale || 0).toFixed(2)}` : '—'}</td>
+            {/* Su una riga concordata km e trasporto non si calcolano: l'importo pattuito è già pieno */}
+            <td className="num secondaria">{!sol || sol.concordata ? '—' : sol.kmAndata.toFixed(1)}</td>
+            <td className="num secondaria">{!sol || sol.concordata ? '—' : `€${(sol.costoKmTotale || 0).toFixed(2)}`}</td>
             <td className="num secondaria">{sol ? `€${noleggio.toFixed(2)}` : '—'}</td>
             <td className="num">
               <button type="button" className="btn-icon-action danger" aria-label={titoloRimuovi} title={titoloRimuovi} onClick={onRimuovi}>
@@ -1165,7 +1331,12 @@ function Preventivatore({ user }) {
           </tr>
           <tr className="riga-prezzi">
             <td>{sottoCosto && <span className="warning-testo">Prezzo sotto costo</span>}</td>
-            {cellaEtichettata("Costo vivo", sol ? <strong>€{costo.toFixed(2)}</strong> : <em className="secondaria">da calcolare</em>)}
+            {cellaEtichettata("Costo vivo",
+              concordabile
+                ? <input type="number" step="any" className="input-vendita" placeholder={sol && !sol.concordata ? costo.toFixed(2) : "0.00"}
+                    value={costiConcordati[nome] ?? ""}
+                    onChange={(e) => setCostiConcordati(prev => ({ ...prev, [nome]: e.target.value }))} />
+                : (sol ? <strong>€{costo.toFixed(2)}</strong> : <em className="secondaria">da calcolare</em>))}
             {cellaEtichettata("Prezzo €",
               <input type="number" step="any" placeholder={proposto.toFixed(2)} value={prezzo}
                 className={sottoCosto ? "input-vendita error" : "input-vendita"}
@@ -1214,7 +1385,9 @@ function Preventivatore({ user }) {
                 onPrezzo: (v) => setVenditaGonfiabili(prev => ({ ...prev, [nome]: { ...prev[nome], prezzo: v } })),
                 onSconto: (v) => setVenditaGonfiabili(prev => ({ ...prev, [nome]: { ...prev[nome], sconto: v } })),
                 onRimuovi: () => rimuoviNomeGonfiabile(nome),
-                titoloRimuovi: "Rimuovi"
+                titoloRimuovi: "Rimuovi",
+                // Solo i giochi del preventivo si concordano: il gioco in offerta resta come calcolato
+                concordabile: prezzoConcordato
               });
             })}
 
@@ -1341,6 +1514,19 @@ function Preventivatore({ user }) {
   const renderSezioneVendita = () => (
     <>
       <div className="opzioni-vendita">
+        {/* Prima opzione della sezione: sblocca sede e costo su ogni riga della tabella sotto */}
+        <label className="opzione-riga">
+          <input type="checkbox" checked={prezzoConcordato} onChange={(e) => setPrezzoConcordato(e.target.checked)} />
+          Prezzo concordato
+        </label>
+        {prezzoConcordato && (
+          <p className="descrizione-pagina">
+            Su ogni riga puoi scegliere il fornitore e digitare il costo pattuito, che sostituisce quello calcolato
+            (è il costo pieno: km e trasporto non vengono conteggiati). Le righe che non tocchi restano quelle calcolate
+            dal sistema. Sono selezionabili anche i giochi a prezzo 0, per i quali il costo va indicato a mano.
+          </p>
+        )}
+
         <label className="opzione-riga">
           <input type="checkbox" checked={mostraComeOpzioni} onChange={(e) => setMostraComeOpzioni(e.target.checked)} />
           Presenta i gonfiabili come opzioni alternative
@@ -1369,6 +1555,9 @@ function Preventivatore({ user }) {
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo e-mail
           <input type="email" value={indirizzoEmail} onChange={(e) => setIndirizzoEmail(e.target.value)} placeholder="email@esempio.com" />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Telefono referente
+          <input type="tel" value={telefonoRiferimento} onChange={(e) => setTelefonoRiferimento(e.target.value)} placeholder="333 1234567" />
         </label>
       </div>
       <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Note al preventivo
@@ -1479,7 +1668,11 @@ function Preventivatore({ user }) {
   // prenotazioni (griglia a due colonne in alto, sezioni a tutta larghezza sotto).
   const renderFormPreventivo = () => (
     <div className="schermata-inserimento no-print form-pren form-pren-compatto">
-      <h2 style={{ margin: 0 }}>{idPreventivo.codice ? `Modifica Preventivo ${idPreventivo.codice}` : "Nuovo Preventivo"}</h2>
+      <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {idPreventivo.codice ? `Modifica Preventivo ${idPreventivo.codice}` : "Nuovo Preventivo"}
+        {/* Lo stato resta a vista: così è chiaro che salvando un confermato la conferma non si perde */}
+        {idPreventivo.codice && <span className={`badge-stato ${statoDocumento.toLowerCase()}`}>{statoDocumento}</span>}
+      </h2>
 
       <div className="form-top-grid">
         {/* Noleggio: quando e dove */}
@@ -1500,13 +1693,14 @@ function Preventivatore({ user }) {
         </div>
       </div>
 
-      {/* Vendita: articoli, costi e prezzi in un'unica tabella, da cui si aggiunge e si rimuove */}
-      {puoVedere(user, 'preventivatore', 'sales') && (
-        <div className="sezione">
-          <h2>Vendita</h2>
-          {renderSezioneVendita()}
-        </div>
-      )}
+      {/* Vendita: articoli, costi e prezzi in un'unica tabella, da cui si aggiunge e si rimuove.
+          Nessun permesso a parte: è il cuore del form, chi può aprire un preventivo la vede.
+          Prima dipendeva dal permesso della vecchia scheda "Vendita", che non esiste più in
+          navigazione: i ruoli senza quella spunta si ritrovavano un form monco. */}
+      <div className="sezione">
+        <h2>Vendita</h2>
+        {renderSezioneVendita()}
+      </div>
 
       {renderAzioniPreventivo(true)}
     </div>
@@ -1531,7 +1725,11 @@ function Preventivatore({ user }) {
             {formattaDataIT(p.dataEmissione)}
           </td>
           <td style={{ padding: '8px 10px', color: '#444', fontSize: '0.82rem' }}>
-            {(p.destinazione || '').split(',').pop().trim()} <span style={{ color: '#94a3b8' }}>- {p.giorni ? `${p.giorni} gg` : '—'}</span>
+            {(p.destinazione || '').split(',').pop().trim()} <span style={{ color: '#94a3b8' }}>
+              - {p.giorni ? `${p.giorni} g` : '—'}
+              {/* Le ore compaiono solo sui preventivi in cui è stata indicata la fascia oraria */}
+              {p.oreNoleggio != null && ` · ${formattaOre(parseFloat(p.oreNoleggio))} h`}
+            </span>
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.8rem', color: '#111' }}>
             {p.nomeReferente || <span style={{ color: '#999' }}>—</span>}
@@ -1555,7 +1753,14 @@ function Preventivatore({ user }) {
                   <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${stato.toLowerCase()}`}>{stato}</span></div>
                   <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{p.destinazione || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Periodo </span>{p.periodo || '—'}</div>
+                  {p.oraInizio && p.oraFine && (
+                    <div>
+                      <span style={{ color: '#94a3b8' }}>Orario </span>{p.oraInizio} – {p.oraFine}
+                      {p.oreNoleggio != null && <span style={{ color: '#94a3b8' }}> ({formattaOre(parseFloat(p.oreNoleggio))} h)</span>}
+                    </div>
+                  )}
                   {p.emailReferente && <div><span style={{ color: '#94a3b8' }}>Email </span>{p.emailReferente}</div>}
+                  {p.telefonoReferente && <div><span style={{ color: '#94a3b8' }}>Telefono </span>{p.telefonoReferente}</div>}
 
                   {(p.gonfiabili && p.gonfiabili.length > 0) ? (
                     <table className="tabella-dettaglio-gonfiabili" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', marginTop: '4px', background: '#fff' }}>
@@ -2139,6 +2344,7 @@ function Preventivatore({ user }) {
                   
                   {nomeRiferimento && <p style={{ margin: '2px 0', color: '#333', fontSize: '0.95rem' }}>Alla cortese attenzione di: <strong>{nomeRiferimento}</strong></p>}
                   {indirizzoEmail && <p style={{ margin: '2px 0', color: '#333', fontSize: '0.95rem' }}>E-mail referente: <strong>{indirizzoEmail}</strong></p>}
+                  {telefonoRiferimento && <p style={{ margin: '2px 0', color: '#333', fontSize: '0.95rem' }}>Telefono referente: <strong>{telefonoRiferimento}</strong></p>}
 
                   <p style={{ margin: '2px 0', color: '#c62828', fontSize: '0.95rem' }}>
                     Validità offerta: <strong>{GIORNI_VALIDITA_PREVENTIVO} giorni (scadenza: {new Date(dataEmissioneDocumento.getTime() + GIORNI_VALIDITA_PREVENTIVO * 24 * 60 * 60 * 1000).toLocaleDateString('it-IT')})</strong>
@@ -2149,7 +2355,10 @@ function Preventivatore({ user }) {
               </div>
 
               <div className="dati-noleggio-preventivo" style={{ marginBottom: '15px', padding: '10px 0', borderBottom: '1px solid #eee', textAlign: 'left' }}>
-                <p style={{ margin: '4px 0' }}><strong>Periodo di Riferimento:</strong> dal {formattaDataIT(dataInizio)} al {formattaDataIT(dataFine)} ({giorniNoleggio} gg)</p>
+                <p style={{ margin: '4px 0' }}><strong>Periodo di Riferimento:</strong> dal {formattaDataIT(dataInizio)} al {formattaDataIT(dataFine)} ({giorniNoleggio} g)</p>
+                {oraInizio && oraFine && (
+                  <p style={{ margin: '4px 0' }}><strong>Orario:</strong> dalle {oraInizio} alle {oraFine} ({formattaOre(oreNoleggio)} {oreNoleggio === 1 ? 'ora' : 'ore'})</p>
+                )}
                 <p style={{ margin: '4px 0' }}><strong>Luogo di Consegna:</strong> {destinazione?.nome}</p>
               </div>
 
@@ -2168,15 +2377,17 @@ function Preventivatore({ user }) {
                     Di seguito le proposte tra cui è possibile scegliere:
                   </p>
                   {serviziSelezionati.map(nome => {
-                    const sol = soluzioniMigliori[nome];
+                    const sol = soluzioneDi(nome);
                     if (!sol) return null;
-                    const costTotal = arrotondaAllaDecina(sol.totaleOpzione);
-                    const defaultPrezzo = arrotondaAllaDecina(costTotal * moltiplicatoreTargetPer(sol?.partenza));
+                    const costTotal = baseCalcoloPrezzo(sol);
+                    const defaultPrezzo = arrotondaAllaDecina(costTotal * moltiplicatoreTargetPer(sol?.partenza, sol?.concordata));
                     const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : defaultPrezzo;
                     const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
                     const prezzoVenditaFinale = vPrezzo * (1 - vSconto / 100);
 
-                    const gonfiabileCorrente = gonfiabili.find(g => g.nome === nome) || {};
+                    // Le schede tecniche sono per sede: vale l'istanza da cui il gioco parte davvero
+                    // (scelta dal calcolo o indicata a mano col prezzo concordato), non la prima per nome.
+                    const gonfiabileCorrente = sol.prodotto || gonfiabili.find(g => g.nome === nome) || {};
                     const haParametri = gonfiabileCorrente.giocatori || gonfiabileCorrente.etaConsigliata || gonfiabileCorrente.dimensioni || gonfiabileCorrente.superficie || gonfiabileCorrente.alimentazione || gonfiabileCorrente.tempoMontaggio;
 
                     return (
@@ -2255,15 +2466,17 @@ function Preventivatore({ user }) {
                 </thead>
                 <tbody>
                   {serviziSelezionati.map(nome => {
-                    const sol = soluzioniMigliori[nome];
+                    const sol = soluzioneDi(nome);
                     if (!sol) return null;
-                    const costTotal = arrotondaAllaDecina(sol.totaleOpzione);
-                    const defaultPrezzo = arrotondaAllaDecina(costTotal * moltiplicatoreTargetPer(sol?.partenza));
+                    const costTotal = baseCalcoloPrezzo(sol);
+                    const defaultPrezzo = arrotondaAllaDecina(costTotal * moltiplicatoreTargetPer(sol?.partenza, sol?.concordata));
                     const vPrezzo = venditaGonfiabili[nome]?.prezzo !== undefined && venditaGonfiabili[nome]?.prezzo !== "" ? parseFloat(venditaGonfiabili[nome].prezzo) : defaultPrezzo;
                     const vSconto = parseFloat(venditaGonfiabili[nome]?.sconto) || 0;
                     const prezzoVenditaFinale = vPrezzo * (1 - vSconto / 100);
 
-                    const gonfiabileCorrente = gonfiabili.find(g => g.nome === nome) || {};
+                    // Le schede tecniche sono per sede: vale l'istanza da cui il gioco parte davvero
+                    // (scelta dal calcolo o indicata a mano col prezzo concordato), non la prima per nome.
+                    const gonfiabileCorrente = sol.prodotto || gonfiabili.find(g => g.nome === nome) || {};
                     const haParametri = gonfiabileCorrente.giocatori || gonfiabileCorrente.etaConsigliata || gonfiabileCorrente.dimensioni || gonfiabileCorrente.superficie || gonfiabileCorrente.alimentazione || gonfiabileCorrente.tempoMontaggio;
 
                     return (

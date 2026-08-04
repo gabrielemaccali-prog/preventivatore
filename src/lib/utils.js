@@ -16,6 +16,21 @@ export const calcolaGiorni = (dataInizio, dataFine) => {
   return diffTime < 0 ? 1 : Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
 };
 
+// Ore di servizio ricavate dagli orari giornalieri (gestisce l'attraversamento della mezzanotte).
+// Restituisce null finché non sono stati indicati entrambi gli orari.
+export const oreDaOrari = (oraInizio, oraFine) => {
+  const inMinuti = (hhmm) => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+    return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+  };
+  const a = inMinuti(oraInizio);
+  const b = inMinuti(oraFine);
+  if (a == null || b == null) return null;
+  let diff = b - a;
+  if (diff <= 0) diff += 24 * 60;
+  return Math.round((diff / 60) * 100) / 100;
+};
+
 // Arrotondamento automatico alla decina superiore
 export const arrotondaAllaDecina = (valore) => {
   return Math.ceil(valore / 10) * 10;
@@ -26,12 +41,17 @@ export const arrotondaAllaDecina = (valore) => {
 // e il costo del gonfiabile resta a zero.
 export const isPartenzaBFM = (partenza) => !!partenza?.bfm;
 
-export const moltiplicatoreTargetPer = (partenza) => isPartenzaBFM(partenza) ? 1 : MOLTIPLICATORE_TARGET;
+// Su una riga a prezzo concordato l'importo è stato pattuito con il fornitore, quindi è un costo
+// a tutti gli effetti anche se la sede è di proprietà: si applica il moltiplicatore pieno.
+export const moltiplicatoreTargetPer = (partenza, concordata = false) =>
+  (!concordata && isPartenzaBFM(partenza)) ? 1 : MOLTIPLICATORE_TARGET;
 
 // Costo vivo di una soluzione logistica: per le sedi di proprietà il prezzo del gonfiabile
 // non è un costo (resta a zero), mentre la logistica concorre sempre.
 export const costoVivoDi = (sol) => {
   if (!sol) return 0;
+  // Il costo concordato a mano vale così com'è: comprende già trasporto e noleggio.
+  if (sol.concordata) return sol.totaleOpzione || 0;
   return isPartenzaBFM(sol.partenza) ? (sol.costoKmTotale || 0) : (sol.totaleOpzione || 0);
 };
 

@@ -14,7 +14,8 @@ const UTENTE_VUOTO = { username: "", password: "", ruolo: "", bubbler: false };
 
 function MatricePermessi({ permessi, onToggleScheda, onToggleSottoscheda }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+    // Due colonne quando c'è spazio (modale da 700px), una sola su schermi stretti.
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', alignItems: 'start' }}>
       {MODULI_REGISTRY.map(modulo => {
         const mod = permessi[modulo.id] || { schede: [], sottoschede: [] };
         return (
@@ -187,6 +188,32 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
           <h2>Utenti</h2>
           <p className="descrizione-pagina">Gestisci gli utenti dell'applicazione e assegna loro un ruolo.</p>
 
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0', gap: '10px', flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0 }}>Elenco ({utenti.length})</h3>
+            <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={() => setShowFormUtente(true)}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
+          </div>
+
+          {showFormUtente && (
+            <div className="modal-form-backdrop" onClick={() => setShowFormUtente(false)}>
+              <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
+                <button type="button" className="modal-form-close" onClick={() => setShowFormUtente(false)} aria-label="Chiudi">✕</button>
+                <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Nuovo Utente</h3>
+                <form onSubmit={addUtente} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <input type="text" placeholder="Username" value={nuovoUtente.username} onChange={(e) => setNuovoUtente({ ...nuovoUtente, username: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <input type="text" placeholder="Password" value={nuovoUtente.password} onChange={(e) => setNuovoUtente({ ...nuovoUtente, password: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <select value={nuovoUtente.ruolo} onChange={(e) => setNuovoUtente({ ...nuovoUtente, ruolo: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                    <option value="">Seleziona ruolo...</option>
+                    {ruoli.map(r => <option key={r.id} value={r.nome}>{r.nome}</option>)}
+                  </select>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
+                    <input type="checkbox" checked={!!nuovoUtente.bubbler} onChange={(e) => setNuovoUtente({ ...nuovoUtente, bubbler: e.target.checked })} /> Bubbler
+                  </label>
+                  <button type="submit" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Salva Utente</button>
+                </form>
+              </div>
+            </div>
+          )}
+
           <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible', overflowX: 'auto' }}>
             <table style={{ width: '100%', minWidth: '550px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead>
@@ -215,8 +242,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                            <button className="btn-salva-inline" onClick={salvaModificaUtente} style={{ fontSize: '0.8rem', padding: '4px 8px' }}>Salva</button>
-                            <button className="btn-annulla-inline" onClick={() => setIdUtenteInModifica(null)} style={{ fontSize: '0.8rem', padding: '4px 8px' }}>Annulla</button>
+                            <button className="btn-accent-inline" onClick={salvaModificaUtente} style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px' }}><Icona nome="salva" size={14} style={{ marginRight: '4px' }} />Salva</button>
+                            <button className="btn-outline-annulla" onClick={() => setIdUtenteInModifica(null)} style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px', borderRadius: '4px' }}><Icona nome="annulla" size={14} style={{ marginRight: '4px' }} />Annulla</button>
                           </div>
                         </td>
                       </>
@@ -230,8 +257,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                            <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, password: u.password, ruolo: u.ruolo, bubbler: !!u.bubbler }); }}>Modifica</button>
-                            <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviUtente(u)}>Elimina</button>
+                            <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, password: u.password, ruolo: u.ruolo, bubbler: !!u.bubbler }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                            <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviUtente(u)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                           </div>
                         </td>
                       </>
@@ -243,27 +270,6 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
             </table>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '18px 0 12px 0' }}>
-            <button className="btn-preventivo" style={{ width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' }} onClick={() => setShowFormUtente(v => !v)}>➕ Nuovo utente</button>
-          </div>
-
-          {showFormUtente && (
-            <div className="admin-form-box" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Nuovo Utente</h3>
-              <form onSubmit={addUtente} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <input type="text" placeholder="Username" value={nuovoUtente.username} onChange={(e) => setNuovoUtente({ ...nuovoUtente, username: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <input type="text" placeholder="Password" value={nuovoUtente.password} onChange={(e) => setNuovoUtente({ ...nuovoUtente, password: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <select value={nuovoUtente.ruolo} onChange={(e) => setNuovoUtente({ ...nuovoUtente, ruolo: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}>
-                  <option value="">Seleziona ruolo...</option>
-                  {ruoli.map(r => <option key={r.id} value={r.nome}>{r.nome}</option>)}
-                </select>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
-                  <input type="checkbox" checked={!!nuovoUtente.bubbler} onChange={(e) => setNuovoUtente({ ...nuovoUtente, bubbler: e.target.checked })} /> Bubbler
-                </label>
-                <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>Salva Utente</button>
-              </form>
-            </div>
-          )}
         </div>
       )}
 
@@ -273,57 +279,62 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
           <h2>Ruoli</h2>
           <p className="descrizione-pagina">Definisci i ruoli e quali moduli/schede/sotto-schede possono visualizzare.</p>
 
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0', gap: '10px', flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0 }}>Elenco ({ruoli.length})</h3>
+            <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={() => setShowFormRuolo(true)}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
+          </div>
+
+          {showFormRuolo && (
+            <div className="modal-form-backdrop" onClick={() => setShowFormRuolo(false)}>
+              <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
+                <button type="button" className="modal-form-close" onClick={() => setShowFormRuolo(false)} aria-label="Chiudi">✕</button>
+                <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Nuovo Ruolo</h3>
+                <form onSubmit={addRuolo} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <input type="text" placeholder="Nome ruolo" value={nuovoRuolo.nome} onChange={(e) => setNuovoRuolo({ ...nuovoRuolo, nome: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <MatricePermessi
+                    permessi={nuovoRuolo.permessi}
+                    onToggleScheda={toggleSchedaForm(setNuovoRuolo)}
+                    onToggleSottoscheda={toggleSottoschedaForm(setNuovoRuolo)}
+                  />
+                  <button type="submit" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Salva Ruolo</button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {idRuoloInModifica !== null && (
+            <div className="modal-form-backdrop" onClick={() => setIdRuoloInModifica(null)}>
+              <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
+                <button type="button" className="modal-form-close" onClick={() => setIdRuoloInModifica(null)} aria-label="Chiudi">✕</button>
+                <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Permessi ruolo: {datiRuoloInModifica.nome}</h3>
+                <MatricePermessi
+                  permessi={datiRuoloInModifica.permessi}
+                  onToggleScheda={toggleSchedaForm(setDatiRuoloInModifica)}
+                  onToggleSottoscheda={toggleSottoschedaForm(setDatiRuoloInModifica)}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
+                  <button className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', fontSize: '0.85rem', borderRadius: '4px' }} onClick={() => setIdRuoloInModifica(null)}><Icona nome="annulla" size={16} style={{ marginRight: '6px' }} />Annulla</button>
+                  <button style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }} onClick={salvaModificaRuolo}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Salva Ruolo</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {ruoli.map(r => (
               <div key={r.id} className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '14px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <strong style={{ fontSize: '1rem' }}>{r.nome}</strong>
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    {idRuoloInModifica === r.id ? (
-                      <>
-                        <button className="btn-salva-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaModificaRuolo}>Salva</button>
-                        <button className="btn-annulla-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => setIdRuoloInModifica(null)}>Annulla</button>
-                      </>
-                    ) : (
-                      <>
-                        <button className="btn-modifica-inline" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => { setIdRuoloInModifica(r.id); setDatiRuoloInModifica({ nome: r.nome, permessi: { ...permessiVuoti(), ...r.permessi } }); }}>Modifica</button>
-                        <button className="btn-rimuovi" style={{ fontSize: '0.8rem', padding: '4px 8px' }} onClick={() => rimuoviRuolo(r)}>Elimina</button>
-                      </>
-                    )}
+                    <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdRuoloInModifica(r.id); setDatiRuoloInModifica({ nome: r.nome, permessi: { ...permessiVuoti(), ...r.permessi } }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                    <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviRuolo(r)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                   </div>
                 </div>
-                {idRuoloInModifica === r.id && (
-                  <div style={{ marginTop: '12px' }}>
-                    <MatricePermessi
-                      permessi={datiRuoloInModifica.permessi}
-                      onToggleScheda={toggleSchedaForm(setDatiRuoloInModifica)}
-                      onToggleSottoscheda={toggleSottoschedaForm(setDatiRuoloInModifica)}
-                    />
-                  </div>
-                )}
               </div>
             ))}
             {ruoli.length === 0 && <p style={{ color: '#666' }}>Nessun ruolo configurato.</p>}
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '18px 0 12px 0' }}>
-            <button className="btn-preventivo" style={{ width: 'auto', marginTop: 0, padding: '8px 16px', background: '#10b981' }} onClick={() => setShowFormRuolo(v => !v)}>➕ Nuovo ruolo</button>
-          </div>
-
-          {showFormRuolo && (
-            <div className="admin-form-box" style={{ background: '#f9f9f9', padding: '18px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Nuovo Ruolo</h3>
-              <form onSubmit={addRuolo} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <input type="text" placeholder="Nome ruolo" value={nuovoRuolo.nome} onChange={(e) => setNuovoRuolo({ ...nuovoRuolo, nome: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                <MatricePermessi
-                  permessi={nuovoRuolo.permessi}
-                  onToggleScheda={toggleSchedaForm(setNuovoRuolo)}
-                  onToggleSottoscheda={toggleSottoschedaForm(setNuovoRuolo)}
-                />
-                <button type="submit" style={{ padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>Salva Ruolo</button>
-              </form>
-            </div>
-          )}
         </div>
       )}
 

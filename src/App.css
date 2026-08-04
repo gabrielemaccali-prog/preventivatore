@@ -140,6 +140,10 @@ body {
   gap: 12px;
   align-items: end;
 }
+/* Coppia di campi che devono restare appaiati sulla stessa riga (date sopra, orari sotto):
+   due colonne fisse invece dell'auto-fill, che li spezzerebbe a seconda della larghezza. */
+.form-pren .date-grid.coppia { grid-template-columns: 1fr 1fr; }
+.date-grid.coppia + .date-grid.coppia { margin-top: 12px; }
 .form-pren input:not([type="checkbox"]):not([type="radio"]),
 .form-pren select {
   height: 38px; padding: 6px 10px; font-size: 0.9rem;
@@ -246,6 +250,13 @@ body {
 .tabella-vendita input.input-vendita { width: 66px; }
 .tabella-vendita input.input-vendita.error { border-color: #ef4444 !important; background: #fef2f2 !important; }
 
+/* Prezzo concordato: la sede diventa una scelta, al posto della riga "da <sede>" sotto al nome */
+.tabella-vendita select.select-sede-concordata {
+  margin-top: 3px; height: 26px !important; padding: 2px 4px !important;
+  font-size: 0.72rem !important; max-width: 100%;
+  border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; color: #475569;
+}
+
 /* Quantità: campo minimo con i due pulsanti di passo, così la colonna resta stretta.
    Le frecce native del type=number sarebbero ridondanti e ruberebbero larghezza. */
 .tabella-vendita .stepper-qta { display: inline-flex; align-items: center; gap: 2px; }
@@ -319,6 +330,7 @@ body {
 .form-pren-compatto h2 { font-size: 0.85rem !important; margin: 0 0 8px 0 !important; padding-bottom: 6px !important; }
 .form-pren-compatto .date-grid,
 .form-pren-compatto .pren-row { gap: 8px !important; }
+.form-pren-compatto .date-grid.coppia + .date-grid.coppia { margin-top: 8px !important; }
 .form-pren-compatto label { font-size: 0.76rem !important; }
 .form-pren-compatto input:not([type="checkbox"]):not([type="radio"]),
 .form-pren-compatto select { height: 30px !important; font-size: 0.8rem !important; padding: 4px 8px !important; }
@@ -454,7 +466,7 @@ h2 { font-size: 1.15rem; color: #334155; margin-top: 0; }
 .sezione { margin-bottom: 30px; }
 .date-grid { display: flex; gap: 15px; }
 .date-grid label { display: flex; flex-direction: column; flex: 1; font-weight: 600; font-size: 0.9rem; }
-input[type="date"], input[type="text"], .dropdown-gonfiabili {
+input[type="date"], input[type="time"], input[type="text"], input[type="tel"], input[type="email"], .dropdown-gonfiabili {
   width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 5px; font-size: 1rem;
 }
 /* Niente frecce su/giù sui campi numerici (prezzi, costi, sconti, ecc.): si digita solo l'importo. */

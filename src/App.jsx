@@ -10,11 +10,23 @@ import Impostazioni from './moduli/impostazioni/Impostazioni';
 import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
 import Icona from './components/Icona';
 
+// Sessione conservata per sopravvivere a un aggiornamento della pagina (F5). Contiene solo il
+// nome utente e il modulo aperto: mai la password. Ruolo e permessi si rileggono dal database a
+// ogni ripristino, così un ruolo modificato o un utente eliminato hanno effetto subito.
+// È in sessionStorage e non in localStorage: vale per la scheda del browser e si chiude con essa.
+const CHIAVE_SESSIONE = 'bfm_sessione';
+
+// Primo modulo visibile per un utente (evita di atterrare su un modulo senza permessi)
+const primoModuloVisibile = (u) => MODULI_REGISTRY.find(m => moduloVisibile(u, m.id))?.id || "preventivatore";
+
 function App() {
   // --- AUTENTICAZIONE ---
   const [user, setUser] = useState(null);
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
+  // Al primo montaggio si tenta il ripristino: finché è in corso non si mostra nulla, altrimenti
+  // a ogni F5 comparirebbe un lampo della schermata di accesso.
+  const [ripristinoInCorso, setRipristinoInCorso] = useState(() => !!sessionStorage.getItem(CHIAVE_SESSIONE));
 
   // --- NAVIGAZIONE TRA MODULI ---
   const [currentModule, setCurrentModule] = useState("preventivatore");
@@ -60,8 +72,43 @@ function App() {
     setUser(u => u ? { ...u, permessi } : u);
   }, [user, fetchPermessiRuolo]);
 
-  // Primo modulo visibile per l'utente appena loggato (evita di atterrare su un modulo senza permessi)
-  const primoModuloVisibile = (u) => MODULI_REGISTRY.find(m => moduloVisibile(u, m.id))?.id || "preventivatore";
+  // --- RIPRISTINO DELLA SESSIONE DOPO UN AGGIORNAMENTO DELLA PAGINA ---
+  useEffect(() => {
+    if (!ripristinoInCorso) return;
+    let annullato = false;
+    (async () => {
+      try {
+        const { username, modulo } = JSON.parse(sessionStorage.getItem(CHIAVE_SESSIONE));
+        // L'utente si rilegge sempre dal database: se nel frattempo è stato eliminato o gli è
+        // cambiato ruolo, la sessione salvata non deve dargli accessi che non ha più.
+        const { data } = await supabase.from('utenti').select('*').eq('username', username).maybeSingle();
+        if (annullato) return;
+        if (data) {
+          const permessi = await fetchPermessiRuolo(data.ruolo);
+          if (annullato) return;
+          const ripristinato = { username: data.username, ruolo: data.ruolo, permessi, bubbler: !!data.bubbler };
+          const moduloAncoraVisibile = modulo === 'impostazioni'
+            ? data.ruolo === 'admin'
+            : moduloVisibile(ripristinato, modulo);
+          setUser(ripristinato);
+          setCurrentModule(moduloAncoraVisibile ? modulo : primoModuloVisibile(ripristinato));
+          fetchModuliConfig();
+        } else {
+          sessionStorage.removeItem(CHIAVE_SESSIONE);
+        }
+      } catch {
+        sessionStorage.removeItem(CHIAVE_SESSIONE);
+      }
+      if (!annullato) setRipristinoInCorso(false);
+    })();
+    return () => { annullato = true; };
+  }, [ripristinoInCorso, fetchPermessiRuolo, fetchModuliConfig]);
+
+  // Tiene allineata la sessione salvata: basta il nome utente e il modulo a video per riaprire
+  // la pagina dov'era, senza conservare nulla di riservato.
+  useEffect(() => {
+    if (user) sessionStorage.setItem(CHIAVE_SESSIONE, JSON.stringify({ username: user.username, modulo: currentModule }));
+  }, [user, currentModule]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -97,6 +144,7 @@ function App() {
   };
 
   const handleLogout = () => {
+    sessionStorage.removeItem(CHIAVE_SESSIONE);
     setUser(null);
     setLoginUser("");
     setLoginPass("");
@@ -108,6 +156,9 @@ function App() {
     setCurrentModule(idModulo);
     setSidebarAperta(false);
   };
+
+  // Ripristino in corso: schermata vuota per un istante, invece del lampo della pagina di accesso
+  if (ripristinoInCorso) return null;
 
   if (!user) {
     return (
