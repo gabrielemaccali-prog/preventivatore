@@ -469,6 +469,22 @@ h2 { font-size: 1.15rem; color: #334155; margin-top: 0; }
 input[type="date"], input[type="time"], input[type="text"], input[type="tel"], input[type="email"], .dropdown-gonfiabili {
   width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 5px; font-size: 1rem;
 }
+/* I segnaposto non devono somigliare a un valore già inserito: più chiari, in corsivo e mai in
+   grassetto, così si distinguono a colpo d'occhio dal testo digitato. Conta soprattutto nei campi
+   prezzo e costo della tabella di vendita, dove il segnaposto è l'importo proposto dal sistema e
+   non una cifra confermata. */
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8;
+  /* Senza questa riga il segnaposto resta scuro su Chrome/Edge/Safari: eredita il
+     -webkit-text-fill-color imposto più sotto a tutti gli input per la leggibilità su mobile,
+     e quella proprietà ha la precedenza su color. */
+  -webkit-text-fill-color: #94a3b8;
+  font-style: italic;
+  font-weight: 400;
+  opacity: 1; /* Firefox ne applica una propria, che li sbiadirebbe ancora */
+}
+
 /* Niente frecce su/giù sui campi numerici (prezzi, costi, sconti, ecc.): si digita solo l'importo. */
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
