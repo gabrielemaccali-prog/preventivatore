@@ -119,11 +119,15 @@ const dettagliGoogleCalendar = (p) => {
 
 // Link "Aggiungi a Google Calendar" precompilato con i dati della prenotazione, sul calendario condiviso GOOGLE_CALENDAR_ID.
 // operatoriAnagrafica serve a risolvere l'email corrente degli operatori assegnati (nello snapshot della prenotazione c'è solo id/nome).
-const linkGoogleCalendar = (p, operatoriAnagrafica) => {
+// campiAnagrafica serve a risolvere l'indirizzo corrente del campo (nello snapshot della prenotazione c'è solo id/nome).
+const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica) => {
   const inizio = dataOraLocale(p.data, p.oraInizio);
   const durataOre = p.oraFine ? durataDaOrari(p.oraInizio, p.oraFine) : (parseFloat(p.durataOre) || 1);
   const fine = new Date(inizio.getTime() + Math.max(durataOre, 0.25) * 3600000);
-  const luogo = p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '';
+  // Sui campi registrati il luogo è l'indirizzo del campo (il nome del campo è già nel titolo dell'evento)
+  const campoInfo = p.campoId ? (campiAnagrafica || []).find(c => c.id === p.campoId) : null;
+  const indirizzoCampo = campoInfo ? [campoInfo.indirizzo, campoInfo.citta].filter(Boolean).join(', ') : '';
+  const luogo = indirizzoCampo || p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '';
   const titolo = [p.nominativo, p.campoNome, p.pacchettoNome].filter(Boolean).join(' - ');
   const emailOperatori = (p.operatori || [])
     .map(op => (operatoriAnagrafica || []).find(o => o.id === op.id)?.email)
@@ -181,14 +185,28 @@ const durataDaOrari = (ini, fin) => {
 };
 const numOrNull = (v) => v === "" || v == null ? null : parseFloat(v);
 
-// Normalizza un orario in formato 24h "HH:MM". Accetta "1900" o "19:00". Ritorna null se non valido.
+// Normalizza un orario in formato 24h "HH:MM". I minuti si possono omettere: "16" e "16:"
+// diventano "16:00", "930" diventa "09:30", "1600"/"16:00" restano "16:00".
+// Digitare i minuti resta facoltativo, ma il valore registrato ha sempre la stessa forma "HH:MM".
+// Ritorna "" se vuoto e null se non valido.
 const normalizzaOra24 = (raw) => {
   const s = (raw || "").trim();
   if (s === "") return "";
-  const soloCifre = s.replace(/[^\d]/g, "");
-  if (soloCifre.length !== 4) return null;
-  const hh = parseInt(soloCifre.slice(0, 2), 10);
-  const mm = parseInt(soloCifre.slice(2, 4), 10);
+  let hh, mm;
+  const conDuePunti = s.match(/^(\d{1,2}):(\d{0,2})$/);
+  if (conDuePunti) {
+    // "16:00", "16:" e "16:3" (minuti parziali letti come decine: 16:30)
+    hh = parseInt(conDuePunti[1], 10);
+    mm = conDuePunti[2] === "" ? 0 : parseInt(conDuePunti[2].padEnd(2, '0'), 10);
+  } else if (/^\d{1,4}$/.test(s)) {
+    // sole cifre: 1-2 sono le ore ("16" -> 16:00), 3-4 sono ore+minuti ("930" -> 09:30)
+    if (s.length <= 2) { hh = parseInt(s, 10); mm = 0; }
+    else {
+      const d = s.padStart(4, '0');
+      hh = parseInt(d.slice(0, 2), 10);
+      mm = parseInt(d.slice(2, 4), 10);
+    }
+  } else return null;
   if (hh > 23 || mm > 59) return null;
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 };
@@ -588,7 +606,7 @@ function Prenotazioni({ user }) {
   };
   // Apre il link precompilato Google Calendar e segna la prenotazione come sincronizzata (ripristinato a "non sincronizzato" ad ogni modifica salvata)
   const apriGoogleCalendar = async (p) => {
-    window.open(linkGoogleCalendar(p, operatori), '_blank', 'noopener,noreferrer');
+    window.open(linkGoogleCalendar(p, operatori, campi), '_blank', 'noopener,noreferrer');
     await supabase.from('prenotazioni').update({ googleCalendarSync: true }).eq('id', p.id);
     setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, googleCalendarSync: true } : prev);
     fetchTutto();
@@ -784,6 +802,10 @@ function Prenotazioni({ user }) {
     const f = formPren;
     const pac = pacchetti.find(p => p.id === f.pacchettoId);
     const durataFissa = pac && pac.durataOre != null && pac.durataOre !== "";
+    // Gli orari si possono digitare anche senza minuti ("16"): qui vengono normalizzati a "HH:MM"
+    // prima dei calcoli e del salvataggio, così tutte le prenotazioni hanno lo stesso formato.
+    const oraInizio = normalizzaOra24(f.oraInizio);
+    const oraFine = durataFissa ? "" : normalizzaOra24(f.oraFine);
     // Tutti i campi obbligatori vengono controllati insieme (non uno alla volta) così l'utente
     // li vede evidenziati di rosso tutti insieme invece di scoprirli uno a uno a ogni tentativo.
     const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim() || !f.oraInizio
@@ -792,12 +814,13 @@ function Prenotazioni({ user }) {
       setMostraErroriValidazione(true);
       return alert("Compila i campi obbligatori evidenziati in rosso.");
     }
+    if (oraInizio === null || oraFine === null) return alert("Orario non valido: usa il formato 24h, es. 19:00 (i minuti si possono omettere: 19 diventa 19:00).");
     if (pac.prevedeRinfresco && campi.find(c => c.id === f.campoId)?.noRinfresco) return alert("Questo campo non consente pacchetti con rinfresco: cambia campo o pacchetto.");
     if (f.fattTipo === 'privato' && f.fattCF && !validaCF(f.fattCF)) return alert("Codice Fiscale non valido.");
     setMostraErroriValidazione(false);
 
     const IVA = 0.22;
-    const durataOre = durataFissa ? parseFloat(pac.durataOre) : durataDaOrari(f.oraInizio, f.oraFine);
+    const durataOre = durataFissa ? parseFloat(pac.durataOre) : durataDaOrari(oraInizio, oraFine);
     const campo = pac.locationTipo === 'campi' ? campi.find(c => c.id === f.campoId) : null;
     const campoIvaInclCampo = campo ? !!campo.ivaInclusaCampo : false;
     const campoIvaInclRinfresco = campo ? !!campo.ivaInclusaRinfresco : false;
@@ -810,7 +833,7 @@ function Prenotazioni({ user }) {
     const prezzoVenditaLordo = prezzoBaseLordo * scontoFrac;
     const ivaCampoFrac = campo ? fracIva(campo.ivaCampo) : IVA;
     const ivaRinfrescoFrac = campo ? fracIva(campo.ivaRinfresco) : IVA;
-    const costoCampoRaw = campo ? calcolaCostoCampo(campo, f.data, f.oraInizio) : 0;
+    const costoCampoRaw = campo ? calcolaCostoCampo(campo, f.data, oraInizio) : 0;
     const costoCampoLordo = campoIvaInclCampo ? costoCampoRaw : costoCampoRaw * (1 + ivaCampoFrac);
     const costoCampoNetto = campoIvaInclCampo ? costoCampoRaw / (1 + ivaCampoFrac) : costoCampoRaw;
     const numPart = numOrNull(f.numeroPartecipanti);
@@ -825,7 +848,7 @@ function Prenotazioni({ user }) {
 
     const rec = {
       data: f.data, pacchettoId: f.pacchettoId, pacchettoNome: pac.nome || "",
-      durataOre, oraInizio: f.oraInizio, oraFine: durataFissa ? null : f.oraFine,
+      durataOre, oraInizio, oraFine: durataFissa ? null : oraFine,
       nominativo: f.nominativo, email: f.email, telefono: f.telefono,
       campoId: campo ? campo.id : null, campoNome: campo ? campo.nome : null, campoPrenotato: f.campoPrenotato,
       locationIndirizzo: campo ? null : f.locationIndirizzo, locationCap: campo ? null : f.locationCap,
@@ -863,7 +886,7 @@ function Prenotazioni({ user }) {
     setCodicePrenInModifica(codice);
     setFormPrenOriginale(f);
     fetchTutto();
-    alert(`Prenotazione ${codice} salvata (stato: FORSE).`);
+    alert(`Prenotazione ${codice} salvata.`);
   };
 
   const btnSalva = { display: 'inline-flex', alignItems: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' };
@@ -960,7 +983,7 @@ function Prenotazioni({ user }) {
     if (nuovaTariffa.giorni.length === 0 || nuovaTariffa.costo === "") return alert("Seleziona i giorni e inserisci il costo");
     const oraInizio = normalizzaOra24(nuovaTariffa.oraInizio);
     const oraFine = normalizzaOra24(nuovaTariffa.oraFine);
-    if (oraInizio === null || oraFine === null) return alert("Orario non valido: usa il formato 24h HH:MM (es. 19:00).");
+    if (oraInizio === null || oraFine === null) return alert("Orario non valido: usa il formato 24h, es. 19:00 (i minuti si possono omettere: 19 diventa 19:00).");
     const rec = { id: "trf_" + Date.now(), campoId, giorni: nuovaTariffa.giorni.join(','), oraInizio, oraFine, costo: parseFloat(nuovaTariffa.costo) || 0 };
     const { error } = await supabase.from('pren_campi_tariffe').insert([rec]);
     if (error) { console.error(error); return alert("Errore salvataggio tariffa"); }
@@ -1058,11 +1081,11 @@ function Prenotazioni({ user }) {
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '12px', alignItems: 'flex-end' }}>
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', width: '85px', flexShrink: 0 }}>Ora inizio
-                <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraInizio} onChange={(e) => setF({ oraInizio: formattaOraInput(e.target.value) })} {...campoRosso('oraInizio', oraInizioMancante)} />
+                <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraInizio} onChange={(e) => setF({ oraInizio: formattaOraInput(e.target.value) })} onBlur={() => setF({ oraInizio: normalizzaOra24(formPren.oraInizio) ?? formPren.oraInizio })} {...campoRosso('oraInizio', oraInizioMancante)} />
               </label>
               {!durataFissa && (
                 <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', width: '85px', flexShrink: 0 }}>Ora fine
-                  <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraFine} onChange={(e) => setF({ oraFine: formattaOraInput(e.target.value) })} {...campoRosso('oraFine', oraFineMancante)} />
+                  <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraFine} onChange={(e) => setF({ oraFine: formattaOraInput(e.target.value) })} onBlur={() => setF({ oraFine: normalizzaOra24(formPren.oraFine) ?? formPren.oraFine })} {...campoRosso('oraFine', oraFineMancante)} />
                 </label>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', color: '#555' }}>Durata
@@ -1550,8 +1573,8 @@ function Prenotazioni({ user }) {
                               </label>
                             ))}
                           </div>
-                          <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} title="Formato 24h, es. 19:00" value={nuovaTariffa.campoId === c.id ? nuovaTariffa.oraInizio : ""} onChange={(e) => setNuovaTariffa(prev => ({ ...prev, campoId: c.id, oraInizio: formattaOraInput(e.target.value) }))} style={{ ...inputStyle, width: '80px', height: '32px' }} />
-                          <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} title="Formato 24h, es. 00:00" value={nuovaTariffa.campoId === c.id ? nuovaTariffa.oraFine : ""} onChange={(e) => setNuovaTariffa(prev => ({ ...prev, campoId: c.id, oraFine: formattaOraInput(e.target.value) }))} style={{ ...inputStyle, width: '80px', height: '32px' }} />
+                          <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} title="Formato 24h, es. 19:00" value={nuovaTariffa.campoId === c.id ? nuovaTariffa.oraInizio : ""} onChange={(e) => setNuovaTariffa(prev => ({ ...prev, campoId: c.id, oraInizio: formattaOraInput(e.target.value) }))} onBlur={() => setNuovaTariffa(prev => ({ ...prev, oraInizio: normalizzaOra24(prev.oraInizio) ?? prev.oraInizio }))} style={{ ...inputStyle, width: '80px', height: '32px' }} />
+                          <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} title="Formato 24h, es. 00:00" value={nuovaTariffa.campoId === c.id ? nuovaTariffa.oraFine : ""} onChange={(e) => setNuovaTariffa(prev => ({ ...prev, campoId: c.id, oraFine: formattaOraInput(e.target.value) }))} onBlur={() => setNuovaTariffa(prev => ({ ...prev, oraFine: normalizzaOra24(prev.oraFine) ?? prev.oraFine }))} style={{ ...inputStyle, width: '80px', height: '32px' }} />
                           <input type="number" step="any" placeholder="€" value={nuovaTariffa.campoId === c.id ? nuovaTariffa.costo : ""} onChange={(e) => setNuovaTariffa(prev => ({ ...prev, campoId: c.id, costo: e.target.value }))} style={{ ...inputStyle, width: '80px', height: '32px' }} />
                           <button type="button" className="btn-conferma" style={{ padding: '6px 12px' }} onClick={() => addTariffa(c.id)}>+ Tariffa</button>
                         </div>
