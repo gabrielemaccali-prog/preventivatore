@@ -59,8 +59,7 @@ export const SCHEDE_REGISTRY = {
   disponibilita: {
     schede: [
       { id: 'config', label: 'Configuratore' },
-      { id: 'campi', label: 'Disponibilità Campi' },
-      { id: 'calendario', label: 'Disponibilità Calendario' },
+      { id: 'miedisp', label: 'Le mie disponibilità' },
       { id: 'riepilogo', label: 'Riepilogo' },
     ],
   },

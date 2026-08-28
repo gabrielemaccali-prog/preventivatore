@@ -265,8 +265,6 @@ function Prenotazioni({ user }) {
   const [pacchetti, setPacchetti] = useState([]);
   const [operatori, setOperatori] = useState([]); // bubbler (utenti con flag bubbler), fonte in Disponibilità > Configuratore
   const [dispCalendario, setDispCalendario] = useState([]);
-  const [dispCampi, setDispCampi] = useState([]);
-  const [dispCampiFasce, setDispCampiFasce] = useState([]);
   const [fasceDisp, setFasceDisp] = useState([]);
   const [campi, setCampi] = useState([]);
   const [tariffe, setTariffe] = useState([]);
@@ -339,7 +337,7 @@ function Prenotazioni({ user }) {
   useEffect(() => { fetchTutto(); }, []);
 
   const fetchTutto = async () => {
-    const [p, o, c, t, pr, pv, vc, dc, dcp, dcpf, df, pag] = await Promise.all([
+    const [p, o, c, t, pr, pv, vc, dc, df, pag] = await Promise.all([
       supabase.from('pren_pacchetti').select('*').order('nome'),
       // Operatori = bubbler configurati in Disponibilità (utenti con flag bubbler), non più una tabella a parte.
       supabase.from('utenti').select('username, nome_breve, telefono, email').eq('bubbler', true).order('nome_breve'),
@@ -349,8 +347,6 @@ function Prenotazioni({ user }) {
       supabase.from('preventivi').select('*').order('codice', { ascending: false }),
       supabase.from('voucher').select('*').order('codice', { ascending: false }),
       supabase.from('disp_calendario').select('*'),
-      supabase.from('disp_campi').select('*'),
-      supabase.from('disp_campi_fasce').select('*'),
       supabase.from('disp_fasce').select('*').order('ordine'),
       supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data'),
     ]);
@@ -373,8 +369,6 @@ function Prenotazioni({ user }) {
     if (pv.data) setPreventivi(pv.data);
     if (vc.data) setVoucher(vc.data);
     if (dc.data) setDispCalendario(dc.data);
-    if (dcp.data) setDispCampi(dcp.data);
-    if (dcpf.data) setDispCampiFasce(dcpf.data);
     if (df.data) setFasceDisp(df.data);
   };
 
@@ -382,13 +376,11 @@ function Prenotazioni({ user }) {
   // e la data/orario della prenotazione con il calendario di Disponibilità.
   // null = non è ancora possibile determinarlo (manca data o orario), true/false = disponibile o no.
   const disponibilitaOperatore = (username, iso, oraInizio, oraFine, campoId) => {
-    if (campoId && !dispCampi.some(d => d.utente_username === username && d.campo_id === campoId)) return false;
+    // In Disponibilità > Disponibilità Calendario ogni riga è già per campo + data + fascia:
+    // se la location è un campo registrato basta filtrare su quel campo.
+    if (campoId && !dispCalendario.some(d => d.utente_username === username && d.campo_id === campoId)) return false;
     if (!iso) return null;
-    // Se la location è un campo, la disponibilità di quel campo è impostata per fascia e giorno della
-    // settimana (Disponibilità > Disponibilità Campi): tiene solo le fasce ammesse per quel campo/giorno.
-    const fasceAmmesseCampo = campoId ? dispCampiFasce.filter(d => d.utente_username === username && d.campo_id === campoId && d.giorno === giornoSettimana(iso)).map(d => d.fascia) : null;
-    if (campoId && fasceAmmesseCampo.length === 0) return false;
-    const righeGiorno = dispCalendario.filter(d => d.utente_username === username && d.data === iso && (!fasceAmmesseCampo || fasceAmmesseCampo.includes(d.fascia)));
+    const righeGiorno = dispCalendario.filter(d => d.utente_username === username && d.data === iso && (!campoId || d.campo_id === campoId));
     if (righeGiorno.length === 0) return false;
     const iniMin = toMinutes(oraInizio);
     const fineMin = toMinutes(oraFine);
