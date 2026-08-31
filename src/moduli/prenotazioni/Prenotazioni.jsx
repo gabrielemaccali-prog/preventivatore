@@ -1,8 +1,9 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
-import { validaCF, fatturazioneCompletaDi } from '../../lib/utils'
+import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata } from '../../lib/utils'
 import { puoVedere } from '../../lib/permessi'
+import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
 
@@ -58,6 +59,17 @@ const coloreStato = (s) => s === 'CONF' ? { bg: '#dcfce7', bd: '#16a34a', tx: '#
 const formattaDataBreveIT = (dataStr) => {
   if (!dataStr) return '';
   return new Date(dataStr).toLocaleDateString('it-IT', { day: '2-digit', month: 'long' });
+};
+
+// Data in cifre "GG/MM/AA" usata nelle tabelle del modulo (il form di inserimento resta sul campo date
+// nativo, quindi sul formato ISO). Accetta sia una data pura "YYYY-MM-DD" sia un timestamp: la data pura
+// si formatta a stringa, senza passare da Date, per non farla spostare dal fuso orario.
+const formattaDataGGMMAA = (valore) => {
+  if (!valore) return '';
+  const soloData = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(valore);
+  if (soloData) return `${soloData[3]}/${soloData[2]}/${soloData[1].slice(2)}`;
+  const d = new Date(valore);
+  return isNaN(d) ? '' : d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' });
 };
 
 // Ripulisce un numero di telefono per un link wa.me (aggiunge il prefisso 39 ai numeri italiani senza prefisso)
@@ -174,6 +186,20 @@ const statoPagamentoDi = (pagamenti, prezzoVendita, valoreVoucher = 0) => {
   if (tot + 0.001 >= (prezzoVendita || 0)) return 'saldato';
   return 'acconto';
 };
+
+// Colonne della tabella prenotazioni (Storico e Gestione): etichetta mostrata e valore su cui ordinare.
+// Le colonne composite ordinano sul dato che conta: la data evento tiene conto anche dell'ora, e
+// "Pagato / Totale" ordina sul totale, cioè sul valore della prenotazione.
+const COLONNE_PREN = [
+  { chiave: 'createdAt', label: 'Inserito il', valore: (p) => p.createdAt || '' },
+  { chiave: 'data', label: 'Data evento', valore: (p) => `${p.data || ''}T${p.oraInizio || ''}` },
+  { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
+  { chiave: 'pacchetto', label: 'Pacchetto', valore: (p) => p.pacchettoNome || '' },
+  { chiave: 'location', label: 'Location', valore: (p) => p.campoNome || p.locationCitta || '' },
+  { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') },
+  { chiave: 'importo', label: 'Pagato / Totale', valore: (p) => parseFloat(p.prezzoVendita) || 0 },
+];
+const VALORI_ORDINAMENTO_PREN = Object.fromEntries(COLONNE_PREN.map(c => [c.chiave, c.valore]));
 
 // Durata in ore dalla differenza inizio/fine (gestisce l'attraversamento della mezzanotte)
 const durataDaOrari = (ini, fin) => {
@@ -620,6 +646,10 @@ function Prenotazioni({ user }) {
     fetchTutto();
   };
 
+  const oggiIso = toISODate(new Date());
+  // Ordinamento condiviso da Storico e Gestione: la tabella è la stessa, quindi lo è anche il criterio scelto.
+  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(VALORI_ORDINAMENTO_PREN);
+
   // Riga di tabella condivisa da Storico e dalle sotto-schede di Gestione.
   // Il clic sulla riga espande un pannello con i dettagli (telefono, email, note, pagamenti) e sblocca le azioni (apri, conferma, calendario, elimina).
   const rigaTabellaPren = (p) => {
@@ -628,15 +658,20 @@ function Prenotazioni({ user }) {
     const coloreStatoRiga = p.stato === 'CONF' ? '#16a34a' : '#f59e0b';
     const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
     const espansa = rigaEspansaId === p.id;
+    const completata = prenotazioneCompletata(p, oggiIso);
     return (
       <Fragment key={p.id}>
         <tr
           onClick={() => setRigaEspansaId(prev => prev === p.id ? null : p.id)}
-          style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}
+          title={completata ? 'Prenotazione completata: confermata, saldata e con fatturazione completa' : undefined}
+          style={{ cursor: 'pointer', background: completata ? '#dcfce7' : (espansa ? '#f8fafc' : undefined), borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}
         >
-          <td style={{ padding: '8px 10px' }}>
+          <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#64748b', whiteSpace: 'nowrap' }}>
             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
-            {p.data}{p.oraInizio ? ` ${p.oraInizio}` : ''}{p.oraFine ? `–${p.oraFine}` : ''}
+            {formattaDataGGMMAA(p.createdAt) || '—'}
+          </td>
+          <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+            {formattaDataGGMMAA(p.data)}{p.oraInizio ? ` ${p.oraInizio}` : ''}{p.oraFine ? `–${p.oraFine}` : ''}
           </td>
           <td style={{ padding: '8px 10px' }}>
             <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar (clic per correggere a mano)' : 'Non sincronizzato con Google Calendar (clic per correggere a mano)'} style={{ cursor: 'pointer', color: p.googleCalendarSync ? '#16a34a' : '#dc2626', fontWeight: 'bold' }} onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(p); }}>{p.googleCalendarSync ? '✓' : '⚠'}</span> <strong>{p.nominativo}</strong>
@@ -658,7 +693,7 @@ function Prenotazioni({ user }) {
         </tr>
         {espansa && (
           <tr className="riga-espandibile-dettaglio">
-            <td colSpan={6} onClick={(e) => e.stopPropagation()}>
+            <td colSpan={7} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
                   <div><span style={{ color: '#94a3b8' }}>Telefono </span>{p.telefono || '—'}</div>
@@ -700,18 +735,20 @@ function Prenotazioni({ user }) {
       <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
           <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Data</th>
-            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Nominativo</th>
-            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Pacchetto</th>
-            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Location</th>
-            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Operatori</th>
-            <th style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b' }}>Pagato / Totale</th>
+            {COLONNE_PREN.map(c => {
+              const { style: stileOrdinabile, ...propsOrdinabile } = propsTestata(c.chiave);
+              return (
+                <th key={c.chiave} {...propsOrdinabile} style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b', ...stileOrdinabile }}>
+                  {c.label}{frecciaOrdinamento(c.chiave)}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
           {righe.length === 0
-            ? <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
-            : righe.map(rigaTabellaPren)}
+            ? <tr><td colSpan="7" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            : ordina(righe).map(rigaTabellaPren)}
         </tbody>
       </table>
     </div>
@@ -1022,6 +1059,17 @@ function Prenotazioni({ user }) {
         const statoPag = statoPagamentoDi(formPren.pagamenti, prezzoVendita, valoreVoucher);
         const setF = (patch) => setFormPren(prev => ({ ...prev, ...patch }));
 
+        // Cosa manca perché la prenotazione risulti completata (stessa regola di prenotazioneCompletata, ma sui
+        // valori a schermo, così l'avviso sparisce mentre si compila e non solo dopo il salvataggio). Ha senso solo
+        // su una prenotazione già confermata con l'evento passato: prima di allora non c'è niente da "completare".
+        const daChiudere = !!codicePrenInModifica && formPren.stato === 'CONF' && !!formPren.data && formPren.data < oggiIso;
+        const mancanzeCompletamento = daChiudere
+          ? [
+              ...(statoPag !== 'saldato' ? [`saldo di €${Math.max(prezzoVendita - totalePagato, 0).toFixed(2)}`] : []),
+              ...campiFatturazioneMancanti(formPren)
+            ]
+          : [];
+
         // Evidenzia i campi cambiati rispetto ai valori caricati inizialmente (solo in modifica)
         const campoModificato = (chiave) => formPrenOriginale != null && JSON.stringify(formPren[chiave]) !== JSON.stringify(formPrenOriginale[chiave]);
         const evidenzia = (chiave) => campoModificato(chiave) ? { borderColor: '#f59e0b', borderWidth: '2px', backgroundColor: '#fffbeb' } : undefined;
@@ -1330,6 +1378,12 @@ function Prenotazioni({ user }) {
             </div>
           </div>
 
+          {mancanzeCompletamento.length > 0 && (
+            <div style={{ margin: '0 0 14px', padding: '10px 14px', borderRadius: '6px', border: '1px solid #0288d1', background: '#e1f5fe', color: '#01579b', fontSize: '0.85rem' }}>
+              <strong>Per completare la prenotazione {mancanzeCompletamento.length === 1 ? 'manca' : 'mancano'}:</strong> {mancanzeCompletamento.join(', ')}.
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <button className="btn-preventivo btn-accent" style={(codicePrenInModifica && formModificato) ? { width: 'auto', flex: '1 1 auto' } : undefined} onClick={salvaPrenotazione} disabled={salvataggioPren}>{salvataggioPren ? 'Salvataggio…' : (codicePrenInModifica ? '💾 Salva modifiche' : '💾 Salva Prenotazione (FORSE)')}</button>
             {codicePrenInModifica && formModificato && (
@@ -1619,11 +1673,10 @@ function Prenotazioni({ user }) {
         </div>
       )}
       {currentView === "gestione" && puoVedere(user, 'prenotazioni', 'gestione') && (() => {
-        const oggiIsoGestione = toISODate(new Date());
         const inAttesaPagamento = prenotazioni.filter(p => p.stato === 'FORSE' && (!p.statoPagamento || p.statoPagamento === 'in attesa'));
         const daConfermare = prenotazioni.filter(p => p.stato === 'FORSE' && p.statoPagamento && p.statoPagamento !== 'in attesa');
-        const partiteAttive = prenotazioni.filter(p => p.stato === 'CONF' && p.data >= oggiIsoGestione);
-        const daCompletare = prenotazioni.filter(p => p.stato === 'CONF' && p.data < oggiIsoGestione && (p.statoPagamento !== 'saldato' || !fatturazioneCompletaDi(p)));
+        const partiteAttive = prenotazioni.filter(p => p.stato === 'CONF' && p.data >= oggiIso);
+        const daCompletare = prenotazioni.filter(p => p.stato === 'CONF' && p.data < oggiIso && !prenotazioneCompletata(p, oggiIso));
         const liste = { inAttesaPagamento, daConfermare, partiteAttive, daCompletare };
         const messaggiVuoto = {
           inAttesaPagamento: "Nessun cliente in attesa di pagamento.",
@@ -1649,7 +1702,6 @@ function Prenotazioni({ user }) {
         );
       })()}
       {currentView === "calendario" && puoVedere(user, 'prenotazioni', 'calendario') && (() => {
-        const oggiIso = toISODate(new Date());
         const prenDelGiorno = (iso) => prenotazioni.filter(p => p.data === iso).sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
 
         // --- Griglia oraria (viste Settimana/Giorno): posiziona ogni prenotazione in base a orario e durata reali ---

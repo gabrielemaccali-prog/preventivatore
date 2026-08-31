@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { puoVedere } from '../../lib/permessi';
 import { formattaDataIT, formattaIndirizzoPulito } from '../../lib/utils';
 import Icona from '../../components/Icona';
+import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
 
 const FORM_VUOTO = {
   nominativo: "", dedica: "", pacchettoId: "", pacchettoNome: "",
@@ -72,6 +73,17 @@ const dataValidita = (dataEmissione) => {
   base.setFullYear(base.getFullYear() + 1);
   return base.toISOString();
 };
+
+// Colonne della tabella voucher (Gestione e Storico): etichetta mostrata e valore su cui ordinare.
+// "Pagato / Totale" ordina sul totale, cioè sul valore del voucher.
+const COLONNE_VOUCHER = [
+  { chiave: 'codice', label: 'Codice', valore: (v) => v.codice || '' },
+  { chiave: 'data', label: 'Data', valore: (v) => v.dataEmissione || '' },
+  { chiave: 'intestatario', label: 'Intestatario', valore: (v) => v.nominativo || '' },
+  { chiave: 'pacchetto', label: 'Pacchetto', valore: (v) => v.pacchettoNome || '' },
+  { chiave: 'importo', label: 'Pagato / Totale', valore: (v) => parseFloat(v.importo) || 0 },
+];
+const VALORI_ORDINAMENTO_VOUCHER = Object.fromEntries(COLONNE_VOUCHER.map(c => [c.chiave, c.valore]));
 
 function Voucher({ user }) {
   const primaSchedaVoucher = ['gestione', 'config', 'storico'].find(s => puoVedere(user, 'voucher', s)) || 'gestione';
@@ -409,6 +421,9 @@ function Voucher({ user }) {
     fetchVoucher();
   };
 
+  // Ordinamento condiviso da Gestione e Storico: la tabella è la stessa, quindi lo è anche il criterio scelto.
+  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(VALORI_ORDINAMENTO_VOUCHER);
+
   // ====================== TABELLA CONDIVISA (Gestione / Storico) ======================
   // Il clic sulla riga espande il pannello con i dettagli di fatturazione e le azioni.
   // Il pulsante "Apri" richiama sempre il form come overlay.
@@ -468,17 +483,20 @@ function Voucher({ user }) {
       <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
           <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-            <th style={{ padding: '12px' }}>Codice</th>
-            <th style={{ padding: '12px' }}>Data</th>
-            <th style={{ padding: '12px' }}>Intestatario</th>
-            <th style={{ padding: '12px' }}>Pacchetto</th>
-            <th style={{ padding: '12px' }}>Pagato / Totale</th>
+            {COLONNE_VOUCHER.map(c => {
+              const { style: stileOrdinabile, ...propsOrdinabile } = propsTestata(c.chiave);
+              return (
+                <th key={c.chiave} {...propsOrdinabile} style={{ padding: '12px', ...stileOrdinabile }}>
+                  {c.label}{frecciaOrdinamento(c.chiave)}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
           {righe.length === 0
             ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
-            : righe.map(rigaTabellaVoucher)}
+            : ordina(righe).map(rigaTabellaVoucher)}
         </tbody>
       </table>
     </div>

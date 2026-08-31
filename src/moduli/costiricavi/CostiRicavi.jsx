@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
-import { fatturazioneCompletaDi } from '../../lib/utils'
+import { prenotazioneCompletata } from '../../lib/utils'
 import Icona from '../../components/Icona'
+import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell
@@ -119,6 +120,24 @@ function CostiRicavi({ user }) {
     XLSX.writeFile(wb, "Costi_Ricavi.xlsx");
   };
 
+  // Colonne della tabella (schede "Tabella" e "Completate"): etichetta mostrata e valore su cui ordinare.
+  // "Codice / Data" ordina sulla data della partita: è il dato con cui si ragiona qui, il codice identifica
+  // soltanto la riga. Gli importi ordinano sui netti, gli stessi numeri che la colonna mostra.
+  const COLONNE_CR = [
+    { chiave: 'data', label: 'Codice / Data', valore: (p) => p.data || '' },
+    { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
+    { chiave: 'campo', label: 'Campo', valore: (p) => campoNomeDi(p) },
+    { chiave: 'stato', label: 'Stato', valore: (p) => p.stato || '' },
+    { chiave: 'ricavo', label: 'Ricavo', stile: { textAlign: 'right' }, valore: nettoRicavo },
+    { chiave: 'costoCampo', label: 'Costo campo', stile: { textAlign: 'right' }, valore: nettoCampo },
+    { chiave: 'costoRinfresco', label: 'Costo rinfresco', stile: { textAlign: 'right' }, valore: nettoRinf },
+    { chiave: 'costoEreditato', label: 'Costo ereditato', stile: { textAlign: 'right' }, valore: nettoEreditato },
+    { chiave: 'margine', label: 'Margine', stile: { textAlign: 'right' }, valore: (p) => nettoRicavo(p) - costoTotaleNetto(p) },
+  ];
+  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(
+    Object.fromEntries(COLONNE_CR.map(c => [c.chiave, c.valore]))
+  );
+
   // Riga e tabella (con totali) condivise da "Tabella" e "Completate"
   const rigaCR = (p) => {
     const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), ce = nettoEreditato(p), m = r - cc - cr - ce;
@@ -149,21 +168,20 @@ function CostiRicavi({ user }) {
         <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-              <th style={{ padding: '10px' }}>Codice / Data</th>
-              <th style={{ padding: '10px' }}>Nominativo</th>
-              <th style={{ padding: '10px' }}>Campo</th>
-              <th style={{ padding: '10px' }}>Stato</th>
-              <th style={{ padding: '10px', textAlign: 'right' }}>Ricavo</th>
-              <th style={{ padding: '10px', textAlign: 'right' }}>Costo campo</th>
-              <th style={{ padding: '10px', textAlign: 'right' }}>Costo rinfresco</th>
-              <th style={{ padding: '10px', textAlign: 'right' }}>Costo ereditato</th>
-              <th style={{ padding: '10px', textAlign: 'right' }}>Margine</th>
+              {COLONNE_CR.map(c => {
+                const { style: stileOrdinabile, ...propsOrdinabile } = propsTestata(c.chiave);
+                return (
+                  <th key={c.chiave} {...propsOrdinabile} style={{ padding: '10px', ...c.stile, ...stileOrdinabile }}>
+                    {c.label}{frecciaOrdinamento(c.chiave)}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
             {righe.length === 0
               ? <tr><td colSpan="9" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
-              : righe.map(rigaCR)}
+              : ordina(righe).map(rigaCR)}
           </tbody>
           <tfoot>
             <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
@@ -180,7 +198,7 @@ function CostiRicavi({ user }) {
 
   // ====================== COMPLETATE (partite CONF passate, saldate e con dati di fatturazione completi) ======================
   const oggiIsoCR = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
-  const righeCompletate = prenotazioni.filter(p => p.stato === 'CONF' && p.data < oggiIsoCR && p.statoPagamento === 'saldato' && fatturazioneCompletaDi(p));
+  const righeCompletate = prenotazioni.filter(p => prenotazioneCompletata(p, oggiIsoCR));
 
   // ====================== ANDAMENTO (grafici) ======================
   const annoCorrente = String(new Date().getFullYear());

@@ -67,10 +67,27 @@ export const validaCF = (cfRaw) => {
   return String.fromCharCode('A'.charCodeAt(0) + (somma % 26)) === cf[15];
 };
 
-// Verifica se i dati di fatturazione di una prenotazione sono completi (privato con CF valido, oppure azienda con P.IVA)
-export const fatturazioneCompletaDi = (p) => p.fattTipo === 'azienda'
-  ? !!(p.ragioneSociale && p.aziIndirizzo && p.aziCitta && p.pIva)
-  : !!(p.fattNome && p.fattCognome && p.fattIndirizzo && p.fattCitta && validaCF(p.fattCF));
+// Campi di fatturazione ancora da compilare, con l'etichetta che hanno nel form: lista vuota = tutto a posto.
+// CAP e provincia sono richiesti come il resto dell'indirizzo: senza non si emette la fattura elettronica.
+// È la fonte unica del "cosa manca": `fatturazioneCompletaDi` ne è solo la lettura in sì/no.
+export const campiFatturazioneMancanti = (p) => (p.fattTipo === 'azienda'
+  ? [[p.ragioneSociale, 'Ragione sociale'], [p.aziIndirizzo, 'Indirizzo'], [p.aziCap, 'CAP'], [p.aziCitta, 'Città'],
+     [p.aziProvincia, 'Provincia'], [p.pIva, 'P. IVA']]
+  : [[p.fattNome, 'Nome'], [p.fattCognome, 'Cognome'], [p.fattIndirizzo, 'Indirizzo'], [p.fattCap, 'CAP'],
+     [p.fattCitta, 'Città'], [p.fattProvincia, 'Provincia'],
+     [validaCF(p.fattCF), p.fattCF ? 'Codice Fiscale (non valido)' : 'Codice Fiscale']]
+).filter(([valore]) => !valore).map(([, etichetta]) => etichetta);
+
+// Verifica se i dati di fatturazione sono completi (privato con CF valido, oppure azienda con P.IVA): in entrambi i casi
+// serve l'indirizzo per intero, CAP e provincia compresi.
+export const fatturazioneCompletaDi = (p) => campiFatturazioneMancanti(p).length === 0;
+
+// Prenotazione conclusa: confermata, evento ormai passato, saldata e con i dati di fatturazione a posto.
+// Non è uno stato salvato: si ricava ogni volta dai dati della prenotazione e dalla data odierna
+// (passata da fuori, così la funzione resta pura e testabile). Vive qui perché la usano sia il modulo
+// prenotazioni sia costi/ricavi: una definizione sola, altrimenti le due schede si contraddicono.
+export const prenotazioneCompletata = (p, oggiIso) =>
+  p.stato === 'CONF' && p.data < oggiIso && p.statoPagamento === 'saldato' && fatturazioneCompletaDi(p);
 
 // Scompone un risultato Nominatim nei singoli campi indirizzo
 export const parseIndirizzo = (luogo) => {

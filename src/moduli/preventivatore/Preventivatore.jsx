@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { COSTO_AL_KM, GIORNI_VALIDITA_PREVENTIVO } from '../../lib/costanti';
 import { puoVedere } from '../../lib/permessi';
 import Icona from '../../components/Icona';
+import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
 import {
   formattaDataIT,
   calcolaGiorni,
@@ -30,6 +31,21 @@ const statoPreventivo = (p) => {
 // entrambe le cose in un unico passaggio. Restano nel codice ma nascoste, in attesa di essere
 // eliminate del tutto: rimettere a true per farle ricomparire.
 const SCHEDE_LEGACY_VISIBILI = false;
+
+// Colonne della tabella preventivi (Gestione e Storico): etichetta mostrata e valore su cui ordinare.
+// "Destinazione" ordina sulla località come la si legge in tabella (l'ultima parte dell'indirizzo).
+// "Flag" non ha valore: sono icone, non un dato per cui abbia senso ordinare.
+const COLONNE_PREVENTIVI = [
+  { chiave: 'id', label: 'ID', stile: { width: '18%' }, valore: (p) => (typeof p.id === 'object' ? p.id.codice : p.id) || '' },
+  { chiave: 'data', label: 'Data', stile: { width: '10%' }, valore: (p) => p.dataEmissione || '' },
+  { chiave: 'destinazione', label: 'Destinazione', valore: (p) => (p.destinazione || '').split(',').pop().trim() },
+  { chiave: 'referente', label: 'Referente', valore: (p) => p.nomeReferente || '' },
+  { chiave: 'vendita', label: 'Vendita', valore: (p) => parseFloat(p.totaleVendita) || 0 },
+  { chiave: 'flag', label: 'Flag', stile: { width: '50px' } },
+];
+const VALORI_ORDINAMENTO_PREVENTIVI = Object.fromEntries(
+  COLONNE_PREVENTIVI.filter(c => c.valore).map(c => [c.chiave, c.valore])
+);
 
 function Preventivatore({ user }) {
   // --- NAVIGAZIONE INTERNA AL MODULO ---
@@ -1707,6 +1723,9 @@ function Preventivatore({ user }) {
   );
 
 
+  // Ordinamento condiviso da Gestione e Storico: la tabella è la stessa, quindi lo è anche il criterio scelto.
+  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(VALORI_ORDINAMENTO_PREVENTIVI);
+
   // ====================== TABELLA CONDIVISA (Gestione / Storico) ======================
   // Stesso layout in entrambe le schede: il clic sulla riga espande dettagli e azioni.
   const rigaTabellaPreventivo = (p, index, onApri) => {
@@ -1819,18 +1838,20 @@ function Preventivatore({ user }) {
       <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
           <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-            <th style={{ padding: '8px 10px', width: '18%' }}>ID</th>
-            <th style={{ padding: '8px 10px', width: '10%' }}>Data</th>
-            <th style={{ padding: '8px 10px' }}>Destinazione</th>
-            <th style={{ padding: '8px 10px' }}>Referente</th>
-            <th style={{ padding: '8px 10px' }}>Vendita</th>
-            <th style={{ padding: '8px 10px', width: '50px' }}>Flag</th>
+            {COLONNE_PREVENTIVI.map(c => {
+              const { style: stileOrdinabile, ...propsOrdinabile } = c.valore ? propsTestata(c.chiave) : { style: undefined };
+              return (
+                <th key={c.chiave} {...propsOrdinabile} style={{ padding: '8px 10px', ...c.stile, ...stileOrdinabile }}>
+                  {c.label}{c.valore ? frecciaOrdinamento(c.chiave) : ''}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
           {righe.length === 0
             ? <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
-            : righe.map((p, index) => rigaTabellaPreventivo(p, index, onApri))}
+            : ordina(righe).map((p, index) => rigaTabellaPreventivo(p, index, onApri))}
         </tbody>
       </table>
     </div>
