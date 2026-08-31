@@ -49,6 +49,12 @@ body {
   padding: 20px;
 }
 
+/* Su desktop ampi il contenitore si allarga: le tabelle dei moduli (storico, gestione, calendario)
+   guadagnano spazio invece di lasciare due bande vuote ai lati. Sotto i 1400px resta a 1100px. */
+@media (min-width: 1400px) {
+  .app-container { max-width: 1600px; }
+}
+
 /* TESTATA AZIENDALE */
 .main-header {
   display: flex;
