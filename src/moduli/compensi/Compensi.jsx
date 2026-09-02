@@ -450,7 +450,8 @@ function Compensi({ user }) {
                               <tr style={{ background: '#f8f8f8', borderBottom: '1px solid #ddd' }}>
                                 <th style={{ padding: '8px 10px', width: '82px' }}>Data</th>
                                 <th style={{ padding: '8px 10px', width: '104px' }}>Orario</th>
-                                <th style={{ padding: '8px 10px' }}>Partita</th>
+                                <th style={{ padding: '8px 10px', width: '124px' }}>Partita</th>
+                                <th style={{ padding: '8px 10px' }}>Nominativo</th>
                                 <th style={{ padding: '8px 10px' }}>Pacchetto</th>
                                 <th style={{ padding: '8px 10px' }}>Location</th>
                                 <th style={{ padding: '8px 10px', textAlign: 'right', width: '58px' }}>Ore</th>
@@ -505,10 +506,8 @@ function Compensi({ user }) {
                                               </>
                                             )}
                                           </td>
-                                          <td style={{ padding: '7px 10px' }}>
-                                            {x.partita.id}
-                                            {x.partita.nominativo && <><br /><span style={{ color: '#888', fontSize: '0.75rem' }}>{x.partita.nominativo}</span></>}
-                                          </td>
+                                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{x.partita.id}</td>
+                                          <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}</td>
                                           <td style={{ padding: '7px 10px', color: '#666' }}>{x.partita.pacchettoNome || '—'}</td>
                                           <td style={{ padding: '7px 10px', color: '#666' }}>{locationDi(x.partita)}</td>
                                           <td style={{ padding: '7px 10px', textAlign: 'right' }}>{ore(x.oreAttribuite)}</td>
@@ -561,7 +560,7 @@ function Compensi({ user }) {
                                         <td style={{ padding: '7px 10px' }}>
                                           {righePartite.length === 0 && <strong>{dataBreve(g.data)}</strong>}
                                         </td>
-                                        <td colSpan="4" style={{ padding: '7px 10px', color: '#666' }}>
+                                        <td colSpan="5" style={{ padding: '7px 10px', color: '#666' }}>
                                           <span style={{
                                             fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.05em',
                                             padding: '1px 6px', borderRadius: '3px', marginRight: '6px',
@@ -590,7 +589,7 @@ function Compensi({ user }) {
                                     {righePartite.length === 0 && vociGiornata.length === 0 && (
                                       <tr>
                                         <td style={{ padding: '7px 10px' }}><strong>{dataBreve(g.data)}</strong></td>
-                                        <td colSpan="10" style={{ padding: '7px 10px', color: '#999' }}>Giornata senza partite né voci</td>
+                                        <td colSpan="11" style={{ padding: '7px 10px', color: '#999' }}>Giornata senza partite né voci</td>
                                       </tr>
                                     )}
 
@@ -598,7 +597,7 @@ function Compensi({ user }) {
                                     {piuRighe && (
                                       <tr style={{ background: '#fafafa' }}>
                                         <td></td>
-                                        <td colSpan="4" style={{ padding: '5px 10px', color: '#888', fontSize: '0.76rem' }}>
+                                        <td colSpan="5" style={{ padding: '5px 10px', color: '#888', fontSize: '0.76rem' }}>
                                           totale {dataBreve(g.data)}
                                           {g.tettoApplicato && (
                                             <span style={{ color: '#c62828' }}> · ridotto dal tetto ({euro(g.primaDelTetto)} → {euro(g.compenso)})</span>
@@ -616,7 +615,7 @@ function Compensi({ user }) {
                             </tbody>
                             <tfoot>
                               <tr style={{ borderTop: '2px solid #333', background: '#f5f8fa' }}>
-                                <td style={{ padding: '10px', fontWeight: 'bold' }} colSpan="5">Totale {op.nome}</td>
+                                <td style={{ padding: '10px', fontWeight: 'bold' }} colSpan="6">Totale {op.nome}</td>
                                 <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{ore(op.ore)}</td>
                                 <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compensoOrario)}</td>
                                 <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.totaleRettifiche)}</td>
@@ -625,7 +624,7 @@ function Compensi({ user }) {
                                 <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compenso + op.spese)}</td>
                               </tr>
                               <tr style={{ background: '#f5f8fa' }}>
-                                <td colSpan="11" style={{ padding: '0 10px 10px', color: '#888', fontSize: '0.76rem' }}>
+                                <td colSpan="12" style={{ padding: '0 10px 10px', color: '#888', fontSize: '0.76rem' }}>
                                   {euro(op.compenso)} di compenso soggetto a ritenuta{op.spese > 0 ? ` · ${euro(op.spese)} di rimborsi esenti` : ''} · costo azienda {euro(op.costoAzienda)}
                                 </td>
                               </tr>
