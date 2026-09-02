@@ -5,6 +5,7 @@ export const MODULI_REGISTRY = [
   { id: 'prenotazioni', label: 'Prenotazioni', icon: 'prenotazioni' },
   { id: 'disponibilita', label: 'Disponibilità', icon: 'disponibilita' },
   { id: 'costiricavi', label: 'Costi/Ricavi', icon: 'costiricavi' },
+  { id: 'compensi', label: 'Compensi', icon: 'compensi' },
 ];
 
 // --- REGISTRO SCHEDE/SOTTOSCHEDE PER MODULO (usato per costruire la matrice permessi in Impostazioni > Ruoli) ---
@@ -54,6 +55,14 @@ export const SCHEDE_REGISTRY = {
       { id: 'tabella', label: 'Tabella' },
       { id: 'andamento', label: 'Andamento' },
       { id: 'completate', label: 'Completate' },
+    ],
+  },
+  compensi: {
+    schede: [
+      { id: 'config', label: 'Configuratore' },
+      { id: 'daconsuntivare', label: 'Da consuntivare' },
+      { id: 'consuntivati', label: 'Consuntivati' },
+      { id: 'indicatori', label: 'Indicatori' },
     ],
   },
   disponibilita: {

@@ -6,6 +6,7 @@ import Voucher from './moduli/voucher/Voucher';
 import Prenotazioni from './moduli/prenotazioni/Prenotazioni';
 import CostiRicavi from './moduli/costiricavi/CostiRicavi';
 import Disponibilita from './moduli/disponibilita/Disponibilita';
+import Compensi from './moduli/compensi/Compensi';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
 import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
 import Icona from './components/Icona';
@@ -250,6 +251,8 @@ function App() {
       {currentModule === "costiricavi" && <CostiRicavi user={user} />}
 
       {currentModule === "disponibilita" && <Disponibilita user={user} />}
+
+      {currentModule === "compensi" && <Compensi user={user} />}
 
       {currentModule === "impostazioni" && isAdmin && (
         <Impostazioni
