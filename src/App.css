@@ -795,6 +795,12 @@ td { padding: 8px 12px; vertical-align: middle; }
   color: #166534;
 }
 
+/* Preventivo collegato a una prenotazione: non è più selezionabile finché resta così */
+.badge-stato.prenotato {
+  background-color: #e1f5fe;
+  color: #01579b;
+}
+
 /* Stato derivato: preventivo non confermato oltre la validità dell'offerta */
 .badge-stato.scaduto {
   background-color: #e2e8f0;
