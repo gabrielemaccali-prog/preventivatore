@@ -87,20 +87,26 @@ export const preventivoGiornata = (partite, par) => {
   const compenso = Math.min(primaDelTetto, tetto);
 
   // Quota di compenso di ogni singola partita: serve a mostrare una riga per partita e sarà la base
-  // dell'attribuzione ai costi. Si riparte dentro il blocco in proporzione alle ore attribuite —
-  // così la partita che ha fatto aspettare si porta dietro il costo dell'attesa — e si scala del
-  // taglio del tetto, se ha morso. L'ultima quota assorbe il resto, così la somma torna al centesimo.
+  // dell'attribuzione ai costi.
+  //
+  // Il riparto è cronologico, non proporzionale: si percorrono le ore del blocco in ordine e ognuna
+  // vale la sua tariffa. La prima ora cara appartiene a chi ha aperto il blocco, non si spalma su
+  // tutti. Due partite da 2 ore attaccate fanno quindi 40 e 20, non 30 e 30 — chi è arrivato dopo
+  // trova le ore già scontate. Poi si scala del taglio del tetto, se ha morso, e l'ultima quota
+  // assorbe il resto così la somma torna al centesimo.
   const fattoreTetto = primaDelTetto > 0 ? compenso / primaDelTetto : 1;
   for (const b of dettaglio) {
-    const oreBlocco = b.partite.reduce((s, x) => s + x.oreAttribuite, 0);
     const daRipartire = arrotondaCentesimi(b.compenso * fattoreTetto);
-    let residuo = daRipartire;
+    let orePrecedenti = 0;
+    let assegnato = 0;
     b.partite.forEach((x, i) => {
-      const ultima = i === b.partite.length - 1;
-      x.compenso = ultima || oreBlocco <= 0
-        ? residuo
-        : arrotondaCentesimi(daRipartire * (x.oreAttribuite / oreBlocco));
-      residuo = arrotondaCentesimi(residuo - x.compenso);
+      const oreFinQui = orePrecedenti + x.oreAttribuite;
+      const marginale = compensoDiBlocco(oreFinQui, par) - compensoDiBlocco(orePrecedenti, par);
+      x.compenso = i === b.partite.length - 1
+        ? arrotondaCentesimi(daRipartire - assegnato)
+        : arrotondaCentesimi(marginale * fattoreTetto);
+      assegnato = arrotondaCentesimi(assegnato + x.compenso);
+      orePrecedenti = oreFinQui;
     });
     b.compenso = daRipartire;
   }

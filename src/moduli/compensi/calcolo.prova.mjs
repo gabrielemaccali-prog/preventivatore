@@ -48,20 +48,29 @@ verifica('attesa attribuita alla partita che segue', 2, conAttesa[0].partite[1].
 verifica('la partita prima non porta attesa', 2, conAttesa[0].partite[0].oreAttribuite);
 
 // ---------- quote per singola partita ----------
-// Due partite da 2h attaccate: un blocco da 4h a 60 euro, meta' per ciascuna.
+// Il riparto e' cronologico: chi apre il blocco si prende la prima ora cara.
+// Due partite da 2h attaccate: 30+10 alla prima, 10+10 alla seconda.
 const doppia = giornata([
   { id: 'A', oraInizio: '11:00', oraFine: '13:00' }, { id: 'B', oraInizio: '13:00', oraFine: '15:00' },
 ]);
 verifica('giornata doppia: compenso del blocco', 60, doppia.compenso);
-verifica('quota partita A', 30, doppia.blocchi[0].partite[0].compenso);
-verifica('quota partita B', 30, doppia.blocchi[0].partite[1].compenso);
+verifica('quota di chi apre il blocco', 40, doppia.blocchi[0].partite[0].compenso);
+verifica('quota di chi arriva dopo', 20, doppia.blocchi[0].partite[1].compenso);
 
-// Con un'attesa in mezzo, chi ha fatto aspettare si porta dietro il costo dell'attesa.
+// L'esempio del progetto: 2h + 1h attaccate fanno 40 e 10.
+const edoQuote = giornata([
+  { id: 'A', oraInizio: '14:00', oraFine: '16:00' }, { id: 'B', oraInizio: '16:00', oraFine: '17:00' },
+]);
+verifica('Edoardo: quota della prima partita', 40, edoQuote.blocchi[0].partite[0].compenso);
+verifica('Edoardo: quota della seconda', 10, edoQuote.blocchi[0].partite[1].compenso);
+
+// Con un'attesa in mezzo, chi ha fatto aspettare si porta dietro il costo dell'attesa:
+// le sue ore attribuite sono 2 (una di attesa e una giocata), pagate a tariffa ridotta.
 const attesa = giornata([
   { id: 'A', oraInizio: '14:00', oraFine: '16:00' }, { id: 'B', oraInizio: '17:00', oraFine: '18:00' },
 ]);
-verifica('con attesa: quota di chi precede', 30, attesa.blocchi[0].partite[0].compenso);
-verifica("con attesa: quota di chi l'ha causata", 30, attesa.blocchi[0].partite[1].compenso);
+verifica('con attesa: quota di chi precede', 40, attesa.blocchi[0].partite[0].compenso);
+verifica("con attesa: quota di chi l'ha causata", 20, attesa.blocchi[0].partite[1].compenso);
 
 // Le quote sommano sempre al compenso della giornata, anche quando il tetto taglia.
 const tagliata = giornata([
@@ -76,8 +85,8 @@ const disuguali = giornata([
   { id: 'A', oraInizio: '10:00', oraFine: '13:00' }, { id: 'B', oraInizio: '13:00', oraFine: '14:00' },
 ]);
 verifica('durate diverse: totale', 60, disuguali.compenso);
-verifica('durate diverse: quota della lunga', 45, disuguali.blocchi[0].partite[0].compenso);
-verifica('durate diverse: quota della corta', 15, disuguali.blocchi[0].partite[1].compenso);
+verifica('durate diverse: quota della lunga', 50, disuguali.blocchi[0].partite[0].compenso);
+verifica('durate diverse: quota della corta', 10, disuguali.blocchi[0].partite[1].compenso);
 
 // ---------- lordizzazione ----------
 verifica('lordizza 45 al 20%', 56.25, lordizza(45, 20).lordo);
