@@ -6,6 +6,10 @@ import { toMinutes, oreDaOrari } from '../../lib/utils.js'
 // l'unico posto dove vive la regola dei blocchi.
 // ============================================================
 
+// Gli importi si ripartiscono al centesimo: senza arrotondare, le quote per partita si portano
+// dietro code binarie che poi non tornano con il totale mostrato.
+const arrotondaCentesimi = (n) => Math.round(n * 100) / 100;
+
 // Durata in ore di una partita: dagli orari quando c'è l'ora di fine, altrimenti dalla durata
 // fissa del pacchetto (stessa lettura che fa il modulo prenotazioni).
 export const oreDiPartita = (p) => p.oraFine
@@ -81,6 +85,26 @@ export const preventivoGiornata = (partite, par) => {
   const primaDelTetto = dettaglio.reduce((s, b) => s + b.compenso, 0);
   const tetto = parseFloat(par.tetto_giornaliero) || Infinity;
   const compenso = Math.min(primaDelTetto, tetto);
+
+  // Quota di compenso di ogni singola partita: serve a mostrare una riga per partita e sarà la base
+  // dell'attribuzione ai costi. Si riparte dentro il blocco in proporzione alle ore attribuite —
+  // così la partita che ha fatto aspettare si porta dietro il costo dell'attesa — e si scala del
+  // taglio del tetto, se ha morso. L'ultima quota assorbe il resto, così la somma torna al centesimo.
+  const fattoreTetto = primaDelTetto > 0 ? compenso / primaDelTetto : 1;
+  for (const b of dettaglio) {
+    const oreBlocco = b.partite.reduce((s, x) => s + x.oreAttribuite, 0);
+    const daRipartire = arrotondaCentesimi(b.compenso * fattoreTetto);
+    let residuo = daRipartire;
+    b.partite.forEach((x, i) => {
+      const ultima = i === b.partite.length - 1;
+      x.compenso = ultima || oreBlocco <= 0
+        ? residuo
+        : arrotondaCentesimi(daRipartire * (x.oreAttribuite / oreBlocco));
+      residuo = arrotondaCentesimi(residuo - x.compenso);
+    });
+    b.compenso = daRipartire;
+  }
+
   return { blocchi: dettaglio, ore, oreLavorate, oreAttesa, primaDelTetto, compenso, tettoApplicato: primaDelTetto > tetto };
 };
 

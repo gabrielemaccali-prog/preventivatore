@@ -47,6 +47,38 @@ const conAttesa = blocchiDiGiornata([
 verifica('attesa attribuita alla partita che segue', 2, conAttesa[0].partite[1].oreAttribuite);
 verifica('la partita prima non porta attesa', 2, conAttesa[0].partite[0].oreAttribuite);
 
+// ---------- quote per singola partita ----------
+// Due partite da 2h attaccate: un blocco da 4h a 60 euro, meta' per ciascuna.
+const doppia = giornata([
+  { id: 'A', oraInizio: '11:00', oraFine: '13:00' }, { id: 'B', oraInizio: '13:00', oraFine: '15:00' },
+]);
+verifica('giornata doppia: compenso del blocco', 60, doppia.compenso);
+verifica('quota partita A', 30, doppia.blocchi[0].partite[0].compenso);
+verifica('quota partita B', 30, doppia.blocchi[0].partite[1].compenso);
+
+// Con un'attesa in mezzo, chi ha fatto aspettare si porta dietro il costo dell'attesa.
+const attesa = giornata([
+  { id: 'A', oraInizio: '14:00', oraFine: '16:00' }, { id: 'B', oraInizio: '17:00', oraFine: '18:00' },
+]);
+verifica('con attesa: quota di chi precede', 30, attesa.blocchi[0].partite[0].compenso);
+verifica("con attesa: quota di chi l'ha causata", 30, attesa.blocchi[0].partite[1].compenso);
+
+// Le quote sommano sempre al compenso della giornata, anche quando il tetto taglia.
+const tagliata = giornata([
+  { id: 'A', oraInizio: '08:00', oraFine: '14:00' }, { id: 'B', oraInizio: '14:00', oraFine: '20:00' },
+]);
+const sommaQuote = tagliata.blocchi.flatMap(b => b.partite).reduce((s, x) => s + x.compenso, 0);
+verifica('col tetto: le quote sommano al totale', tagliata.compenso, sommaQuote);
+verifica('col tetto: il totale resta il tetto', 120, tagliata.compenso);
+
+// Durate diverse: la ripartizione segue le ore, non il numero di partite.
+const disuguali = giornata([
+  { id: 'A', oraInizio: '10:00', oraFine: '13:00' }, { id: 'B', oraInizio: '13:00', oraFine: '14:00' },
+]);
+verifica('durate diverse: totale', 60, disuguali.compenso);
+verifica('durate diverse: quota della lunga', 45, disuguali.blocchi[0].partite[0].compenso);
+verifica('durate diverse: quota della corta', 15, disuguali.blocchi[0].partite[1].compenso);
+
 // ---------- lordizzazione ----------
 verifica('lordizza 45 al 20%', 56.25, lordizza(45, 20).lordo);
 verifica('ritenuta su 45 al 20%', 11.25, lordizza(45, 20).ritenuta);
