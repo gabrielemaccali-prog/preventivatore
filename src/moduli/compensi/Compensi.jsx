@@ -598,16 +598,6 @@ function Compensi({ user }) {
                                       </tr>
                                     )}
 
-                                    <tr style={{ borderBottom: '1px solid #e8e8e8' }}>
-                                      <td></td>
-                                      <td colSpan="7" style={{ padding: '2px 14px 8px' }}>
-                                        <button
-                                          type="button"
-                                          onClick={() => setFormVoce({ operatore: op.id, data: g.data, riferimento: null, etichetta: `giornata del ${dataBreve(g.data)}`, tipo: 'spesa', descrizione: '', importo: '' })}
-                                          style={{ background: 'none', border: 'none', color: '#0288d1', cursor: 'pointer', fontSize: '0.75rem', padding: 0 }}
-                                        >+ voce di giornata, non legata a una partita</button>
-                                      </td>
-                                    </tr>
                                   </Fragment>
                                 );
                               })}
@@ -687,21 +677,6 @@ function Compensi({ user }) {
             })()}
 
             <form onSubmit={salvaVoce} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {!formVoce.riferimento && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Giornata</label>
-                  <input type="date" value={formVoce.data} onChange={(e) => setFormVoce(f => ({ ...f, data: e.target.value }))} style={stileInput} />
-                </div>
-              )}
-              {!formVoce.riferimento && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Tipo</label>
-                  <select value={formVoce.tipo} onChange={(e) => setFormVoce(f => ({ ...f, tipo: e.target.value }))} style={stileInput}>
-                    <option value="spesa">Rimborso spese (esente)</option>
-                    <option value="rettifica">Correzione del compenso</option>
-                  </select>
-                </div>
-              )}
               <div>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Descrizione</label>
                 <input
