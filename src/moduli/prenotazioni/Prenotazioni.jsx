@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
-import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata } from '../../lib/utils'
+import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata, toMinutes, oreDaOrari } from '../../lib/utils'
 import { puoVedere } from '../../lib/permessi'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
@@ -33,12 +33,6 @@ const PREN_VUOTA = {
 
 const ivaLabel = (incl) => incl ? 'IVA inclusa' : 'IVA esclusa';
 
-// "HH:MM" -> minuti dalla mezzanotte (null se vuoto/non valido)
-const toMinutes = (hhmm) => {
-  const m = (hhmm || "").match(/^(\d{1,2}):(\d{2})$/);
-  if (!m) return null;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-};
 // Minuti dalla mezzanotte (anche oltre le 24h, es. un turno che sconfina nel giorno dopo) -> "HH:MM"
 const minutiAHHMM = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(Math.round(min % 60)).padStart(2, '0')}`;
 
@@ -134,7 +128,7 @@ const dettagliGoogleCalendar = (p) => {
 // campiAnagrafica serve a risolvere l'indirizzo corrente del campo (nello snapshot della prenotazione c'è solo id/nome).
 const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica) => {
   const inizio = dataOraLocale(p.data, p.oraInizio);
-  const durataOre = p.oraFine ? durataDaOrari(p.oraInizio, p.oraFine) : (parseFloat(p.durataOre) || 1);
+  const durataOre = p.oraFine ? oreDaOrari(p.oraInizio, p.oraFine) : (parseFloat(p.durataOre) || 1);
   const fine = new Date(inizio.getTime() + Math.max(durataOre, 0.25) * 3600000);
   // Sui campi registrati il luogo è l'indirizzo del campo (il nome del campo è già nel titolo dell'evento)
   const campoInfo = p.campoId ? (campiAnagrafica || []).find(c => c.id === p.campoId) : null;
@@ -201,14 +195,6 @@ const COLONNE_PREN = [
 ];
 const VALORI_ORDINAMENTO_PREN = Object.fromEntries(COLONNE_PREN.map(c => [c.chiave, c.valore]));
 
-// Durata in ore dalla differenza inizio/fine (gestisce l'attraversamento della mezzanotte)
-const durataDaOrari = (ini, fin) => {
-  const a = toMinutes(ini), b = toMinutes(fin);
-  if (a == null || b == null) return null;
-  let diff = b - a;
-  if (diff <= 0) diff += 24 * 60;
-  return Math.round((diff / 60) * 100) / 100;
-};
 const numOrNull = (v) => v === "" || v == null ? null : parseFloat(v);
 
 // Normalizza un orario in formato 24h "HH:MM". I minuti si possono omettere: "16" e "16:"
@@ -849,7 +835,7 @@ function Prenotazioni({ user }) {
     setMostraErroriValidazione(false);
 
     const IVA = 0.22;
-    const durataOre = durataFissa ? parseFloat(pac.durataOre) : durataDaOrari(oraInizio, oraFine);
+    const durataOre = durataFissa ? parseFloat(pac.durataOre) : oreDaOrari(oraInizio, oraFine);
     const campo = pac.locationTipo === 'campi' ? campi.find(c => c.id === f.campoId) : null;
     const campoIvaInclCampo = campo ? !!campo.ivaInclusaCampo : false;
     const campoIvaInclRinfresco = campo ? !!campo.ivaInclusaRinfresco : false;
@@ -1031,7 +1017,7 @@ function Prenotazioni({ user }) {
         const durataFissa = pac && pac.durataOre != null && pac.durataOre !== "";
         const locationDaCampi = pac?.locationTipo === 'campi';
         const campoSel = locationDaCampi ? campi.find(c => c.id === formPren.campoId) : null;
-        const durataOre = durataFissa ? parseFloat(pac.durataOre) : durataDaOrari(formPren.oraInizio, formPren.oraFine);
+        const durataOre = durataFissa ? parseFloat(pac.durataOre) : oreDaOrari(formPren.oraInizio, formPren.oraFine);
         // Ora fine effettiva anche per i pacchetti a durata fissa (formPren.oraFine resta vuoto in quel caso), per il calcolo disponibilità operatori
         const oraFineEffettiva = durataFissa && formPren.oraInizio && !isNaN(durataOre)
           ? minutiAHHMM(toMinutes(formPren.oraInizio) + Math.round(durataOre * 60))
@@ -1713,7 +1699,7 @@ function Prenotazioni({ user }) {
           if (h < 6) h += 24; // dopo mezzanotte: continua oltre le 24:00 della griglia
           return (h - 6) * 60 + parseInt(m[2], 10);
         };
-        const durataOreDi = (p) => (p.durataOre != null && p.durataOre !== '' ? parseFloat(p.durataOre) || 1 : (durataDaOrari(p.oraInizio, p.oraFine) || 1));
+        const durataOreDi = (p) => (p.durataOre != null && p.durataOre !== '' ? parseFloat(p.durataOre) || 1 : (oreDaOrari(p.oraInizio, p.oraFine) || 1));
         // Calcola posizione/durata (in minuti dall'inizio griglia) e assegna una "corsia" a ciascuna prenotazione,
         // cosi' quelle con orari sovrapposti nello stesso giorno (o location) si affiancano invece di accavallarsi.
         const calcolaLayoutEventi = (lista) => {

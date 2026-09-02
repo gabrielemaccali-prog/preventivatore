@@ -16,15 +16,19 @@ export const calcolaGiorni = (dataInizio, dataFine) => {
   return diffTime < 0 ? 1 : Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
 };
 
+// "HH:MM" -> minuti dalla mezzanotte (null se vuoto o non valido).
+// Sta qui perché la usano preventivatore, prenotazioni e compensi: un solo modo di leggere un orario,
+// altrimenti due moduli possono contare ore diverse sulla stessa partita — e sui compensi sono soldi.
+export const toMinutes = (hhmm) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+};
+
 // Ore di servizio ricavate dagli orari giornalieri (gestisce l'attraversamento della mezzanotte).
 // Restituisce null finché non sono stati indicati entrambi gli orari.
 export const oreDaOrari = (oraInizio, oraFine) => {
-  const inMinuti = (hhmm) => {
-    const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
-    return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
-  };
-  const a = inMinuti(oraInizio);
-  const b = inMinuti(oraFine);
+  const a = toMinutes(oraInizio);
+  const b = toMinutes(oraFine);
   if (a == null || b == null) return null;
   let diff = b - a;
   if (diff <= 0) diff += 24 * 60;
