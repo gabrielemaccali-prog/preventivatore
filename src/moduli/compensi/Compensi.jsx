@@ -424,12 +424,21 @@ function Compensi({ user }) {
                           {/* Le voci si sommano fra loro: compenso (ore più eventuali correzioni),
                               recensioni e spese. Compaiono solo quando valgono qualcosa. */}
                           <span>{ore(op.ore)}</span>
-                          <span><strong>{euro(op.compenso - op.totaleRecensioni)}</strong> compenso</span>
-                          {op.totaleRecensioni !== 0 && (
-                            <span style={{ color: '#1c7a4e' }}>+{euro(op.totaleRecensioni)} recensioni</span>
+                          {/* La scomposizione compare solo se c'è davvero qualcosa da scomporre:
+                              senza extra ripeterebbe due volte lo stesso importo. */}
+                          {(op.totaleRecensioni !== 0 || op.spese !== 0) && (
+                            <>
+                              <span>{euro(op.compenso - op.totaleRecensioni)} compenso</span>
+                              {op.totaleRecensioni !== 0 && (
+                                <span style={{ color: '#1c7a4e' }}>+{euro(op.totaleRecensioni)} recensioni</span>
+                              )}
+                              {op.spese !== 0 && <span style={{ color: '#b26a00' }}>+{euro(op.spese)} spese</span>}
+                            </>
                           )}
-                          {op.spese !== 0 && <span style={{ color: '#b26a00' }}>+{euro(op.spese)} spese</span>}
-                          <span style={{ color: '#666' }}>{euro(op.costoAzienda)} costo</span>
+                          {/* La somma delle voci sopra: quello che l'operatore incassa davvero.
+                              Il costo azienda, che comprende anche la ritenuta, resta nel piede
+                              della tabella e nelle schede in alto. */}
+                          <span><strong>{euro(op.compenso + op.spese)}</strong> da pagare</span>
                           <button
                             type="button"
                             onClick={(e) => {
