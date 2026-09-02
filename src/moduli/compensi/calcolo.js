@@ -179,12 +179,18 @@ export const preventiviPerOperatore = (prenotazioni, voci, par, giaConsuntivato 
     const compensoOrario = somma(g => g.compenso);
     const aggiunte = somma(g => g.aggiunte);
     const spese = somma(g => g.spese);
+    // Le aggiunte separate per tipo servono ai totali di colonna: rettifiche e recensioni
+    // concorrono entrambe al compenso, ma nella tabella stanno in due colonne diverse.
+    const perTipo = (tipo) => giornate.reduce(
+      (s, g) => s + g.voci.filter(v => v.tipo === tipo).reduce((t, v) => t + (parseFloat(v.importo) || 0), 0), 0
+    );
     const compenso = compensoOrario + aggiunte;
     const { lordo, ritenuta } = lordizza(compenso, par.aliquota_ritenuta);
     return {
       ...voce, giornate,
       ore: somma(g => g.ore), oreAttesa: somma(g => g.oreAttesa),
       compensoOrario, aggiunte, spese, compenso, lordo, ritenuta,
+      totaleRettifiche: perTipo('rettifica'), totaleRecensioni: perTipo('recensione'),
       costoAzienda: lordo + spese,
     };
   }).sort((a, b) => a.nome.localeCompare(b.nome));
