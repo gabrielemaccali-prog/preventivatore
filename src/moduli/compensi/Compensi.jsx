@@ -421,9 +421,14 @@ function Compensi({ user }) {
                           <span style={{ color: '#888', fontSize: '0.8rem' }}>{op.giornate.length} giornat{op.giornate.length === 1 ? 'a' : 'e'}</span>
                         </div>
                         <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+                          {/* Le voci si sommano fra loro: compenso (ore più eventuali correzioni),
+                              recensioni e spese. Compaiono solo quando valgono qualcosa. */}
                           <span>{ore(op.ore)}</span>
-                          <span><strong>{euro(op.compenso)}</strong> netto</span>
-                          {op.spese > 0 && <span style={{ color: '#b26a00' }}>+{euro(op.spese)} spese</span>}
+                          <span><strong>{euro(op.compenso - op.totaleRecensioni)}</strong> compenso</span>
+                          {op.totaleRecensioni !== 0 && (
+                            <span style={{ color: '#1c7a4e' }}>+{euro(op.totaleRecensioni)} recensioni</span>
+                          )}
+                          {op.spese !== 0 && <span style={{ color: '#b26a00' }}>+{euro(op.spese)} spese</span>}
                           <span style={{ color: '#666' }}>{euro(op.costoAzienda)} costo</span>
                           <button
                             type="button"
