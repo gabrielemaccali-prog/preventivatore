@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prova:compensi": "node src/moduli/compensi/calcolo.prova.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",

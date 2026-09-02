@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo, Fragment } from 'react'
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
-import { preventiviPerOperatore, oreDiPartita } from './calcolo'
+import { preventiviPerOperatore, consuntivoDiPeriodo, oreDiPartita } from './calcolo'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
 // finché la riga non è stata letta dal DB, così i campi non partono vuoti al primo render.
@@ -61,29 +61,156 @@ function Compensi({ user }) {
   const [dal, setDal] = useState(primoDelMese);
   const [al, setAl] = useState(oggiIso);
   const [partite, setPartite] = useState([]);
+  const [voci, setVoci] = useState([]);
+  const [periodi, setPeriodi] = useState([]);
   const [caricamentoPartite, setCaricamentoPartite] = useState(false);
   const [operatoreEspanso, setOperatoreEspanso] = useState(null);
+  const [inCorso, setInCorso] = useState(null); // chiave dell'azione in corso, per disabilitare il pulsante giusto
+  const [formVoce, setFormVoce] = useState(null); // { operatore, data, tipo, descrizione, importo }
+  const [formConsuntivo, setFormConsuntivo] = useState(null); // { operatore, dal, al, concordato, forfettario }
+
+  const alEffettivo = al > oggiIso() ? oggiIso() : al;
 
   const fetchPartite = async () => {
     setCaricamentoPartite(true);
     // Solo partite confermate: una FORSE non giocata non genera compenso.
-    const { data, error } = await supabase.from('prenotazioni')
-      .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoNome, pacchettoNome, operatori')
-      .eq('stato', 'CONF')
-      .gte('data', dal)
-      .lte('data', al > oggiIso() ? oggiIso() : al)
-      .order('data', { ascending: false });
+    const [pr, vc, pe] = await Promise.all([
+      supabase.from('prenotazioni')
+        .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoNome, pacchettoNome, operatori')
+        .eq('stato', 'CONF').gte('data', dal).lte('data', alEffettivo).order('data', { ascending: false }),
+      supabase.from('op_voci').select('*').gte('data', dal).lte('data', alEffettivo),
+      // I periodi servono anche fuori dall'intervallo scelto: uno che lo attraversa copre comunque
+      // giornate qui dentro, e quelle non vanno riproposte.
+      supabase.from('op_periodi').select('*').order('dal', { ascending: false }),
+    ]);
     setCaricamentoPartite(false);
-    if (error) { console.error(error); return; }
-    setPartite((data || []).filter(p => (p.operatori || []).length > 0));
+    if (pr.error || vc.error || pe.error) { console.error(pr.error || vc.error || pe.error); return; }
+    setPartite((pr.data || []).filter(p => (p.operatori || []).length > 0));
+    setVoci(vc.data || []);
+    setPeriodi(pe.data || []);
   };
 
   useEffect(() => {
-    if (currentView === 'daconsuntivare') fetchPartite();
+    if (currentView === 'daconsuntivare' || currentView === 'consuntivati') fetchPartite();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView, dal, al]);
 
-  const preventivi = useMemo(() => preventiviPerOperatore(partite, parametri), [partite, parametri]);
+  const giaConsuntivato = useCallback(
+    (operatore, data) => periodi.some(p => p.operatore === operatore && data >= p.dal && data <= p.al),
+    [periodi]
+  );
+
+  const preventivi = useMemo(
+    () => preventiviPerOperatore(partite, voci, parametri, giaConsuntivato),
+    [partite, voci, parametri, giaConsuntivato]
+  );
+
+  // ---- scritture su op_voci ----
+  const recensioneDi = (operatore, prenotazioneId) =>
+    voci.find(v => v.tipo === 'recensione' && v.operatore === operatore && v.riferimento === prenotazioneId);
+
+  const alternaRecensione = async (operatore, data, prenotazioneId) => {
+    const chiave = `rec-${operatore}-${prenotazioneId}`;
+    setInCorso(chiave);
+    const esistente = recensioneDi(operatore, prenotazioneId);
+    const { error } = esistente
+      ? await supabase.from('op_voci').delete().eq('id', esistente.id)
+      : await supabase.from('op_voci').insert([{
+          operatore, data, tipo: 'recensione', riferimento: prenotazioneId,
+          descrizione: 'Recensione positiva',
+          importo: parseFloat(parametri.bonus_recensione) || 0, esente_ritenuta: false,
+        }]);
+    setInCorso(null);
+    if (error) { console.error(error); return alert("Errore nel salvataggio della recensione."); }
+    fetchPartite();
+  };
+
+  const salvaVoce = async (e) => {
+    e.preventDefault();
+    const f = formVoce;
+    if (!f.descrizione.trim()) return alert("Scrivi una descrizione: serve a ricordare a cosa si riferisce.");
+    if (f.importo === '' || isNaN(parseFloat(f.importo))) return alert("Inserisci un importo.");
+    setInCorso('voce');
+    // Le spese sono rimborsi (esenti da ritenuta), le rettifiche correggono il compenso (imponibili).
+    const { error } = await supabase.from('op_voci').insert([{
+      operatore: f.operatore, data: f.data, tipo: f.tipo,
+      riferimento: f.riferimento || null, descrizione: f.descrizione.trim(),
+      importo: parseFloat(f.importo), esente_ritenuta: f.tipo === 'spesa',
+    }]);
+    setInCorso(null);
+    if (error) { console.error(error); return alert("Errore nel salvataggio della voce."); }
+    setFormVoce(null);
+    fetchPartite();
+  };
+
+  const rimuoviVoce = async (v) => {
+    if (!window.confirm(`Eliminare "${v.descrizione || v.tipo}" da ${v.data}?`)) return;
+    setInCorso(`del-${v.id}`);
+    const { error } = await supabase.from('op_voci').delete().eq('id', v.id);
+    setInCorso(null);
+    if (error) { console.error(error); return alert("Errore nell'eliminazione della voce."); }
+    fetchPartite();
+  };
+
+  // ---- consuntivazione ----
+  const anteprimaConsuntivo = useMemo(() => {
+    if (!formConsuntivo) return null;
+    const op = preventivi.find(o => o.id === formConsuntivo.operatore);
+    if (!op) return null;
+    // L'anteprima considera solo le giornate dentro l'intervallo scelto, che può essere piu' stretto
+    // di quello filtrato: quello che si congela deve essere esattamente quello che si vede.
+    const dentro = op.giornate.filter(g => g.data >= formConsuntivo.dal && g.data <= formConsuntivo.al);
+    const somma = (f) => dentro.reduce((s, g) => s + f(g), 0);
+    const parziale = {
+      compensoOrario: somma(g => g.compenso),
+      aggiunte: somma(g => g.aggiunte),
+      spese: somma(g => g.spese),
+      ore: somma(g => g.ore),
+    };
+    return {
+      giornate: dentro,
+      parziale,
+      ...consuntivoDiPeriodo(parziale, { concordato: formConsuntivo.concordato, forfettario: formConsuntivo.forfettario }, parametri),
+    };
+  }, [formConsuntivo, preventivi, parametri]);
+
+  const confermaConsuntivo = async () => {
+    const f = formConsuntivo;
+    const a = anteprimaConsuntivo;
+    if (!a || a.giornate.length === 0) return alert("Nessuna giornata da consuntivare nell'intervallo scelto.");
+    if (f.al < f.dal) return alert("La data finale non può precedere quella iniziale.");
+    if (f.al > oggiIso()) return alert("Non si consuntiva il futuro: la data finale non può superare oggi.");
+    setInCorso('consuntivo');
+    const { error } = await supabase.from('op_periodi').insert([{
+      operatore: f.operatore, dal: f.dal, al: f.al,
+      concordato: f.concordato === '' ? null : parseFloat(f.concordato),
+      rimborso_forfettario: a.rimborsoForfettario,
+      compenso_netto: a.compensoNetto, ritenuta: a.ritenuta, spese: a.spese,
+      costo_azienda: a.costoAzienda,
+      // Snapshot dei parametri: ritoccarli domani non deve riscrivere questo consuntivo.
+      parametri, note: f.note || null,
+    }]);
+    setInCorso(null);
+    if (error) {
+      console.error(error);
+      // Il vincolo di esclusione è la rete di sicurezza contro il doppio pagamento: se scatta,
+      // vale la pena dirlo con parole comprensibili invece del messaggio di Postgres.
+      return alert(error.message.includes('op_periodi_no_sovrapposizioni')
+        ? "Una parte di questo intervallo è già stata consuntivata per questo operatore. Restringi le date."
+        : "Errore nella consuntivazione.");
+    }
+    setFormConsuntivo(null);
+    fetchPartite();
+  };
+
+  const annullaConsuntivo = async (p) => {
+    if (!window.confirm(`Riaprire il periodo di ${p.operatore} dal ${p.dal} al ${p.al}?\n\nLe giornate tornano fra quelle da consuntivare e i valori congelati vengono persi.`)) return;
+    setInCorso(`riapri-${p.id}`);
+    const { error } = await supabase.from('op_periodi').delete().eq('id', p.id);
+    setInCorso(null);
+    if (error) { console.error(error); return alert("Errore nella riapertura del periodo."); }
+    fetchPartite();
+  };
   const totali = useMemo(() => preventivi.reduce((a, o) => ({
     ore: a.ore + o.ore, oreAttesa: a.oreAttesa + o.oreAttesa, compenso: a.compenso + o.compenso, lordo: a.lordo + o.lordo,
   }), { ore: 0, oreAttesa: 0, compenso: 0, lordo: 0 }), [preventivi]);
@@ -188,8 +315,9 @@ function Compensi({ user }) {
         <div className="schermata-storico no-print">
           <h2 style={{ margin: 0 }}>Da consuntivare</h2>
           <p className="descrizione-pagina">
-            Preventivo calcolato dalle partite confermate del periodo, operatore per operatore. È solo una lettura:
-            niente è ancora salvato e nulla entra nei costi. Recensioni, spese e consuntivazione arrivano al passo successivo.
+            Preventivo calcolato dalle partite confermate del periodo, operatore per operatore. Spunta le recensioni,
+            aggiungi spese e correzioni, poi consuntiva: da quel momento i valori si congelano e la giornata non
+            accetta più modifiche. Le giornate già consuntivate spariscono da qui.
           </p>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
@@ -246,10 +374,26 @@ function Compensi({ user }) {
                           <strong style={{ fontSize: '1rem' }}>{op.nome}</strong>
                           <span style={{ color: '#888', fontSize: '0.8rem' }}>{op.giornate.length} giornat{op.giornate.length === 1 ? 'a' : 'e'}</span>
                         </div>
-                        <div style={{ display: 'flex', gap: '18px', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.85rem', flexWrap: 'wrap' }}>
                           <span>{ore(op.ore)}</span>
                           <span><strong>{euro(op.compenso)}</strong> netto</span>
-                          <span style={{ color: '#666' }}>{euro(op.lordo)} costo</span>
+                          {op.spese > 0 && <span style={{ color: '#b26a00' }}>+{euro(op.spese)} spese</span>}
+                          <span style={{ color: '#666' }}>{euro(op.costoAzienda)} costo</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const date = op.giornate.map(g => g.data).sort();
+                              setFormConsuntivo({
+                                operatore: op.id, nome: op.nome,
+                                dal: date[0], al: date[date.length - 1],
+                                concordato: '', forfettario: '', note: '',
+                              });
+                            }}
+                            style={{ ...btnSalva, padding: '6px 12px', fontSize: '0.78rem' }}
+                          >
+                            <Icona nome="consuntivati" size={14} style={{ marginRight: '5px' }} />Consuntiva
+                          </button>
                         </div>
                       </div>
 
@@ -267,6 +411,14 @@ function Compensi({ user }) {
                             <tbody>
                               {op.giornate.map(g => (
                                 <Fragment key={g.data}>
+                                  {g.blocchi.length === 0 && (
+                                    <tr style={{ borderBottom: '1px solid #e8e8e8' }}>
+                                      <td style={{ padding: '8px 16px' }}><strong>{g.data}</strong></td>
+                                      <td style={{ padding: '8px 16px', color: '#888' }}>Nessuna partita, solo voci registrate a mano</td>
+                                      <td style={{ padding: '8px 16px', textAlign: 'right' }}>—</td>
+                                      <td style={{ padding: '8px 16px', textAlign: 'right' }}>—</td>
+                                    </tr>
+                                  )}
                                   {g.blocchi.map((b, i) => (
                                     <tr key={`${g.data}-${i}`} style={{ borderBottom: i === g.blocchi.length - 1 ? '1px solid #e8e8e8' : '1px dashed #f0f0f0' }}>
                                       <td style={{ padding: '8px 16px', whiteSpace: 'nowrap' }}>
@@ -277,20 +429,32 @@ function Compensi({ user }) {
                                           {oraDiMinuti(b.inizio)}–{oraDiMinuti(b.fine)}
                                         </span>
                                         {g.blocchi.length > 1 && <span style={{ color: '#888', fontSize: '0.75rem' }}> · blocco {i + 1} di {g.blocchi.length}</span>}
-                                        <br />
-                                        <span style={{ color: '#666', fontSize: '0.78rem' }}>
-                                          {b.partite.map((x, j) => (
-                                            <Fragment key={x.partita.id}>
-                                              {j > 0 && <span style={{ color: '#bbb' }}> · </span>}
-                                              {x.attesaMin > 0 && (
-                                                <span style={{ color: '#b26a00' }} title="Attesa pagata, attribuita alla partita che segue">
-                                                  attesa {ore(x.attesaMin / 60)} →{' '}
-                                                </span>
-                                              )}
-                                              {x.partita.id} {x.partita.nominativo || ''} ({ore(oreDiPartita(x.partita))})
-                                            </Fragment>
-                                          ))}
-                                        </span>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '4px' }}>
+                                          {b.partite.map(x => {
+                                            const rec = recensioneDi(op.id, x.partita.id);
+                                            const chiave = `rec-${op.id}-${x.partita.id}`;
+                                            return (
+                                              <div key={x.partita.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '0.78rem', color: '#666' }}>
+                                                {x.attesaMin > 0 && (
+                                                  <span style={{ color: '#b26a00' }} title="Attesa pagata, attribuita alla partita che segue">
+                                                    attesa {ore(x.attesaMin / 60)} →
+                                                  </span>
+                                                )}
+                                                <span>{x.partita.id} {x.partita.nominativo || ''} ({ore(oreDiPartita(x.partita))})</span>
+                                                <label
+                                                  title="Una sola recensione per operatore per partita"
+                                                  style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: rec ? '#1c7a4e' : '#999' }}
+                                                >
+                                                  <input
+                                                    type="checkbox" checked={!!rec} disabled={inCorso === chiave}
+                                                    onChange={() => alternaRecensione(op.id, g.data, x.partita.id)}
+                                                  />
+                                                  recensione {rec ? `+${euro(rec.importo)}` : ''}
+                                                </label>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
                                       </td>
                                       <td style={{ padding: '8px 16px', textAlign: 'right' }}>
                                         {ore(b.ore)}
@@ -313,6 +477,47 @@ function Compensi({ user }) {
                                       <td style={{ padding: '6px 16px', textAlign: 'right', fontWeight: 'bold', color: g.tettoApplicato ? '#c62828' : '#333' }}>{euro(g.compenso)}</td>
                                     </tr>
                                   )}
+
+                                  {/* Voci manuali della giornata: spese e rettifiche. Le recensioni
+                                      si gestiscono sulla partita, quindi qui non si ripetono. */}
+                                  <tr style={{ borderBottom: '1px solid #e8e8e8', background: '#fcfcfc' }}>
+                                    <td style={{ padding: '6px 16px' }}></td>
+                                    <td colSpan="3" style={{ padding: '6px 16px' }}>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        {g.voci.filter(v => v.tipo !== 'recensione').map(v => (
+                                          <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.78rem' }}>
+                                            <span style={{
+                                              fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.05em',
+                                              padding: '1px 6px', borderRadius: '3px',
+                                              background: v.tipo === 'spesa' ? '#fff3e0' : '#e8eaf6',
+                                              color: v.tipo === 'spesa' ? '#b26a00' : '#3949ab',
+                                            }}>{v.tipo}</span>
+                                            <span>{v.descrizione}</span>
+                                            <strong>{euro(v.importo)}</strong>
+                                            {v.esente_ritenuta && <span style={{ color: '#999', fontSize: '0.72rem' }}>esente</span>}
+                                            <button
+                                              type="button" className="btn-icon-action" aria-label="Elimina voce" title="Elimina voce"
+                                              disabled={inCorso === `del-${v.id}`} onClick={() => rimuoviVoce(v)}
+                                            >
+                                              <Icona nome="elimina" size={13} style={{ marginRight: 0 }} />
+                                            </button>
+                                          </div>
+                                        ))}
+                                        <div style={{ display: 'flex', gap: '10px' }}>
+                                          <button
+                                            type="button"
+                                            onClick={() => setFormVoce({ operatore: op.id, data: g.data, tipo: 'spesa', descrizione: '', importo: '', riferimento: '' })}
+                                            style={{ background: 'none', border: 'none', color: '#0288d1', cursor: 'pointer', fontSize: '0.76rem', padding: 0 }}
+                                          >+ spesa</button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setFormVoce({ operatore: op.id, data: g.data, tipo: 'rettifica', descrizione: '', importo: '', riferimento: '' })}
+                                            style={{ background: 'none', border: 'none', color: '#0288d1', cursor: 'pointer', fontSize: '0.76rem', padding: 0 }}
+                                          >+ correzione</button>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
                                 </Fragment>
                               ))}
                             </tbody>
@@ -328,9 +533,205 @@ function Compensi({ user }) {
         </div>
       )}
 
-      {currentView === "consuntivati" && puoVedere(user, 'compensi', 'consuntivati') && schedaVuota(
-        "Consuntivati",
-        "Lo storico congelato, e l'accumulo di più periodi per operatore fino al documento."
+      {/* ---------- Aggiunta di una voce manuale ---------- */}
+      {formVoce && (
+        <div className="modal-form-backdrop" onClick={() => setFormVoce(null)}>
+          <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setFormVoce(null)}>✕</button>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>
+              {formVoce.tipo === 'spesa' ? 'Rimborso spese' : 'Correzione del compenso'}
+            </h3>
+            <p style={{ margin: '0 0 15px 0', fontSize: '0.8rem', color: '#777' }}>
+              {formVoce.tipo === 'spesa'
+                ? 'Pranzo, hotel, pedaggi. Esente da ritenuta: si rimborsa e basta, non è compenso.'
+                : "Si aggiunge al compenso senza sovrascrivere il calcolo — l'ora persa nel traffico diventa una riga in più. Un importo negativo lo riduce."}
+            </p>
+            <form onSubmit={salvaVoce} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Giornata</label>
+                <input type="date" value={formVoce.data} onChange={(e) => setFormVoce(f => ({ ...f, data: e.target.value }))} style={stileInput} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Descrizione</label>
+                <input
+                  type="text" autoFocus value={formVoce.descrizione}
+                  placeholder={formVoce.tipo === 'spesa' ? 'es. pranzo' : "es. un'ora in più per il traffico"}
+                  onChange={(e) => setFormVoce(f => ({ ...f, descrizione: e.target.value }))} style={stileInput}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Importo (€)</label>
+                <input
+                  type="number" step="any" value={formVoce.importo}
+                  onChange={(e) => setFormVoce(f => ({ ...f, importo: e.target.value }))} style={stileInput}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button type="submit" style={btnSalva} disabled={inCorso === 'voce'}>
+                  <Icona nome="salva" size={16} style={{ marginRight: '6px' }} />
+                  {inCorso === 'voce' ? 'Salvataggio...' : 'Aggiungi'}
+                </button>
+                <button type="button" className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', borderRadius: '4px', fontSize: '0.85rem' }} onClick={() => setFormVoce(null)}>
+                  <Icona nome="annulla" size={16} style={{ marginRight: '6px' }} />Annulla
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ---------- Consuntivazione di un periodo ---------- */}
+      {formConsuntivo && anteprimaConsuntivo && (
+        <div className="modal-form-backdrop" onClick={() => setFormConsuntivo(null)}>
+          <div className="modal-form-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '560px' }}>
+            <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setFormConsuntivo(null)}>✕</button>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>Consuntiva {formConsuntivo.nome}</h3>
+            <p style={{ margin: '0 0 15px 0', fontSize: '0.8rem', color: '#777' }}>
+              I valori vengono congelati come sono adesso. Dopo, le giornate del periodo non accettano più voci.
+            </p>
+
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 140px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Dal</label>
+                <input type="date" value={formConsuntivo.dal} max={formConsuntivo.al} onChange={(e) => setFormConsuntivo(f => ({ ...f, dal: e.target.value }))} style={stileInput} />
+              </div>
+              <div style={{ flex: '1 1 140px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Al</label>
+                <input type="date" value={formConsuntivo.al} min={formConsuntivo.dal} max={oggiIso()} onChange={(e) => setFormConsuntivo(f => ({ ...f, al: e.target.value }))} style={stileInput} />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '10px' }}>
+              <div style={{ flex: '1 1 180px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Compenso concordato (€)</label>
+                <input
+                  type="number" step="any" min="0" placeholder="lascia vuoto per il calcolo a ore"
+                  value={formConsuntivo.concordato}
+                  onChange={(e) => setFormConsuntivo(f => ({ ...f, concordato: e.target.value }))} style={stileInput}
+                />
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.72rem', color: '#888' }}>Sostituisce le ore; recensioni e correzioni restano sopra.</p>
+              </div>
+              <div style={{ flex: '1 1 180px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Rimborso forfettario (€)</label>
+                <input
+                  type="number" step="any" min="0" placeholder="0"
+                  value={formConsuntivo.forfettario}
+                  onChange={(e) => setFormConsuntivo(f => ({ ...f, forfettario: e.target.value }))} style={stileInput}
+                />
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.72rem', color: '#888' }}>Non cambia quanto incassa: esce dalla base imponibile.</p>
+              </div>
+            </div>
+
+            {/* Anteprima: gli stessi numeri che finiranno congelati */}
+            <div style={{ marginTop: '16px', background: '#f8fafc', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '14px 16px' }}>
+              {anteprimaConsuntivo.giornate.length === 0 ? (
+                <p style={{ margin: 0, color: '#c62828', fontSize: '0.85rem' }}>Nessuna giornata in questo intervallo.</p>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <tbody>
+                    <tr><td style={{ padding: '3px 0', color: '#666' }}>{anteprimaConsuntivo.giornate.length} giornat{anteprimaConsuntivo.giornate.length === 1 ? 'a' : 'e'} · {ore(anteprimaConsuntivo.parziale.ore)}</td><td></td></tr>
+                    <tr>
+                      <td style={{ padding: '3px 0' }}>{anteprimaConsuntivo.concordatoApplicato ? 'Compenso concordato' : 'Compenso a ore'}</td>
+                      <td style={{ textAlign: 'right' }}>{euro(anteprimaConsuntivo.base)}</td>
+                    </tr>
+                    {anteprimaConsuntivo.parziale.aggiunte !== 0 && (
+                      <tr><td style={{ padding: '3px 0' }}>Recensioni e correzioni</td><td style={{ textAlign: 'right' }}>{euro(anteprimaConsuntivo.parziale.aggiunte)}</td></tr>
+                    )}
+                    <tr style={{ borderTop: '1px solid #ddd' }}>
+                      <td style={{ padding: '5px 0', fontWeight: 'bold' }}>Compenso</td>
+                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{euro(anteprimaConsuntivo.compensoNetto)}</td>
+                    </tr>
+                    {anteprimaConsuntivo.rimborsoForfettario > 0 && (
+                      <>
+                        <tr><td style={{ padding: '3px 0', color: '#666' }}>di cui forfettario, esente</td><td style={{ textAlign: 'right', color: '#666' }}>{euro(anteprimaConsuntivo.rimborsoForfettario)}</td></tr>
+                        <tr><td style={{ padding: '3px 0', color: '#666' }}>imponibile</td><td style={{ textAlign: 'right', color: '#666' }}>{euro(anteprimaConsuntivo.imponibile)}</td></tr>
+                      </>
+                    )}
+                    <tr><td style={{ padding: '3px 0' }}>Ritenuta {parametri.aliquota_ritenuta}%</td><td style={{ textAlign: 'right', color: '#c62828' }}>{euro(anteprimaConsuntivo.ritenuta)}</td></tr>
+                    {anteprimaConsuntivo.spese > 0 && (
+                      <tr><td style={{ padding: '3px 0' }}>Rimborso spese</td><td style={{ textAlign: 'right' }}>{euro(anteprimaConsuntivo.spese)}</td></tr>
+                    )}
+                    <tr style={{ borderTop: '2px solid #333' }}>
+                      <td style={{ padding: '6px 0', fontWeight: 'bold' }}>Costo azienda</td>
+                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{euro(anteprimaConsuntivo.costoAzienda)}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: '3px 0', color: '#666' }}>Incassa {formConsuntivo.nome}</td>
+                      <td style={{ textAlign: 'right', color: '#666' }}>{euro(anteprimaConsuntivo.incassaOperatore)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+              <button type="button" onClick={confermaConsuntivo} style={btnSalva} disabled={inCorso === 'consuntivo' || anteprimaConsuntivo.giornate.length === 0}>
+                <Icona nome="salva" size={16} style={{ marginRight: '6px' }} />
+                {inCorso === 'consuntivo' ? 'Salvataggio...' : 'Consuntiva e congela'}
+              </button>
+              <button type="button" className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', borderRadius: '4px', fontSize: '0.85rem' }} onClick={() => setFormConsuntivo(null)}>
+                <Icona nome="annulla" size={16} style={{ marginRight: '6px' }} />Annulla
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== CONSUNTIVATI ===================== */}
+      {currentView === "consuntivati" && puoVedere(user, 'compensi', 'consuntivati') && (
+        <div className="schermata-storico no-print">
+          <h2 style={{ margin: 0 }}>Consuntivati</h2>
+          <p className="descrizione-pagina">
+            Periodi chiusi, con i valori congelati al momento della consuntivazione. Riaprirne uno rimette le sue
+            giornate fra quelle da consuntivare e cancella i valori salvati.
+          </p>
+
+          {periodi.length === 0 ? (
+            <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>
+              Nessun periodo consuntivato.
+            </div>
+          ) : (
+            <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+              <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+                <thead>
+                  <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                    <th style={{ padding: '10px' }}>Operatore</th>
+                    <th style={{ padding: '10px' }}>Periodo</th>
+                    <th style={{ padding: '10px', textAlign: 'right' }}>Compenso</th>
+                    <th style={{ padding: '10px', textAlign: 'right' }}>Ritenuta</th>
+                    <th style={{ padding: '10px', textAlign: 'right' }}>Spese</th>
+                    <th style={{ padding: '10px', textAlign: 'right' }}>Costo azienda</th>
+                    <th style={{ padding: '10px' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {periodi.map(p => (
+                    <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: '10px' }}><strong>{p.operatore}</strong></td>
+                      <td style={{ padding: '10px' }}>
+                        {p.dal === p.al ? p.dal : `${p.dal} → ${p.al}`}
+                        {p.concordato != null && <><br /><span style={{ color: '#0288d1', fontSize: '0.75rem' }}>concordato {euro(p.concordato)}</span></>}
+                        {p.rimborso_forfettario > 0 && <><br /><span style={{ color: '#b26a00', fontSize: '0.75rem' }}>forfettario {euro(p.rimborso_forfettario)}</span></>}
+                      </td>
+                      <td style={{ padding: '10px', textAlign: 'right' }}>{euro(p.compenso_netto)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{euro(p.ritenuta)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right' }}>{euro(p.spese)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(p.costo_azienda)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right' }}>
+                        <button
+                          type="button" className="btn-icon-action" aria-label="Riapri periodo" title="Riapri periodo"
+                          disabled={inCorso === `riapri-${p.id}`} onClick={() => annullaConsuntivo(p)}
+                        >
+                          <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {currentView === "indicatori" && puoVedere(user, 'compensi', 'indicatori') && schedaVuota(

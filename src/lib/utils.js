@@ -1,4 +1,4 @@
-import { MOLTIPLICATORE_TARGET } from './costanti';
+import { MOLTIPLICATORE_TARGET } from './costanti.js';
 
 // Formatta una data in formato italiano (gg/mm/aaaa)
 export const formattaDataIT = (dataStr) => {
