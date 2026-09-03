@@ -84,6 +84,14 @@ const indirizzoDi = (p, campi) => {
   return [nome, via, luogo].filter(Boolean).join(', ');
 };
 
+// Il comune di una giornata, per la riga di rimborso trasferta sul documento. Il luogo è testo
+// libero e modificabile, quindi il comune si ricava da lì invece di essere un campo a parte che
+// potrebbe restare indietro: è l'ultimo pezzo dell'indirizzo, senza la provincia fra parentesi.
+const comuneDa = (luogo) => {
+  const ultimo = (luogo || '').split(',').pop() || '';
+  return ultimo.replace(/\([^)]*\)/g, '').trim();
+};
+
 // Orario della singola partita, non del blocco che la contiene: due partite dello stesso blocco
 // hanno lo stesso intervallo di blocco, e mostrarlo su entrambe le farebbe sembrare lunghe uguali.
 const intervalloPartita = (p) => {
@@ -405,21 +413,18 @@ function Compensi({ user }) {
     if (!elaborazione) return null;
     const p = elaborazione.periodo;
     const elencoSpese = speseDelPeriodo(p);
-    // Ogni giornata porta il suo importo di trasferta: il totale è la loro somma.
-    const importi = elaborazione.giornate.map(g => parseFloat(g.trasferta) || 0);
-    const trasferte = arrotonda2(importi.reduce((s, x) => s + x, 0));
-    const conTrasferta = importi.filter(x => x > 0);
-    // Quando le trasferte valgono tutte uguale il documento le scrive come "3 x 10,00": è la
-    // forma della ricevuta di esempio. Con importi diversi resta la sola somma.
-    const uniforme = conTrasferta.length > 1 && conTrasferta.every(x => x === conTrasferta[0]);
+    // Ogni giornata porta il suo importo di trasferta, e sul documento diventa una riga a sé
+    // col proprio comune: due trasferte sono due spostamenti distinti, non un conteggio.
+    const righeTrasferta = elaborazione.giornate
+      .map(g => ({ comune: comuneDa(g.luogo), data: g.data, importo: arrotonda2(parseFloat(g.trasferta) || 0) }))
+      .filter(r => r.importo > 0);
+    const trasferte = arrotonda2(righeTrasferta.reduce((s, r) => s + r.importo, 0));
     // compenso_netto congelato è già il solo compenso, spese escluse: quelle si sommano ai
     // rimborsi più sotto, non vanno tolte di nuovo qui.
     const compenso = arrotonda2(parseFloat(p.compenso_netto) || 0);
     return {
       ...importiRimborso({ compenso, spese: sommaDi(elencoSpese), trasferte }, p.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta),
-      trasferte, elencoSpese,
-      numero: conTrasferta.length,
-      unitario: uniforme ? conTrasferta[0] : null,
+      trasferte, elencoSpese, righeTrasferta,
     };
   }, [elaborazione, speseDelPeriodo, parametri]);
 
@@ -447,9 +452,8 @@ function Compensi({ user }) {
       // Il contenuto del documento si congela: serve a ristamparlo identico, non a rifarci i conti.
       rimborso: {
         giornate: e.giornate,
-        // L'importo di ogni trasferta vive dentro la sua giornata: qui basta il totale, più il
-        // valore unitario quando è lo stesso ovunque, che è come il documento lo scrive.
-        trasferte: { numero: i.numero, importo: i.unitario, totale: i.trasferte },
+        // Una riga per trasferta col suo comune, come compaiono sul documento, più il totale.
+        trasferte: { righe: i.righeTrasferta, totale: i.trasferte },
         spese: i.elencoSpese.map(v => ({ descrizione: v.descrizione, importo: v.importo, data: v.data })),
         imponibile: i.imponibile, ritenuta: i.ritenuta, netto: i.netto, rimborsi: i.rimborsi, totale: i.totale,
         aliquota: e.periodo.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta,
@@ -849,15 +853,14 @@ function Compensi({ user }) {
               <td style={{ padding: '3px 0', textAlign: 'right' }}>{euro(v.importo)}</td>
             </tr>
           ))}
-          {i.trasferte > 0 && (
-            <tr>
+          {i.righeTrasferta.map((r, k) => (
+            <tr key={`${r.data}-${k}`}>
               <td style={{ padding: '3px 0' }}>
-                Rimborso trasferta forfait
-                {i.unitario != null && ` = ${i.numero} x ${(+i.unitario).toFixed(2).replace('.', ',')}`}
+                Rimborso trasferta forfait{r.comune ? ` ${r.comune}` : ''}
               </td>
-              <td style={{ padding: '3px 0', textAlign: 'right' }}>{euro(i.trasferte)}</td>
+              <td style={{ padding: '3px 0', textAlign: 'right' }}>{euro(r.importo)}</td>
             </tr>
-          )}
+          ))}
 
           <tr>
             <td style={{ padding: '6px 0', borderTop: '1px solid #000', fontWeight: 'bold' }}>TOTALE A PAGARE</td>
