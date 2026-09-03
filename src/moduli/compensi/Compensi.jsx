@@ -866,20 +866,6 @@ function Compensi({ user }) {
         )}
       </nav>
 
-      {/* Sotto-barra di Gestione: le tre fasi in cui passa un compenso, in ordine. */}
-      {currentView === "gestione" && puoVedere(user, 'compensi', 'gestione') && (
-        <nav className="modulo-subnav no-print subnav-segmented" style={{ marginTop: '10px' }}>
-          {puoVedere(user, 'compensi', 'gestione', 'daconsuntivare') && (
-            <button className={`nav-btn ${gestioneTab === 'daconsuntivare' ? 'active' : ''}`} onClick={() => setGestioneTab("daconsuntivare")}><Icona nome="daconsuntivare" />Da consuntivare</button>
-          )}
-          {puoVedere(user, 'compensi', 'gestione', 'rimborsi') && (
-            <button className={`nav-btn ${gestioneTab === 'rimborsi' ? 'active' : ''}`} onClick={() => setGestioneTab("rimborsi")}><Icona nome="rimborsi" />Elabora rimborsi</button>
-          )}
-          {puoVedere(user, 'compensi', 'gestione', 'evasi') && (
-            <button className={`nav-btn ${gestioneTab === 'evasi' ? 'active' : ''}`} onClick={() => setGestioneTab("evasi")}><Icona nome="evasi" />Rimborsi evasi</button>
-          )}
-        </nav>
-      )}
 
       {/* ===================== CONFIGURATORE ===================== */}
       {currentView === "config" && puoVedere(user, 'compensi', 'config') && (
@@ -978,9 +964,28 @@ function Compensi({ user }) {
       )}
 
       {/* ===================== SCHEDE IN ARRIVO ===================== */}
-      {currentView === "gestione" && gestioneTab === "daconsuntivare" && puoVedere(user, 'compensi', 'gestione', 'daconsuntivare') && (
+      {/* ===================== GESTIONE ===================== */}
+      {/* Un contenitore solo, come negli altri moduli: il titolo e la sotto-barra restano fermi
+          mentre cambia la fase, e ogni fase si spiega con la propria riga di descrizione. */}
+      {currentView === "gestione" && puoVedere(user, 'compensi', 'gestione') && (
         <div className="schermata-storico no-print">
-          <h2 style={{ margin: 0 }}>Da consuntivare</h2>
+          <h2 style={{ margin: 0 }}>Gestione</h2>
+          <p className="descrizione-pagina">Le tre fasi che un compenso attraversa, dal calcolo alla ricevuta.</p>
+
+          <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
+            {puoVedere(user, 'compensi', 'gestione', 'daconsuntivare') && (
+              <button className={`nav-btn ${gestioneTab === 'daconsuntivare' ? 'active' : ''}`} onClick={() => setGestioneTab("daconsuntivare")}><Icona nome="daconsuntivare" />Da consuntivare</button>
+            )}
+            {puoVedere(user, 'compensi', 'gestione', 'rimborsi') && (
+              <button className={`nav-btn ${gestioneTab === 'rimborsi' ? 'active' : ''}`} onClick={() => setGestioneTab("rimborsi")}><Icona nome="rimborsi" />Elabora rimborsi</button>
+            )}
+            {puoVedere(user, 'compensi', 'gestione', 'evasi') && (
+              <button className={`nav-btn ${gestioneTab === 'evasi' ? 'active' : ''}`} onClick={() => setGestioneTab("evasi")}><Icona nome="evasi" />Rimborsi evasi</button>
+            )}
+          </nav>
+
+      {gestioneTab === "daconsuntivare" && puoVedere(user, 'compensi', 'gestione', 'daconsuntivare') && (
+        <>
           <p className="descrizione-pagina">
             Tutto quello che resta da consuntivare, operatore per operatore, calcolato dalle partite confermate.
             Spunta le recensioni, aggiungi spese e correzioni, poi consuntiva: da quel momento i valori si congelano
@@ -1077,7 +1082,7 @@ function Compensi({ user }) {
               </div>
             </>
           )}
-        </div>
+        </>
       )}
 
       {/* ---------- Aggiunta di una voce manuale ---------- */}
@@ -1248,25 +1253,22 @@ function Compensi({ user }) {
         </div>
       )}
 
-      {/* ===================== CONSUNTIVATI ===================== */}
-      {/* ===================== ELABORA RIMBORSI ===================== */}
-      {currentView === "gestione" && gestioneTab === "rimborsi" && puoVedere(user, 'compensi', 'gestione', 'rimborsi') && !elaborazione && (
-        <div className="schermata-storico no-print">
-          <h2 style={{ margin: 0 }}>Elabora rimborsi</h2>
+      {gestioneTab === "rimborsi" && puoVedere(user, 'compensi', 'gestione', 'rimborsi') && !elaborazione && (
+        <>
           <p className="descrizione-pagina">
             Periodi consuntivati in attesa della ricevuta. Il dettaglio è ricostruito con i parametri di allora,
             non con quelli di oggi. Ripristinare un periodo rimette le sue giornate fra quelle da consuntivare e
             cancella i valori salvati; le voci registrate restano.
           </p>
           {tabellaPeriodi(daElaborare, "Nessun rimborso da elaborare.", false)}
-        </div>
+        </>
       )}
 
       {/* ---------- Schermata di elaborazione ---------- */}
-      {currentView === "gestione" && gestioneTab === "rimborsi" && elaborazione && importiElaborazione && (
-        <div className="schermata-storico no-print">
+      {gestioneTab === "rimborsi" && elaborazione && importiElaborazione && (
+        <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <h2 style={{ margin: 0 }}>Rimborso · {elaborazione.periodo.operatore}</h2>
+            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Rimborso · {elaborazione.periodo.operatore}</h3>
             <button
               type="button" className="btn-outline-annulla"
               style={{ display: 'inline-flex', alignItems: 'center', padding: '8px 16px', borderRadius: '4px', fontSize: '0.85rem' }}
@@ -1351,18 +1353,18 @@ function Compensi({ user }) {
             Anteprima del documento
           </h3>
           {documentoRimborso(elaborazione.periodo, elaborazione.giornate, importiElaborazione)}
-        </div>
+        </>
       )}
 
-      {/* ===================== RIMBORSI EVASI ===================== */}
-      {currentView === "gestione" && gestioneTab === "evasi" && puoVedere(user, 'compensi', 'gestione', 'evasi') && (
-        <div className="schermata-storico no-print">
-          <h2 style={{ margin: 0 }}>Rimborsi evasi</h2>
+      {gestioneTab === "evasi" && puoVedere(user, 'compensi', 'gestione', 'evasi') && (
+        <>
           <p className="descrizione-pagina">
             Periodi con la ricevuta già emessa. Il documento si ristampa identico a com'era stato generato:
             i suoi importi sono congelati, non ricalcolati.
           </p>
           {tabellaPeriodi(evasi, "Nessun rimborso evaso.", true)}
+        </>
+      )}
         </div>
       )}
 
