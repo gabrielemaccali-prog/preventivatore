@@ -1253,7 +1253,7 @@ function Compensi({ user }) {
         </div>
       )}
 
-      {gestioneTab === "rimborsi" && puoVedere(user, 'compensi', 'gestione', 'rimborsi') && !elaborazione && (
+      {gestioneTab === "rimborsi" && puoVedere(user, 'compensi', 'gestione', 'rimborsi') && (
         <>
           <p className="descrizione-pagina">
             Periodi consuntivati in attesa della ricevuta. Il dettaglio è ricostruito con i parametri di allora,
@@ -1264,25 +1264,22 @@ function Compensi({ user }) {
         </>
       )}
 
-      {/* ---------- Schermata di elaborazione ---------- */}
-      {gestioneTab === "rimborsi" && elaborazione && importiElaborazione && (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Rimborso · {elaborazione.periodo.operatore}</h3>
-            <button
-              type="button" className="btn-outline-annulla"
-              style={{ display: 'inline-flex', alignItems: 'center', padding: '8px 16px', borderRadius: '4px', fontSize: '0.85rem' }}
-              onClick={() => setElaborazione(null)}
-            >
-              <Icona nome="riporta" size={16} style={{ marginRight: '6px' }} />Torna all'elenco
-            </button>
-          </div>
-          <p className="descrizione-pagina">
-            Quello che scrivi qui finisce nel documento. Le giornate sono proposte dalle partite del periodo:
-            correggile o toglile se il documento deve dire altro.
-          </p>
+      {/* ---------- Elaborazione del rimborso ---------- */}
+      {/* Largo, perché contiene l'anteprima del documento: è quella che si sta decidendo, e
+          vederla mentre si compila è tutto il senso della schermata. */}
+      {elaborazione && importiElaborazione && (
+        <div className="modal-form-backdrop" onClick={() => setElaborazione(null)}>
+          <div className="modal-form-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px' }}>
+            <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setElaborazione(null)}>✕</button>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>
+              Rimborso · {elaborazione.periodo.operatore}
+            </h3>
+            <p style={{ margin: '0 0 15px 0', fontSize: '0.8rem', color: '#777' }}>
+              Quello che scrivi qui finisce nel documento. Le giornate sono proposte dalle partite del periodo:
+              correggile o toglile se il documento deve dire altro.
+            </p>
 
-          <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '20px' }}>
+          <div>
             <h3 style={{ margin: '0 0 12px 0', fontSize: '1rem' }}>Giornate</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {elaborazione.giornate.map((g, i) => (
@@ -1341,19 +1338,30 @@ function Compensi({ user }) {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', marginTop: '22px', paddingTop: '16px', borderTop: '1px solid #eee' }}>
+          </div>
+
+            <h4 style={{ margin: '22px 0 10px 0', fontSize: '0.78rem', letterSpacing: '0.09em', textTransform: 'uppercase', color: '#888' }}>
+              Anteprima del documento
+            </h4>
+            <div style={{ border: '1px solid #e0e0e0', borderRadius: '6px', overflow: 'auto', maxHeight: '420px' }}>
+              {documentoRimborso(elaborazione.periodo, elaborazione.giornate, importiElaborazione)}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '18px', paddingTop: '16px', borderTop: '1px solid #eee' }}>
               <button type="button" onClick={evadiRimborso} style={btnSalva} disabled={inCorso === 'rimborso'}>
                 <Icona nome="stampa" size={16} style={{ marginRight: '6px' }} />
                 {inCorso === 'rimborso' ? 'Elaborazione...' : 'Genera il documento e segna evaso'}
               </button>
+              <button
+                type="button" className="btn-outline-annulla"
+                style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', borderRadius: '4px', fontSize: '0.85rem' }}
+                onClick={() => setElaborazione(null)}
+              >
+                <Icona nome="annulla" size={16} style={{ marginRight: '6px' }} />Annulla
+              </button>
             </div>
           </div>
-
-          <h3 style={{ margin: '24px 0 10px 0', fontSize: '0.82rem', letterSpacing: '0.09em', textTransform: 'uppercase', color: '#888' }}>
-            Anteprima del documento
-          </h3>
-          {documentoRimborso(elaborazione.periodo, elaborazione.giornate, importiElaborazione)}
-        </>
+        </div>
       )}
 
       {gestioneTab === "evasi" && puoVedere(user, 'compensi', 'gestione', 'evasi') && (
