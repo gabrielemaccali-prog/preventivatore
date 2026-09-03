@@ -41,6 +41,8 @@ const cellaVoce = (valorizzata, colore) => ({
   fontSize: '0.8rem', fontWeight: valorizzata ? 600 : 400,
   minWidth: '52px', textAlign: 'right',
 });
+// Misure dei pulsanti che stanno in una riga di tabella, uguali per l'outline e per il blu.
+const btnRiga = { display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: '4px', fontSize: '0.78rem', marginLeft: '6px' };
 const btnSalva = { display: 'inline-flex', alignItems: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' };
 
 const arrotonda2 = (n) => Math.round((+n || 0) * 100) / 100;
@@ -734,7 +736,7 @@ function Compensi({ user }) {
                   </th>
                 );
               })}
-              <th style={{ padding: '10px', width: '86px' }}></th>
+              <th style={{ padding: '10px', width: '210px' }}></th>
             </tr>
           </thead>
           <tbody>
@@ -760,36 +762,42 @@ function Compensi({ user }) {
                       {evasi ? euro(p.rimborso?.totale) : euro(p.costo_azienda)}
                     </td>
                     <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {/* Come nelle righe da consuntivare: prima il ritorno indietro in outline,
+                          poi in blu l'azione che porta avanti il periodo. */}
                       {evasi ? (
                         <>
                           <button
-                            type="button" className="btn-icon-action" aria-label="Ristampa il documento" title="Ristampa il documento"
-                            onClick={(e) => { e.stopPropagation(); ristampaRimborso(p); }}
-                          >
-                            <Icona nome="stampa" size={16} style={{ marginRight: 0 }} />
-                          </button>
-                          <button
-                            type="button" className="btn-icon-action" aria-label="Riapri l'elaborazione" title="Riapri l'elaborazione"
+                            type="button" className="btn-outline-annulla" style={btnRiga}
+                            title="Riapri l'elaborazione: il periodo torna fra quelli da elaborare"
                             disabled={inCorso === `riapri-rimborso-${p.id}`}
                             onClick={(e) => { e.stopPropagation(); riapriRimborso(p); }}
                           >
-                            <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
+                            <Icona nome="riporta" size={14} style={{ marginRight: '5px' }} />Riapri
+                          </button>
+                          <button
+                            type="button" style={{ ...btnSalva, ...btnRiga }}
+                            title="Ristampa il documento già emesso"
+                            onClick={(e) => { e.stopPropagation(); ristampaRimborso(p); }}
+                          >
+                            <Icona nome="stampa" size={14} style={{ marginRight: '5px' }} />Ristampa
                           </button>
                         </>
                       ) : (
                         <>
                           <button
-                            type="button" className="btn-icon-action" aria-label="Elabora il rimborso" title="Elabora il rimborso"
-                            onClick={(e) => { e.stopPropagation(); apriElaborazione(p); }}
-                          >
-                            <Icona nome="rimborsi" size={16} style={{ marginRight: 0 }} />
-                          </button>
-                          <button
-                            type="button" className="btn-icon-action" aria-label="Ripristina fra i da consuntivare" title="Ripristina fra i da consuntivare"
+                            type="button" className="btn-outline-annulla" style={btnRiga}
+                            title="Ripristina: il periodo torna fra quelli da consuntivare"
                             disabled={inCorso === `riapri-${p.id}`}
                             onClick={(e) => { e.stopPropagation(); annullaConsuntivo(p); }}
                           >
-                            <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
+                            <Icona nome="riporta" size={14} style={{ marginRight: '5px' }} />Ripristina
+                          </button>
+                          <button
+                            type="button" style={{ ...btnSalva, ...btnRiga }}
+                            title="Elabora il rimborso e produci il documento"
+                            onClick={(e) => { e.stopPropagation(); apriElaborazione(p); }}
+                          >
+                            <Icona nome="rimborsi" size={14} style={{ marginRight: '5px' }} />Elabora
                           </button>
                         </>
                       )}
