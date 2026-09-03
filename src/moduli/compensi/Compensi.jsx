@@ -101,19 +101,18 @@ function Compensi({ user }) {
 
   // Il limite superiore c'è sempre, anche a filtro vuoto: il futuro non si consuntiva.
   const alEffettivo = al && al < oggiIso() ? al : oggiIso();
-  // Il limite inferiore invece è facoltativo: vuoto significa "da sempre".
-  const daData = (q) => (dal ? q.gte('data', dal) : q);
 
+  // Si scarica tutto lo scaricabile una volta sola e si filtra qui: le due schede guardano periodi
+  // diversi — quella dei consuntivati deve poter mostrare partite fuori dal filtro dell'altra —
+  // e con questi volumi restringere lato database non fa risparmiare niente.
   const fetchPartite = async () => {
     setCaricamentoPartite(true);
     // Solo partite confermate: una FORSE non giocata non genera compenso.
     const [pr, vc, pe] = await Promise.all([
-      daData(supabase.from('prenotazioni')
+      supabase.from('prenotazioni')
         .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoNome, pacchettoNome, locationCitta, operatori')
-        .eq('stato', 'CONF').lte('data', alEffettivo)).order('data', { ascending: false }),
-      daData(supabase.from('op_voci').select('*').lte('data', alEffettivo)),
-      // I periodi servono anche fuori dall'intervallo scelto: uno che lo attraversa copre comunque
-      // giornate qui dentro, e quelle non vanno riproposte.
+        .eq('stato', 'CONF').lte('data', oggiIso()).order('data', { ascending: false }),
+      supabase.from('op_voci').select('*').lte('data', oggiIso()),
       supabase.from('op_periodi').select('*').order('dal', { ascending: false }),
     ]);
     setCaricamentoPartite(false);
@@ -125,8 +124,9 @@ function Compensi({ user }) {
 
   useEffect(() => {
     if (currentView === 'daconsuntivare' || currentView === 'consuntivati') fetchPartite();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentView, dal, al]);
+  }, [currentView]);
+
+  const nelFiltro = useCallback((data) => (!dal || data >= dal) && data <= alEffettivo, [dal, alEffettivo]);
 
   const giaConsuntivato = useCallback(
     (operatore, data) => periodi.some(p => p.operatore === operatore && data >= p.dal && data <= p.al),
@@ -134,9 +134,42 @@ function Compensi({ user }) {
   );
 
   const preventivi = useMemo(
-    () => preventiviPerOperatore(partite, voci, parametri, giaConsuntivato),
-    [partite, voci, parametri, giaConsuntivato]
+    () => preventiviPerOperatore(
+      partite.filter(p => nelFiltro(p.data)),
+      voci.filter(v => nelFiltro(v.data)),
+      parametri, giaConsuntivato
+    ),
+    [partite, voci, parametri, giaConsuntivato, nelFiltro]
   );
+
+  // Periodi chiusi, raggruppati per operatore e ricostruiti con gli stessi conti della scheda
+  // precedente. Il dettaglio si ricalcola con i parametri congelati nel periodo, non con quelli
+  // di oggi: altrimenti ritoccare una tariffa cambierebbe sotto gli occhi un consuntivo già chiuso.
+  const consuntivati = useMemo(() => {
+    const perOperatore = new Map();
+    for (const p of periodi) {
+      const parUsati = p.parametri && Object.keys(p.parametri).length ? p.parametri : parametri;
+      const partiteDelPeriodo = partite.filter(x =>
+        x.data >= p.dal && x.data <= p.al && (x.operatori || []).some(o => o.id === p.operatore));
+      const vociDelPeriodo = voci.filter(v =>
+        v.operatore === p.operatore && v.data >= p.dal && v.data <= p.al);
+      const [dettaglio] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
+
+      if (!perOperatore.has(p.operatore)) perOperatore.set(p.operatore, { id: p.operatore, nome: p.operatore, periodi: [] });
+      perOperatore.get(p.operatore).periodi.push({
+        ...p,
+        // Può mancare quando il periodo non ha più partite né voci: la riga resta comunque,
+        // con i suoi valori congelati.
+        dettaglio: dettaglio || null,
+      });
+    }
+    return [...perOperatore.values()].map(o => ({
+      ...o,
+      daPagare: o.periodi.reduce((s, p) => s + (parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0), 0),
+      costoAzienda: o.periodi.reduce((s, p) => s + (parseFloat(p.costo_azienda) || 0), 0),
+      ritenuta: o.periodi.reduce((s, p) => s + (parseFloat(p.ritenuta) || 0), 0),
+    })).sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [periodi, partite, voci, parametri]);
 
   // ---- scritture su op_voci ----
   const recensioneDi = (operatore, prenotazioneId) =>
@@ -274,6 +307,206 @@ function Compensi({ user }) {
     setChiaveInline(null);
     fetchTutto();
   };
+
+  // Dettaglio di un operatore: le stesse righe e le stesse colonne nelle due schede.
+  // In sola lettura (periodi già chiusi) recensioni, rettifiche e spese si mostrano come importi
+  // invece che come comandi: quello che è stato consuntivato non si tocca più.
+  const tabellaDettaglio = (op, soloLettura = false) => (
+    <div style={{ borderTop: '1px solid #eee', overflowX: 'auto' }}>
+      <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.8rem' }}>
+        <thead>
+          <tr style={{ background: '#f8f8f8', borderBottom: '1px solid #ddd' }}>
+            <th style={{ padding: '8px 10px', width: '82px' }}>Data</th>
+            <th style={{ padding: '8px 10px', width: '104px' }}>Orario</th>
+            <th style={{ padding: '8px 10px', width: '124px' }}>Partita</th>
+            <th style={{ padding: '8px 10px' }}>Nominativo</th>
+            <th style={{ padding: '8px 10px' }}>Pacchetto</th>
+            <th style={{ padding: '8px 10px' }}>Location</th>
+            <th style={{ padding: '8px 10px', textAlign: 'right', width: '58px' }}>Ore</th>
+            <th style={{ padding: '8px 10px', textAlign: 'right', width: '80px' }}>Compenso</th>
+            <th style={{ padding: '8px 10px', textAlign: 'right', width: '78px' }}>Rettifica</th>
+            <th style={{ padding: '8px 10px', textAlign: 'center', width: '86px' }}>Recensione</th>
+            <th style={{ padding: '8px 10px', textAlign: 'right', width: '78px' }}>Spese</th>
+            <th style={{ padding: '8px 10px', textAlign: 'right', width: '92px' }}>Totale partita</th>
+          </tr>
+        </thead>
+        <tbody>
+          {op.giornate.map(g => {
+            const righePartite = g.blocchi.flatMap(b => b.partite);
+            // Voci registrate sulla giornata e non su una partita: non se ne creano più, ma se ne
+            // esistono vanno mostrate — nei totali continuano a contare.
+            const vociGiornata = g.voci.filter(v => !v.riferimento);
+            const totaleGiornata = g.compenso + g.aggiunte + g.spese;
+            const piuRighe = righePartite.length + vociGiornata.length > 1;
+
+            return (
+              <Fragment key={g.data}>
+                {righePartite.map(x => {
+                  const rec = recensioneDi(op.id, x.partita.id);
+                  const rettifiche = vociDi(op.id, x.partita.id, 'rettifica');
+                  const spese = vociDi(op.id, x.partita.id, 'spesa');
+                  const totRettifiche = sommaDi(rettifiche);
+                  const totSpese = sommaDi(spese);
+                  const chiaveRec = `rec-${op.id}-${x.partita.id}`;
+                  const apri = (tipo) => setFormVoce({
+                    operatore: op.id, data: g.data, riferimento: x.partita.id,
+                    etichetta: `${x.partita.id}${x.partita.nominativo ? ` · ${x.partita.nominativo}` : ''}`,
+                    tipo, descrizione: '', importo: '',
+                  });
+                  return (
+                    <tr key={x.partita.id}>
+                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+                        {righePartite[0] === x && <strong>{dataBreve(g.data)}</strong>}
+                      </td>
+                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+                        {intervalloPartita(x.partita)}
+                        {/* I blocchi restano nel calcolo ma non si nominano qui. L'attesa invece si
+                            mostra: è denaro che l'operatore incassa senza una partita a spiegarlo. */}
+                        {x.attesaMin > 0 && (
+                          <><br /><span style={{ fontSize: '0.72rem', color: '#b26a00' }}>
+                            +{ore(x.attesaMin / 60)} di attesa, pagata
+                          </span></>
+                        )}
+                      </td>
+                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{x.partita.id}</td>
+                      <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}</td>
+                      <td style={{ padding: '7px 10px', color: '#666' }}>{x.partita.pacchettoNome || '—'}</td>
+                      <td style={{ padding: '7px 10px', color: '#666' }}>{locationDi(x.partita)}</td>
+                      <td style={{ padding: '7px 10px', textAlign: 'right' }}>{ore(x.oreAttribuite)}</td>
+                      <td style={{ padding: '7px 10px', textAlign: 'right' }}>{euro(x.compenso)}</td>
+
+                      <td style={{ padding: '7px 10px', textAlign: 'right' }}>
+                        {soloLettura ? (
+                          totRettifiche !== 0
+                            ? <span title={rettifiche.map(v => `${v.descrizione}: ${euro(v.importo)}`).join('\n')}>{euro(totRettifiche)}</span>
+                            : <span style={{ color: '#ccc' }}>—</span>
+                        ) : (
+                          <button
+                            type="button" onClick={() => apri('rettifica')}
+                            title={rettifiche.length ? rettifiche.map(v => `${v.descrizione}: ${euro(v.importo)}`).join('\n') : 'Aggiungi una correzione'}
+                            style={cellaVoce(totRettifiche !== 0, '#3949ab')}
+                          >
+                            {rettifiche.length ? euro(totRettifiche) : '+'}
+                            {rettifiche.length > 1 && <span style={{ color: '#999', fontSize: '0.7rem' }}> ({rettifiche.length})</span>}
+                          </button>
+                        )}
+                      </td>
+
+                      <td style={{ padding: '7px 10px', textAlign: 'center' }}>
+                        {soloLettura ? (
+                          rec ? <span style={{ color: '#1c7a4e' }}>{euro(rec.importo)}</span> : <span style={{ color: '#ccc' }}>—</span>
+                        ) : (
+                          <label
+                            title="Una sola recensione per operatore per partita"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer', color: rec ? '#1c7a4e' : '#aaa' }}
+                          >
+                            <input
+                              type="checkbox" checked={!!rec} disabled={inCorso === chiaveRec}
+                              onChange={() => alternaRecensione(op.id, g.data, x.partita.id)}
+                            />
+                            {rec ? euro(rec.importo) : '—'}
+                          </label>
+                        )}
+                      </td>
+
+                      <td style={{ padding: '7px 10px', textAlign: 'right' }}>
+                        {soloLettura ? (
+                          totSpese !== 0
+                            ? <span title={spese.map(v => `${v.descrizione}: ${euro(v.importo)}`).join('\n')}>{euro(totSpese)}</span>
+                            : <span style={{ color: '#ccc' }}>—</span>
+                        ) : (
+                          <button
+                            type="button" onClick={() => apri('spesa')}
+                            title={spese.length ? spese.map(v => `${v.descrizione}: ${euro(v.importo)}`).join('\n') : 'Aggiungi un rimborso spese'}
+                            style={cellaVoce(totSpese !== 0, '#b26a00')}
+                          >
+                            {spese.length ? euro(totSpese) : '+'}
+                            {spese.length > 1 && <span style={{ color: '#999', fontSize: '0.7rem' }}> ({spese.length})</span>}
+                          </button>
+                        )}
+                      </td>
+
+                      <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 500 }}>
+                        {euro(x.compenso + totRettifiche + totSpese + (rec ? parseFloat(rec.importo) || 0 : 0))}
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {vociGiornata.map(v => (
+                  <tr key={v.id}>
+                    <td style={{ padding: '7px 10px' }}>
+                      {righePartite.length === 0 && <strong>{dataBreve(g.data)}</strong>}
+                    </td>
+                    <td colSpan="5" style={{ padding: '7px 10px', color: '#666' }}>
+                      <span style={{
+                        fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.05em',
+                        padding: '1px 6px', borderRadius: '3px', marginRight: '6px',
+                        background: v.tipo === 'spesa' ? '#fff3e0' : '#e8eaf6',
+                        color: v.tipo === 'spesa' ? '#b26a00' : '#3949ab',
+                      }}>{v.tipo}</span>
+                      {v.descrizione} <span style={{ color: '#999', fontSize: '0.74rem' }}>· non attribuita a una partita</span>
+                    </td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', color: '#ccc' }}>—</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', color: '#ccc' }}>—</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right' }}>{v.tipo === 'rettifica' ? euro(v.importo) : <span style={{ color: '#ccc' }}>—</span>}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'center', color: '#ccc' }}>—</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right' }}>{v.tipo === 'spesa' ? euro(v.importo) : <span style={{ color: '#ccc' }}>—</span>}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right' }}>
+                      <span style={{ fontWeight: 500, marginRight: '6px' }}>{euro(v.importo)}</span>
+                      {!soloLettura && (
+                        <button
+                          type="button" className="btn-icon-action" aria-label="Elimina voce" title="Elimina voce"
+                          disabled={inCorso === `del-${v.id}`} onClick={() => rimuoviVoce(v)}
+                        >
+                          <Icona nome="elimina" size={13} style={{ marginRight: 0 }} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+
+                {righePartite.length === 0 && vociGiornata.length === 0 && (
+                  <tr>
+                    <td style={{ padding: '7px 10px' }}><strong>{dataBreve(g.data)}</strong></td>
+                    <td colSpan="11" style={{ padding: '7px 10px', color: '#999' }}>Giornata senza partite né voci</td>
+                  </tr>
+                )}
+
+                {/* Totale di giornata: solo quando c'è più di una riga, altrimenti ripete quella sopra. */}
+                {piuRighe && (
+                  <tr style={{ background: '#fafafa' }}>
+                    <td></td>
+                    <td colSpan="5" style={{ padding: '5px 10px', color: '#888', fontSize: '0.76rem' }}>
+                      totale {dataBreve(g.data)}
+                      {g.tettoApplicato && (
+                        <span style={{ color: '#c62828' }}> · ridotto dal tetto ({euro(g.primaDelTetto)} → {euro(g.compenso)})</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '5px 10px', textAlign: 'right', color: '#888' }}>{ore(g.ore)}</td>
+                    <td style={{ padding: '5px 10px', textAlign: 'right', color: '#888' }}>{euro(g.compenso)}</td>
+                    <td colSpan="3"></td>
+                    <td style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(totaleGiornata)}</td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid #333', background: '#f5f8fa' }}>
+            <td style={{ padding: '10px', fontWeight: 'bold' }} colSpan="6">Totale {op.nome}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{ore(op.ore)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compensoOrario)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.totaleRettifiche)}</td>
+            <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold' }}>{euro(op.totaleRecensioni)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.spese)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compenso + op.spese)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
 
   const schedaVuota = (titolo, testo) => (
     <div className="schermata-storico no-print">
@@ -491,191 +724,7 @@ function Compensi({ user }) {
                         </div>
                       </div>
 
-                      {espanso && (
-                        <div style={{ borderTop: '1px solid #eee', overflowX: 'auto' }}>
-                          <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.8rem' }}>
-                            <thead>
-                              <tr style={{ background: '#f8f8f8', borderBottom: '1px solid #ddd' }}>
-                                <th style={{ padding: '8px 10px', width: '82px' }}>Data</th>
-                                <th style={{ padding: '8px 10px', width: '104px' }}>Orario</th>
-                                <th style={{ padding: '8px 10px', width: '124px' }}>Partita</th>
-                                <th style={{ padding: '8px 10px' }}>Nominativo</th>
-                                <th style={{ padding: '8px 10px' }}>Pacchetto</th>
-                                <th style={{ padding: '8px 10px' }}>Location</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right', width: '58px' }}>Ore</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right', width: '80px' }}>Compenso</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right', width: '78px' }}>Rettifica</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'center', width: '86px' }}>Recensione</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right', width: '78px' }}>Spese</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right', width: '92px' }}>Totale partita</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {op.giornate.map(g => {
-                                const righePartite = g.blocchi.flatMap(b => b.partite);
-                                // Voci registrate sulla giornata e non su una partita: non se ne creano
-                                // più, ma se ne esistono vanno mostrate — nei totali continuano a contare.
-                                const vociGiornata = g.voci.filter(v => !v.riferimento);
-                                const totaleGiornata = g.compenso + g.aggiunte + g.spese;
-                                const piuRighe = righePartite.length + vociGiornata.length > 1;
-
-                                return (
-                                  <Fragment key={g.data}>
-                                    {righePartite.map((x, i) => {
-                                      const rec = recensioneDi(op.id, x.partita.id);
-                                      const rettifiche = vociDi(op.id, x.partita.id, 'rettifica');
-                                      const spese = vociDi(op.id, x.partita.id, 'spesa');
-                                      const totRettifiche = sommaDi(rettifiche);
-                                      const totSpese = sommaDi(spese);
-                                      const chiaveRec = `rec-${op.id}-${x.partita.id}`;
-                                      const apri = (tipo) => setFormVoce({
-                                        operatore: op.id, data: g.data, riferimento: x.partita.id,
-                                        etichetta: `${x.partita.id}${x.partita.nominativo ? ` · ${x.partita.nominativo}` : ''}`,
-                                        tipo, descrizione: '', importo: '',
-                                      });
-                                      return (
-                                        <tr key={x.partita.id}>
-                                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                                            {i === 0 && <strong>{dataBreve(g.data)}</strong>}
-                                          </td>
-                                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                                            {intervalloPartita(x.partita)}
-                                            {/* I blocchi restano nel calcolo ma non si nominano qui: è un
-                                                concetto interno alla tariffa, non qualcosa da leggere in
-                                                tabella. L'attesa invece si mostra: è denaro che l'operatore
-                                                incassa senza che ci sia una partita a spiegarlo. */}
-                                            {x.attesaMin > 0 && (
-                                              <><br /><span style={{ fontSize: '0.72rem', color: '#b26a00' }}>
-                                                +{ore(x.attesaMin / 60)} di attesa, pagata
-                                              </span></>
-                                            )}
-                                          </td>
-                                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{x.partita.id}</td>
-                                          <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}</td>
-                                          <td style={{ padding: '7px 10px', color: '#666' }}>{x.partita.pacchettoNome || '—'}</td>
-                                          <td style={{ padding: '7px 10px', color: '#666' }}>{locationDi(x.partita)}</td>
-                                          <td style={{ padding: '7px 10px', textAlign: 'right' }}>{ore(x.oreAttribuite)}</td>
-                                          <td style={{ padding: '7px 10px', textAlign: 'right' }}>{euro(x.compenso)}</td>
-
-                                          <td style={{ padding: '7px 10px', textAlign: 'right' }}>
-                                            <button
-                                              type="button" onClick={() => apri('rettifica')}
-                                              title={rettifiche.length ? rettifiche.map(v => `${v.descrizione}: ${euro(v.importo)}`).join('\n') : 'Aggiungi una correzione'}
-                                              style={cellaVoce(totRettifiche !== 0, '#3949ab')}
-                                            >
-                                              {rettifiche.length ? euro(totRettifiche) : '+'}
-                                              {rettifiche.length > 1 && <span style={{ color: '#999', fontSize: '0.7rem' }}> ({rettifiche.length})</span>}
-                                            </button>
-                                          </td>
-
-                                          <td style={{ padding: '7px 10px', textAlign: 'center' }}>
-                                            <label
-                                              title="Una sola recensione per operatore per partita"
-                                              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer', color: rec ? '#1c7a4e' : '#aaa' }}
-                                            >
-                                              <input
-                                                type="checkbox" checked={!!rec} disabled={inCorso === chiaveRec}
-                                                onChange={() => alternaRecensione(op.id, g.data, x.partita.id)}
-                                              />
-                                              {rec ? euro(rec.importo) : '—'}
-                                            </label>
-                                          </td>
-
-                                          <td style={{ padding: '7px 10px', textAlign: 'right' }}>
-                                            <button
-                                              type="button" onClick={() => apri('spesa')}
-                                              title={spese.length ? spese.map(v => `${v.descrizione}: ${euro(v.importo)}`).join('\n') : 'Aggiungi un rimborso spese'}
-                                              style={cellaVoce(totSpese !== 0, '#b26a00')}
-                                            >
-                                              {spese.length ? euro(totSpese) : '+'}
-                                              {spese.length > 1 && <span style={{ color: '#999', fontSize: '0.7rem' }}> ({spese.length})</span>}
-                                            </button>
-                                          </td>
-
-                                          <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 500 }}>
-                                            {euro(x.compenso + totRettifiche + totSpese + (rec ? parseFloat(rec.importo) || 0 : 0))}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-
-                                    {vociGiornata.map(v => (
-                                      <tr key={v.id}>
-                                        <td style={{ padding: '7px 10px' }}>
-                                          {righePartite.length === 0 && <strong>{dataBreve(g.data)}</strong>}
-                                        </td>
-                                        <td colSpan="5" style={{ padding: '7px 10px', color: '#666' }}>
-                                          <span style={{
-                                            fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.05em',
-                                            padding: '1px 6px', borderRadius: '3px', marginRight: '6px',
-                                            background: v.tipo === 'spesa' ? '#fff3e0' : '#e8eaf6',
-                                            color: v.tipo === 'spesa' ? '#b26a00' : '#3949ab',
-                                          }}>{v.tipo}</span>
-                                          {v.descrizione} <span style={{ color: '#999', fontSize: '0.74rem' }}>· non attribuita a una partita</span>
-                                        </td>
-                                        <td style={{ padding: '7px 10px', textAlign: 'right', color: '#ccc' }}>—</td>
-                                        <td style={{ padding: '7px 10px', textAlign: 'right', color: '#ccc' }}>—</td>
-                                        <td style={{ padding: '7px 10px', textAlign: 'right' }}>{v.tipo === 'rettifica' ? euro(v.importo) : <span style={{ color: '#ccc' }}>—</span>}</td>
-                                        <td style={{ padding: '7px 10px', textAlign: 'center', color: '#ccc' }}>—</td>
-                                        <td style={{ padding: '7px 10px', textAlign: 'right' }}>{v.tipo === 'spesa' ? euro(v.importo) : <span style={{ color: '#ccc' }}>—</span>}</td>
-                                        <td style={{ padding: '7px 10px', textAlign: 'right' }}>
-                                          <span style={{ fontWeight: 500, marginRight: '6px' }}>{euro(v.importo)}</span>
-                                          <button
-                                            type="button" className="btn-icon-action" aria-label="Elimina voce" title="Elimina voce"
-                                            disabled={inCorso === `del-${v.id}`} onClick={() => rimuoviVoce(v)}
-                                          >
-                                            <Icona nome="elimina" size={13} style={{ marginRight: 0 }} />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-
-                                    {righePartite.length === 0 && vociGiornata.length === 0 && (
-                                      <tr>
-                                        <td style={{ padding: '7px 10px' }}><strong>{dataBreve(g.data)}</strong></td>
-                                        <td colSpan="11" style={{ padding: '7px 10px', color: '#999' }}>Giornata senza partite né voci</td>
-                                      </tr>
-                                    )}
-
-                                    {/* Totale di giornata: solo quando c'è più di una riga, altrimenti ripete quella sopra. */}
-                                    {piuRighe && (
-                                      <tr style={{ background: '#fafafa' }}>
-                                        <td></td>
-                                        <td colSpan="5" style={{ padding: '5px 10px', color: '#888', fontSize: '0.76rem' }}>
-                                          totale {dataBreve(g.data)}
-                                          {g.tettoApplicato && (
-                                            <span style={{ color: '#c62828' }}> · ridotto dal tetto ({euro(g.primaDelTetto)} → {euro(g.compenso)})</span>
-                                          )}
-                                        </td>
-                                        <td style={{ padding: '5px 10px', textAlign: 'right', color: '#888' }}>{ore(g.ore)}</td>
-                                        <td style={{ padding: '5px 10px', textAlign: 'right', color: '#888' }}>{euro(g.compenso)}</td>
-                                        <td colSpan="3"></td>
-                                        <td style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(totaleGiornata)}</td>
-                                      </tr>
-                                    )}
-                                  </Fragment>
-                                );
-                              })}
-                            </tbody>
-                            <tfoot>
-                              <tr style={{ borderTop: '2px solid #333', background: '#f5f8fa' }}>
-                                <td style={{ padding: '10px', fontWeight: 'bold' }} colSpan="6">Totale {op.nome}</td>
-                                <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{ore(op.ore)}</td>
-                                <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compensoOrario)}</td>
-                                <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.totaleRettifiche)}</td>
-                                <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold' }}>{euro(op.totaleRecensioni)}</td>
-                                <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.spese)}</td>
-                                <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compenso + op.spese)}</td>
-                              </tr>
-                              <tr style={{ background: '#f5f8fa' }}>
-                                <td colSpan="12" style={{ padding: '0 10px 10px', color: '#888', fontSize: '0.76rem' }}>
-                                  {euro(op.compenso)} di compenso soggetto a ritenuta{op.spese > 0 ? ` · ${euro(op.spese)} di rimborsi esenti` : ''} · costo azienda {euro(op.costoAzienda)}
-                                </td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        </div>
-                      )}
+                      {espanso && tabellaDettaglio(op)}
                     </div>
                   );
                 })}
@@ -863,58 +912,98 @@ function Compensi({ user }) {
         <div className="schermata-storico no-print">
           <h2 style={{ margin: 0 }}>Consuntivati</h2>
           <p className="descrizione-pagina">
-            Periodi chiusi, con i valori congelati al momento della consuntivazione. Riaprirne uno rimette le sue
-            giornate fra quelle da consuntivare e cancella i valori salvati.
+            Periodi chiusi, con i valori congelati al momento della consuntivazione. Il dettaglio è ricostruito
+            con i parametri di allora, non con quelli di oggi. Riaprire un periodo rimette le sue giornate fra
+            quelle da consuntivare e cancella i valori salvati; le voci registrate restano.
           </p>
 
-          {periodi.length === 0 ? (
+          {consuntivati.length === 0 ? (
             <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>
               Nessun periodo consuntivato.
             </div>
           ) : (
-            <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
-              <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
-                <thead>
-                  <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                    <th style={{ padding: '10px' }}>Operatore</th>
-                    <th style={{ padding: '10px' }}>Periodo</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>Compenso</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>Ritenuta</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>Spese</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>Costo azienda</th>
-                    <th style={{ padding: '10px' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {periodi.map(p => (
-                    <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: '10px' }}><strong>{p.operatore}</strong></td>
-                      <td style={{ padding: '10px' }}>
-                        {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
-                        {p.concordato != null && <><br /><span style={{ color: '#0288d1', fontSize: '0.75rem' }}>concordato {euro(p.concordato)}</span></>}
-                        {p.rimborso_forfettario > 0 && <><br /><span style={{ color: '#b26a00', fontSize: '0.75rem' }}>forfettario {euro(p.rimborso_forfettario)}</span></>}
-                      </td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>{euro(p.compenso_netto)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{euro(p.ritenuta)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>{euro(p.spese)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(p.costo_azienda)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
-                        <button
-                          type="button" className="btn-icon-action" aria-label="Riapri periodo" title="Riapri periodo"
-                          disabled={inCorso === `riapri-${p.id}`} onClick={() => annullaConsuntivo(p)}
-                        >
-                          <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
+              {consuntivati.map(op => {
+                const espanso = operatoreEspanso === `cons-${op.id}`;
+                return (
+                  <div key={op.id} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', overflow: 'hidden' }}>
+                    <div
+                      onClick={() => setOperatoreEspanso(espanso ? null : `cons-${op.id}`)}
+                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '14px 16px', cursor: 'pointer' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '0.7rem', color: '#888' }}>{espanso ? '▼' : '▶'}</span>
+                        <strong style={{ fontSize: '1rem' }}>{op.nome}</strong>
+                        <span style={{ color: '#888', fontSize: '0.8rem' }}>
+                          {op.periodi.length} period{op.periodi.length === 1 ? 'o' : 'i'} chius{op.periodi.length === 1 ? 'o' : 'i'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+                        <span style={{ color: '#666' }}>{euro(op.ritenuta)} ritenuta</span>
+                        <span style={{ color: '#666' }}>{euro(op.costoAzienda)} costo</span>
+                        <span><strong>{euro(op.daPagare)}</strong> da pagare</span>
+                      </div>
+                    </div>
+
+                    {espanso && (
+                      <div style={{ borderTop: '1px solid #eee' }}>
+                        {op.periodi.map(p => (
+                          <div key={p.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                            {/* Intestazione del periodo: i valori congelati, non ricalcolati. */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '12px 16px', background: '#f8fafc' }}>
+                              <div>
+                                <strong style={{ fontSize: '0.88rem' }}>
+                                  {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
+                                </strong>
+                                <div style={{ fontSize: '0.76rem', color: '#888', marginTop: '2px' }}>
+                                  {p.concordato != null && <span style={{ color: '#0288d1' }}>compenso concordato {euro(p.concordato)} · </span>}
+                                  {p.rimborso_forfettario > 0 && <span style={{ color: '#b26a00' }}>forfettario {euro(p.rimborso_forfettario)} · </span>}
+                                  consuntivato il {dataBreve((p.creato_il || '').slice(0, 10))}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.82rem', flexWrap: 'wrap' }}>
+                                <span>{euro(p.compenso_netto)} compenso</span>
+                                {p.spese > 0 && <span style={{ color: '#b26a00' }}>+{euro(p.spese)} spese</span>}
+                                <span style={{ color: '#c62828' }}>{euro(p.ritenuta)} ritenuta</span>
+                                <span><strong>{euro((parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0))}</strong> da pagare</span>
+                                <button
+                                  type="button" className="btn-icon-action" aria-label="Riapri periodo" title="Riapri periodo"
+                                  disabled={inCorso === `riapri-${p.id}`}
+                                  onClick={(e) => { e.stopPropagation(); annullaConsuntivo(p); }}
+                                >
+                                  <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Con un compenso concordato il dettaglio sotto mostra il calcolo a ore
+                                che l'importo pattuito ha sostituito: i due totali non coincidono, ed
+                                è giusto così — ma senza dirlo sembra un conto sbagliato. */}
+                            {p.concordato != null && (
+                              <div style={{ padding: '8px 16px', background: '#eef4fb', color: '#1a4f8a', fontSize: '0.78rem' }}>
+                                Il dettaglio qui sotto è il calcolo a ore, sostituito dal compenso concordato di {euro(p.concordato)}:
+                                i due totali non coincidono per costruzione.
+                              </div>
+                            )}
+
+                            {p.dettaglio
+                              ? tabellaDettaglio(p.dettaglio, true)
+                              : (
+                                <div style={{ padding: '16px', color: '#999', fontSize: '0.82rem' }}>
+                                  Nessuna partita né voce in questo intervallo: restano solo i valori congelati.
+                                </div>
+                              )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
       )}
-
       {currentView === "indicatori" && puoVedere(user, 'compensi', 'indicatori') && schedaVuota(
         "Indicatori",
         "Ore per operatore, costo medio orario e incidenza del personale sul margine."
