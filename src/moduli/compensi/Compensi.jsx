@@ -1073,18 +1073,9 @@ function Compensi({ user }) {
                           {/* Le voci si sommano fra loro: compenso (ore più eventuali correzioni),
                               recensioni e spese. Compaiono solo quando valgono qualcosa. */}
                           <span>{ore(op.ore)}</span>
-                          {/* La scomposizione compare solo se c'è davvero qualcosa da scomporre:
-                              senza extra ripeterebbe due volte lo stesso importo. */}
-                          {(op.totaleRecensioni !== 0 || op.spese !== 0) && (
-                            <>
-                              <span>{euro(op.compenso - op.totaleRecensioni)} compenso</span>
-                              {op.totaleRecensioni !== 0 && (
-                                <span style={{ color: '#1c7a4e' }}>+{euro(op.totaleRecensioni)} recensioni</span>
-                              )}
-                              {op.spese !== 0 && <span style={{ color: '#b26a00' }}>+{euro(op.spese)} spese</span>}
-                            </>
-                          )}
-                          {/* La somma delle voci sopra: quello che l'operatore incassa davvero. */}
+                          {/* Solo il totale: la scomposizione in compenso, recensioni e spese sta
+                              nella tabella che si apre qui sotto, e ripeterla in testata
+                              raddoppiava le cifre da leggere per arrivare allo stesso numero. */}
                           <span><strong>{euro(op.compenso + op.spese)}</strong> da pagare</span>
                           <button
                             type="button"
