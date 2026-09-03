@@ -276,6 +276,25 @@ export const ripartisciSuOre = (preventivo, importo, par) => {
   return { ...preventivo, giornate, compensoOrario, compenso, lordo, ritenuta, costoAzienda: lordo + preventivo.spese };
 };
 
+// Importi del documento di rimborso.
+//
+// La ritenuta si paga sul solo compenso: tutto ciò che è rimborso — trasferte, pranzi, caselli —
+// esce dalla base imponibile, perché è denaro anticipato e restituito, non guadagnato. Il compenso
+// che l'operatore incassa è netto, quindi l'imponibile si ottiene lordizzandolo e la ritenuta è la
+// differenza: è un costo che l'azienda aggiunge sopra, non una trattenuta che riduce l'incasso.
+export const importiRimborso = ({ compenso, spese = 0, trasferte = 0 }, aliquotaPerc) => {
+  const netto = arrotondaCentesimi(parseFloat(compenso) || 0);
+  const rimborsi = arrotondaCentesimi((parseFloat(spese) || 0) + (parseFloat(trasferte) || 0));
+  const { lordo, ritenuta } = lordizza(netto, aliquotaPerc);
+  return {
+    imponibile: arrotondaCentesimi(lordo),
+    ritenuta: arrotondaCentesimi(ritenuta),
+    netto,
+    rimborsi,
+    totale: arrotondaCentesimi(netto + rimborsi),
+  };
+};
+
 // Consuntivo di un periodo: prende il preventivo di un operatore e ci applica le due leve del
 // manager. Restituisce i numeri che verranno congelati in op_periodi.
 //

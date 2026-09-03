@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   preventivoGiornata, lordizza, preventiviPerOperatore, consuntivoDiPeriodo, blocchiDiGiornata,
-  ripartisciSuOre, rettificheForfait,
+  ripartisciSuOre, rettificheForfait, importiRimborso,
 } from './calcolo.js';
 
 const par = {
@@ -204,6 +204,27 @@ verifica('forfait: la recensione si somma sopra', 505, conForfaitERecensione.com
 
 // Senza ore non si genera nulla.
 verifica('forfait senza ore: nessuna rettifica', 0, rettificheForfait(soloVoci, 500).length);
+
+// ---------- importi del documento di rimborso ----------
+// L'esempio del PDF: 65 di compenso e 20 di trasferte.
+const doc = importiRimborso({ compenso: 65, trasferte: 20 }, 20);
+verifica('documento: imponibile', 81.25, doc.imponibile);
+verifica('documento: ritenuta', 16.25, doc.ritenuta);
+verifica('documento: netto a pagare', 65, doc.netto);
+verifica('documento: rimborsi', 20, doc.rimborsi);
+verifica('documento: totale a pagare', 85, doc.totale);
+verifica('documento: netto = imponibile - ritenuta', 0, doc.imponibile - doc.ritenuta - doc.netto);
+
+// Le spese registrate a mano si sommano alle trasferte e restano fuori dall'imponibile.
+const conSpese = importiRimborso({ compenso: 505, spese: 50, trasferte: 20 }, 20);
+verifica('con spese: imponibile sul solo compenso', 631.25, conSpese.imponibile);
+verifica('con spese: rimborsi sommati', 70, conSpese.rimborsi);
+verifica('con spese: totale', 575, conSpese.totale);
+
+// Senza rimborsi il totale coincide col netto.
+verifica('senza rimborsi: totale = netto', 65, importiRimborso({ compenso: 65 }, 20).totale);
+// Ad aliquota zero non c'e' nulla da lordizzare.
+verifica('aliquota zero: imponibile = netto', 65, importiRimborso({ compenso: 65 }, 0).imponibile);
 
 // ---------- una spesa in un giorno senza partite ----------
 const soloSpesa = preventiviPerOperatore([], [

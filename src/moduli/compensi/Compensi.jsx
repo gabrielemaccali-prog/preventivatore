@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
-import { preventiviPerOperatore, rettificheForfait, oreDiPartita } from './calcolo'
+import html2pdf from 'html2pdf.js'
+import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita } from './calcolo'
 import { toMinutes } from '../../lib/utils'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
@@ -42,6 +43,7 @@ const cellaVoce = (valorizzata, colore) => ({
 });
 const btnSalva = { display: 'inline-flex', alignItems: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' };
 
+const arrotonda2 = (n) => Math.round((+n || 0) * 100) / 100;
 const euro = (v) => `€${(+v || 0).toFixed(2)}`;
 // Le ore si scrivono senza decimali inutili: 3 invece di 3,00 ma 1,5 resta 1,5.
 const ore = (v) => `${(+v || 0).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')} h`;
@@ -52,6 +54,14 @@ const oraDiMinuti = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0
 const dataBreve = (iso) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
   return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : (iso || "");
+};
+
+const MESI_IT = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+  'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+// "2026-07-10" -> "10 luglio 2026": sul documento la data si scrive per esteso.
+const dataEstesa = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  return m ? `${+m[3]} ${MESI_IT[+m[2] - 1]} ${m[1]}` : (iso || "");
 };
 
 // Dove si è giocato: il nome breve del campo se è uno dei nostri, altrimenti il solo comune.
@@ -337,6 +347,117 @@ function Compensi({ user }) {
   };
 
 
+  // I periodi consuntivati si dividono in due code: quelli che aspettano la ricevuta e quelli
+  // che l'hanno già avuta. La data di evasione basta a distinguerli, senza uno stato che possa
+  // contraddirla.
+  const daElaborare = useMemo(() => consuntivati.filter(p => !p.evaso_il), [consuntivati]);
+  const evasi = useMemo(() => consuntivati.filter(p => p.evaso_il), [consuntivati]);
+
+  // ---- elaborazione del rimborso ----
+  // Un periodo consuntivato aspetta che se ne faccia la ricevuta. Qui si sceglie cosa scrivere
+  // nel documento — le giornate e il rimborso trasferta — e si calcolano gli importi.
+  const [elaborazione, setElaborazione] = useState(null);
+
+  const apriElaborazione = (p) => {
+    // Le giornate si propongono dalle partite del periodo: una riga per data e luogo, come le
+    // scriverebbe a mano il manager. Da lì si correggono o si tolgono.
+    const daPartite = [];
+    for (const g of (p.dettaglio?.giornate || [])) {
+      const luoghi = [...new Set(g.blocchi.flatMap(b => b.partite.map(x => locationDi(x.partita))))];
+      daPartite.push({ data: g.data, luogo: luoghi.filter(l => l !== '—').join(', ') });
+    }
+    const salvate = p.rimborso?.giornate;
+    setElaborazione({
+      periodo: p,
+      giornate: salvate?.length ? salvate : daPartite,
+      // Di norma una trasferta per giornata: il numero si corregge, l'importo unitario si decide qui.
+      numeroTrasferte: String(p.rimborso?.trasferte?.numero ?? daPartite.length),
+      importoTrasferta: String(p.rimborso?.trasferte?.importo ?? ''),
+    });
+  };
+
+  // Le spese registrate a mano sul periodo: vanno elencate come rimborsi ed escono dalla base
+  // imponibile, perché sono denaro anticipato e restituito, non guadagnato.
+  const speseDelPeriodo = useCallback((p) => voci.filter(v =>
+    v.operatore === p.operatore && v.tipo === 'spesa' && v.data >= p.dal && v.data <= p.al), [voci]);
+
+  const importiElaborazione = useMemo(() => {
+    if (!elaborazione) return null;
+    const p = elaborazione.periodo;
+    const elencoSpese = speseDelPeriodo(p);
+    const numero = parseInt(elaborazione.numeroTrasferte, 10) || 0;
+    const unitario = parseFloat(elaborazione.importoTrasferta) || 0;
+    const trasferte = arrotonda2(numero * unitario);
+    // compenso_netto congelato è già il solo compenso, spese escluse: quelle si sommano ai
+    // rimborsi più sotto, non vanno tolte di nuovo qui.
+    const compenso = arrotonda2(parseFloat(p.compenso_netto) || 0);
+    return {
+      ...importiRimborso({ compenso, spese: sommaDi(elencoSpese), trasferte }, p.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta),
+      trasferte, numero, unitario, elencoSpese,
+    };
+  }, [elaborazione, speseDelPeriodo, parametri]);
+
+  const scaricaDocumentoRimborso = (nomeFile) => {
+    const element = document.getElementById('documento-rimborso');
+    html2pdf().set({
+      margin: 12,
+      filename: `${nomeFile}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr'] },
+    }).from(element).save();
+  };
+
+  const evadiRimborso = async () => {
+    const e = elaborazione;
+    const i = importiElaborazione;
+    if (!e || !i) return;
+    if (e.giornate.length === 0) return alert("Indica almeno una giornata: il documento deve dire per cosa si paga.");
+    if (i.numero > 0 && i.unitario <= 0) return alert("Indica l'importo di una trasferta, oppure porta a zero il numero.");
+
+    setInCorso('rimborso');
+    const { error } = await supabase.from('op_periodi').update({
+      evaso_il: new Date().toISOString(),
+      // Il contenuto del documento si congela: serve a ristamparlo identico, non a rifarci i conti.
+      rimborso: {
+        giornate: e.giornate,
+        trasferte: { numero: i.numero, importo: i.unitario, totale: i.trasferte },
+        spese: i.elencoSpese.map(v => ({ descrizione: v.descrizione, importo: v.importo, data: v.data })),
+        imponibile: i.imponibile, ritenuta: i.ritenuta, netto: i.netto, rimborsi: i.rimborsi, totale: i.totale,
+        aliquota: e.periodo.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta,
+      },
+    }).eq('id', e.periodo.id);
+    setInCorso(null);
+    if (error) { console.error(error); return alert("Errore nel salvataggio del rimborso."); }
+
+    scaricaDocumentoRimborso(`rimborso-${e.periodo.operatore.replace(/\s+/g, '-')}-${e.periodo.dal}`);
+    setElaborazione(null);
+    fetchPartite();
+  };
+
+  // Ristampa: si riapre l'elaborazione con i valori congelati, così il documento esce identico
+  // a quello emesso e non ricalcolato con i dati di oggi.
+  const ristampaRimborso = (p) => {
+    if (!p.rimborso) return alert("Questo periodo non ha un documento salvato: riaprilo e rielaboralo.");
+    apriElaborazione(p);
+    // Il nodo del documento esiste solo quando la schermata è a video: si aspetta il render.
+    setTimeout(() => scaricaDocumentoRimborso(`rimborso-${p.operatore.replace(/\s+/g, '-')}-${p.dal}`), 600);
+  };
+
+  const riapriRimborso = async (p) => {
+    if (!window.confirm(
+      `Riaprire l'elaborazione del rimborso di ${p.operatore}?\n\n`
+      + `Il periodo torna fra quelli da elaborare. Il documento salvato resta come bozza, `
+      + `così ripartendo ritrovi giornate e trasferte già impostate.`
+    )) return;
+    setInCorso(`riapri-rimborso-${p.id}`);
+    const { error } = await supabase.from('op_periodi').update({ evaso_il: null }).eq('id', p.id);
+    setInCorso(null);
+    if (error) { console.error(error); return alert("Errore nella riapertura del rimborso."); }
+    fetchPartite();
+  };
+
   // Un parametro per volta, come pacchetti e fasce negli altri configuratori: in sola lettura
   // finché non si preme la matita. Sono le cifre da cui dipendono tutti i compensi, e con le
   // caselle sempre aperte bastava un clic distratto per cambiarne una senza accorgersene.
@@ -556,6 +677,168 @@ function Compensi({ user }) {
           </tr>
         </tfoot>
       </table>
+    </div>
+  );
+
+  // Tabella dei periodi consuntivati, condivisa fra "elabora rimborsi" e "rimborsi evasi":
+  // stesse colonne e stesso dettaglio, cambia solo l'azione in coda alla riga.
+  const tabellaPeriodi = (righe, messaggioVuoto, evasi) => {
+    if (righe.length === 0) {
+      return (
+        <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>
+          {messaggioVuoto}
+        </div>
+      );
+    }
+    return (
+      <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+        <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+          <thead>
+            <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+              {COLONNE_CONSUNTIVATI.map(c => {
+                const { style: stileOrdinabile, ...propsOrdinabile } = testataConsuntivati(c.chiave);
+                return (
+                  <th key={c.chiave} {...propsOrdinabile} style={{ padding: '10px', ...c.stile, ...stileOrdinabile }}>
+                    {c.label}{frecciaConsuntivati(c.chiave)}
+                  </th>
+                );
+              })}
+              <th style={{ padding: '10px', width: '86px' }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordinaConsuntivati(righe).map(p => {
+              const espansa = operatoreEspanso === `cons-${p.id}`;
+              return (
+                <Fragment key={p.id}>
+                  <tr
+                    onClick={() => setOperatoreEspanso(espansa ? null : `cons-${p.id}`)}
+                    style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee' }}
+                  >
+                    <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                      <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
+                      <strong>{p.operatore}</strong>
+                    </td>
+                    <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                      {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
+                    </td>
+                    <td style={{ padding: '8px 10px', color: '#64748b', whiteSpace: 'nowrap' }}>
+                      {dataBreve((p.creato_il || '').slice(0, 10))}
+                    </td>
+                    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>
+                      {evasi ? euro(p.rimborso?.totale) : euro(p.costo_azienda)}
+                    </td>
+                    <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {evasi ? (
+                        <>
+                          <button
+                            type="button" className="btn-icon-action" aria-label="Ristampa il documento" title="Ristampa il documento"
+                            onClick={(e) => { e.stopPropagation(); ristampaRimborso(p); }}
+                          >
+                            <Icona nome="stampa" size={16} style={{ marginRight: 0 }} />
+                          </button>
+                          <button
+                            type="button" className="btn-icon-action" aria-label="Riapri l'elaborazione" title="Riapri l'elaborazione"
+                            disabled={inCorso === `riapri-rimborso-${p.id}`}
+                            onClick={(e) => { e.stopPropagation(); riapriRimborso(p); }}
+                          >
+                            <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button" className="btn-icon-action" aria-label="Elabora il rimborso" title="Elabora il rimborso"
+                            onClick={(e) => { e.stopPropagation(); apriElaborazione(p); }}
+                          >
+                            <Icona nome="rimborsi" size={16} style={{ marginRight: 0 }} />
+                          </button>
+                          <button
+                            type="button" className="btn-icon-action" aria-label="Ripristina fra i da consuntivare" title="Ripristina fra i da consuntivare"
+                            disabled={inCorso === `riapri-${p.id}`}
+                            onClick={(e) => { e.stopPropagation(); annullaConsuntivo(p); }}
+                          >
+                            <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                  {espansa && (
+                    <tr className="riga-espandibile-dettaglio">
+                      <td colSpan={5} onClick={(e) => e.stopPropagation()} style={{ padding: 0 }}>
+                        {p.dettaglio
+                          ? tabellaDettaglio(p.dettaglio, true)
+                          : (
+                            <div style={{ padding: '16px', color: '#999', fontSize: '0.82rem' }}>
+                              Nessuna partita né voce in questo intervallo: restano solo i valori congelati.
+                            </div>
+                          )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // Il documento di rimborso. È lo stesso nodo che html2pdf cattura, quindi l'anteprima a video
+  // e il PDF non possono divergere: quello che si vede è quello che si stampa.
+  const documentoRimborso = (periodo, giornate, i) => (
+    <div className="documento-preventivo" id="documento-rimborso" style={{ background: '#fff', padding: '34px 40px', maxWidth: '820px', color: '#000', fontSize: '0.9rem', lineHeight: 1.6 }}>
+      <div style={{ marginBottom: '30px', fontWeight: 'bold' }}>{periodo.operatore}</div>
+
+      <div style={{ marginBottom: '26px' }}>
+        Per Animazione svolta nei giorni:
+        <ul style={{ margin: '6px 0 0 0', paddingLeft: '22px' }}>
+          {giornate.map((g, k) => (
+            <li key={k}>{dataEstesa(g.data)}{g.luogo ? `, ${g.luogo}` : ''}</li>
+          ))}
+        </ul>
+      </div>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <tbody>
+          <tr>
+            <td style={{ padding: '3px 0' }}>COMPENSO LORDO</td>
+            <td style={{ padding: '3px 0', textAlign: 'right', width: '150px' }}>{euro(i.imponibile)}</td>
+          </tr>
+          <tr>
+            <td style={{ padding: '3px 0' }}>A DEDURRE RITENUTA D'ACCONTO {periodo.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta}%</td>
+            <td style={{ padding: '3px 0', textAlign: 'right' }}>{euro(i.ritenuta)}</td>
+          </tr>
+          <tr>
+            <td style={{ padding: '6px 0', borderTop: '1px solid #000', fontWeight: 'bold' }}>NETTO A PAGARE</td>
+            <td style={{ padding: '6px 0', borderTop: '1px solid #000', textAlign: 'right', fontWeight: 'bold' }}>{euro(i.netto)}</td>
+          </tr>
+
+          {i.elencoSpese.map(v => (
+            <tr key={v.id}>
+              <td style={{ padding: '3px 0' }}>Rimborso {v.descrizione}</td>
+              <td style={{ padding: '3px 0', textAlign: 'right' }}>{euro(v.importo)}</td>
+            </tr>
+          ))}
+          {i.numero > 0 && (
+            <tr>
+              <td style={{ padding: '3px 0' }}>
+                Rimborso trasferta forfait = {i.numero} x {(+i.unitario).toFixed(2).replace('.', ',')}
+              </td>
+              <td style={{ padding: '3px 0', textAlign: 'right' }}>{euro(i.trasferte)}</td>
+            </tr>
+          )}
+
+          <tr>
+            <td style={{ padding: '6px 0', borderTop: '1px solid #000', fontWeight: 'bold' }}>TOTALE A PAGARE</td>
+            <td style={{ padding: '6px 0', borderTop: '1px solid #000', textAlign: 'right', fontWeight: 'bold' }}>{euro(i.totale)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style={{ marginTop: '34px' }}>Milano, {dataBreve(oggiIso())}</div>
     </div>
   );
 
@@ -966,91 +1249,121 @@ function Compensi({ user }) {
       )}
 
       {/* ===================== CONSUNTIVATI ===================== */}
-      {currentView === "gestione" && gestioneTab === "rimborsi" && puoVedere(user, 'compensi', 'gestione', 'rimborsi') && (
+      {/* ===================== ELABORA RIMBORSI ===================== */}
+      {currentView === "gestione" && gestioneTab === "rimborsi" && puoVedere(user, 'compensi', 'gestione', 'rimborsi') && !elaborazione && (
         <div className="schermata-storico no-print">
-          <h2 style={{ margin: 0 }}>Consuntivati</h2>
+          <h2 style={{ margin: 0 }}>Elabora rimborsi</h2>
           <p className="descrizione-pagina">
-            Periodi chiusi, con i valori congelati al momento della consuntivazione. Il dettaglio è ricostruito
-            con i parametri di allora, non con quelli di oggi. Ripristinare un periodo rimette le sue giornate
-            fra quelle da consuntivare e cancella i valori salvati; le voci registrate restano.
+            Periodi consuntivati in attesa della ricevuta. Il dettaglio è ricostruito con i parametri di allora,
+            non con quelli di oggi. Ripristinare un periodo rimette le sue giornate fra quelle da consuntivare e
+            cancella i valori salvati; le voci registrate restano.
           </p>
-
-          {consuntivati.length === 0 ? (
-            <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>
-              Nessun periodo consuntivato.
-            </div>
-          ) : (
-            <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
-              <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
-                <thead>
-                  <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                    {COLONNE_CONSUNTIVATI.map(c => {
-                      const { style: stileOrdinabile, ...propsOrdinabile } = testataConsuntivati(c.chiave);
-                      return (
-                        <th key={c.chiave} {...propsOrdinabile} style={{ padding: '10px', ...c.stile, ...stileOrdinabile }}>
-                          {c.label}{frecciaConsuntivati(c.chiave)}
-                        </th>
-                      );
-                    })}
-                    <th style={{ padding: '10px', width: '44px' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ordinaConsuntivati(consuntivati).map(p => {
-                    const espansa = operatoreEspanso === `cons-${p.id}`;
-                    return (
-                      <Fragment key={p.id}>
-                        <tr
-                          onClick={() => setOperatoreEspanso(espansa ? null : `cons-${p.id}`)}
-                          style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee' }}
-                        >
-                          <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
-                            <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
-                            <strong>{p.operatore}</strong>
-                          </td>
-                          <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
-                            {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
-                          </td>
-                          <td style={{ padding: '8px 10px', color: '#64748b', whiteSpace: 'nowrap' }}>
-                            {dataBreve((p.creato_il || '').slice(0, 10))}
-                          </td>
-                          <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(p.costo_azienda)}</td>
-                          <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                            <button
-                              type="button" className="btn-icon-action"
-                              aria-label="Ripristina fra i da consuntivare" title="Ripristina fra i da consuntivare"
-                              disabled={inCorso === `riapri-${p.id}`}
-                              onClick={(e) => { e.stopPropagation(); annullaConsuntivo(p); }}
-                            >
-                              <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
-                            </button>
-                          </td>
-                        </tr>
-                        {espansa && (
-                          <tr className="riga-espandibile-dettaglio">
-                            <td colSpan={5} onClick={(e) => e.stopPropagation()} style={{ padding: 0 }}>
-                              {p.dettaglio
-                                ? tabellaDettaglio(p.dettaglio, true)
-                                : (
-                                  <div style={{ padding: '16px', color: '#999', fontSize: '0.82rem' }}>
-                                    Nessuna partita né voce in questo intervallo: restano solo i valori congelati.
-                                  </div>
-                                )}
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {tabellaPeriodi(daElaborare, "Nessun rimborso da elaborare.", false)}
         </div>
       )}
-      {currentView === "gestione" && gestioneTab === "evasi" && puoVedere(user, 'compensi', 'gestione', 'evasi') && schedaVuota(
-        "Rimborsi evasi",
-        "I periodi il cui rimborso è già stato elaborato, con il documento pronto da ristampare."
+
+      {/* ---------- Schermata di elaborazione ---------- */}
+      {currentView === "gestione" && gestioneTab === "rimborsi" && elaborazione && importiElaborazione && (
+        <div className="schermata-storico no-print">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <h2 style={{ margin: 0 }}>Rimborso · {elaborazione.periodo.operatore}</h2>
+            <button
+              type="button" className="btn-outline-annulla"
+              style={{ display: 'inline-flex', alignItems: 'center', padding: '8px 16px', borderRadius: '4px', fontSize: '0.85rem' }}
+              onClick={() => setElaborazione(null)}
+            >
+              <Icona nome="riporta" size={16} style={{ marginRight: '6px' }} />Torna all'elenco
+            </button>
+          </div>
+          <p className="descrizione-pagina">
+            Quello che scrivi qui finisce nel documento. Le giornate sono proposte dalle partite del periodo:
+            correggile o toglile se il documento deve dire altro.
+          </p>
+
+          <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '20px' }}>
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '1rem' }}>Giornate</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {elaborazione.giornate.map((g, i) => (
+                <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    type="date" value={g.data}
+                    onChange={(e) => setElaborazione(s => ({ ...s, giornate: s.giornate.map((x, j) => j === i ? { ...x, data: e.target.value } : x) }))}
+                    style={{ ...stileInput, width: '160px' }}
+                  />
+                  <input
+                    type="text" value={g.luogo} placeholder="indirizzo o località"
+                    onChange={(e) => setElaborazione(s => ({ ...s, giornate: s.giornate.map((x, j) => j === i ? { ...x, luogo: e.target.value } : x) }))}
+                    style={{ ...stileInput, flex: '1 1 260px' }}
+                  />
+                  <button
+                    type="button" className="btn-icon-action" aria-label="Togli la giornata" title="Togli la giornata"
+                    onClick={() => setElaborazione(s => ({ ...s, giornate: s.giornate.filter((_, j) => j !== i) }))}
+                  >
+                    <Icona nome="elimina" size={14} style={{ marginRight: 0 }} />
+                  </button>
+                </div>
+              ))}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setElaborazione(s => ({ ...s, giornate: [...s.giornate, { data: s.periodo.dal, luogo: '' }] }))}
+                  style={{ background: 'none', border: 'none', color: '#0288d1', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}
+                >+ giornata</button>
+              </div>
+            </div>
+
+            <h3 style={{ margin: '22px 0 4px 0', fontSize: '1rem' }}>Rimborso trasferta forfait</h3>
+            <p style={{ margin: '0 0 12px 0', fontSize: '0.8rem', color: '#777', maxWidth: '66ch' }}>
+              Quante trasferte riconosci e quanto vale ciascuna. Come le altre spese resta fuori dalla base
+              imponibile: è denaro anticipato e restituito, non guadagnato.
+            </p>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Numero</label>
+                <input
+                  type="number" min="0" step="1" value={elaborazione.numeroTrasferte}
+                  onChange={(e) => setElaborazione(s => ({ ...s, numeroTrasferte: e.target.value }))}
+                  style={{ ...stileInput, width: '100px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Importo unitario (€)</label>
+                <input
+                  type="number" min="0" step="any" value={elaborazione.importoTrasferta}
+                  onChange={(e) => setElaborazione(s => ({ ...s, importoTrasferta: e.target.value }))}
+                  style={{ ...stileInput, width: '140px' }}
+                />
+              </div>
+              <div style={{ paddingBottom: '9px', color: '#666', fontSize: '0.85rem' }}>
+                = <strong>{euro(importiElaborazione.trasferte)}</strong>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '22px', paddingTop: '16px', borderTop: '1px solid #eee' }}>
+              <button type="button" onClick={evadiRimborso} style={btnSalva} disabled={inCorso === 'rimborso'}>
+                <Icona nome="stampa" size={16} style={{ marginRight: '6px' }} />
+                {inCorso === 'rimborso' ? 'Elaborazione...' : 'Genera il documento e segna evaso'}
+              </button>
+            </div>
+          </div>
+
+          <h3 style={{ margin: '24px 0 10px 0', fontSize: '0.82rem', letterSpacing: '0.09em', textTransform: 'uppercase', color: '#888' }}>
+            Anteprima del documento
+          </h3>
+          {documentoRimborso(elaborazione.periodo, elaborazione.giornate, importiElaborazione)}
+        </div>
+      )}
+
+      {/* ===================== RIMBORSI EVASI ===================== */}
+      {currentView === "gestione" && gestioneTab === "evasi" && puoVedere(user, 'compensi', 'gestione', 'evasi') && (
+        <div className="schermata-storico no-print">
+          <h2 style={{ margin: 0 }}>Rimborsi evasi</h2>
+          <p className="descrizione-pagina">
+            Periodi con la ricevuta già emessa. Il documento si ristampa identico a com'era stato generato:
+            i suoi importi sono congelati, non ricalcolati.
+          </p>
+          {tabellaPeriodi(evasi, "Nessun rimborso evaso.", true)}
+        </div>
       )}
 
       {currentView === "indicatori" && puoVedere(user, 'compensi', 'indicatori') && schedaVuota(
