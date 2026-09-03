@@ -60,9 +60,15 @@ export const SCHEDE_REGISTRY = {
   compensi: {
     schede: [
       { id: 'config', label: 'Configuratore' },
-      { id: 'daconsuntivare', label: 'Da consuntivare' },
-      { id: 'consuntivati', label: 'Consuntivati' },
-      { id: 'rimborso', label: 'Elabora rimborso' },
+      {
+        id: 'gestione',
+        label: 'Gestione',
+        sottoschede: [
+          { id: 'daconsuntivare', label: 'Da consuntivare' },
+          { id: 'rimborsi', label: 'Elabora rimborsi' },
+          { id: 'evasi', label: 'Rimborsi evasi' },
+        ],
+      },
       { id: 'indicatori', label: 'Indicatori' },
     ],
   },

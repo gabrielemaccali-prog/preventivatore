@@ -28,6 +28,8 @@ const REGISTRO_ICONE = {
   campi: IconMapPin,
   nuovaPrenotazione: IconCalendarPlus,
   gestione: IconBell,
+  evasi: IconCircleCheck,
+  rimborsi: IconCurrencyEuro,
   calendario: IconCalendar,
   riepiloghi: IconClipboardList,
   attesaPagamento: IconClock,

@@ -67,8 +67,10 @@ const intervalloPartita = (p) => {
 };
 
 function Compensi({ user }) {
-  const primaScheda = ['config', 'daconsuntivare', 'consuntivati', 'rimborso', 'indicatori'].find(s => puoVedere(user, 'compensi', s)) || 'config';
+  const primaScheda = ['config', 'gestione', 'indicatori'].find(s => puoVedere(user, 'compensi', s)) || 'config';
   const [currentView, setCurrentView] = useState(primaScheda);
+  const primaSottoscheda = ['daconsuntivare', 'rimborsi', 'evasi'].find(s => puoVedere(user, 'compensi', 'gestione', s)) || 'daconsuntivare';
+  const [gestioneTab, setGestioneTab] = useState(primaSottoscheda);
 
   const [parametri, setParametri] = useState(PARAMETRI_DEFAULT);
   const [salvataggio, setSalvataggio] = useState(false);
@@ -123,7 +125,7 @@ function Compensi({ user }) {
   };
 
   useEffect(() => {
-    if (currentView === 'daconsuntivare' || currentView === 'consuntivati') fetchPartite();
+    if (currentView === 'gestione') fetchPartite();
   }, [currentView]);
 
   const nelFiltro = useCallback((data) => (!dal || data >= dal) && data <= alEffettivo, [dal, alEffettivo]);
@@ -573,19 +575,28 @@ function Compensi({ user }) {
         {puoVedere(user, 'compensi', 'config') && (
           <button className={`nav-btn ${currentView === 'config' ? 'active' : ''}`} onClick={() => setCurrentView("config")}><Icona nome="configuratore" />Configuratore</button>
         )}
-        {puoVedere(user, 'compensi', 'daconsuntivare') && (
-          <button className={`nav-btn ${currentView === 'daconsuntivare' ? 'active' : ''}`} onClick={() => setCurrentView("daconsuntivare")}><Icona nome="daconsuntivare" />Da consuntivare</button>
-        )}
-        {puoVedere(user, 'compensi', 'consuntivati') && (
-          <button className={`nav-btn ${currentView === 'consuntivati' ? 'active' : ''}`} onClick={() => setCurrentView("consuntivati")}><Icona nome="consuntivati" />Consuntivati</button>
-        )}
-        {puoVedere(user, 'compensi', 'rimborso') && (
-          <button className={`nav-btn ${currentView === 'rimborso' ? 'active' : ''}`} onClick={() => setCurrentView("rimborso")}><Icona nome="rimborso" />Elabora rimborso</button>
+        {puoVedere(user, 'compensi', 'gestione') && (
+          <button className={`nav-btn ${currentView === 'gestione' ? 'active' : ''}`} onClick={() => setCurrentView("gestione")}><Icona nome="gestione" />Gestione</button>
         )}
         {puoVedere(user, 'compensi', 'indicatori') && (
           <button className={`nav-btn ${currentView === 'indicatori' ? 'active' : ''}`} onClick={() => setCurrentView("indicatori")}><Icona nome="indicatori" />Indicatori</button>
         )}
       </nav>
+
+      {/* Sotto-barra di Gestione: le tre fasi in cui passa un compenso, in ordine. */}
+      {currentView === "gestione" && puoVedere(user, 'compensi', 'gestione') && (
+        <nav className="modulo-subnav no-print subnav-segmented" style={{ marginTop: '10px' }}>
+          {puoVedere(user, 'compensi', 'gestione', 'daconsuntivare') && (
+            <button className={`nav-btn ${gestioneTab === 'daconsuntivare' ? 'active' : ''}`} onClick={() => setGestioneTab("daconsuntivare")}><Icona nome="daconsuntivare" />Da consuntivare</button>
+          )}
+          {puoVedere(user, 'compensi', 'gestione', 'rimborsi') && (
+            <button className={`nav-btn ${gestioneTab === 'rimborsi' ? 'active' : ''}`} onClick={() => setGestioneTab("rimborsi")}><Icona nome="rimborsi" />Elabora rimborsi</button>
+          )}
+          {puoVedere(user, 'compensi', 'gestione', 'evasi') && (
+            <button className={`nav-btn ${gestioneTab === 'evasi' ? 'active' : ''}`} onClick={() => setGestioneTab("evasi")}><Icona nome="evasi" />Rimborsi evasi</button>
+          )}
+        </nav>
+      )}
 
       {/* ===================== CONFIGURATORE ===================== */}
       {currentView === "config" && puoVedere(user, 'compensi', 'config') && (
@@ -684,7 +695,7 @@ function Compensi({ user }) {
       )}
 
       {/* ===================== SCHEDE IN ARRIVO ===================== */}
-      {currentView === "daconsuntivare" && puoVedere(user, 'compensi', 'daconsuntivare') && (
+      {currentView === "gestione" && gestioneTab === "daconsuntivare" && puoVedere(user, 'compensi', 'gestione', 'daconsuntivare') && (
         <div className="schermata-storico no-print">
           <h2 style={{ margin: 0 }}>Da consuntivare</h2>
           <p className="descrizione-pagina">
@@ -955,7 +966,7 @@ function Compensi({ user }) {
       )}
 
       {/* ===================== CONSUNTIVATI ===================== */}
-      {currentView === "consuntivati" && puoVedere(user, 'compensi', 'consuntivati') && (
+      {currentView === "gestione" && gestioneTab === "rimborsi" && puoVedere(user, 'compensi', 'gestione', 'rimborsi') && (
         <div className="schermata-storico no-print">
           <h2 style={{ margin: 0 }}>Consuntivati</h2>
           <p className="descrizione-pagina">
@@ -1037,9 +1048,9 @@ function Compensi({ user }) {
           )}
         </div>
       )}
-      {currentView === "rimborso" && puoVedere(user, 'compensi', 'rimborso') && schedaVuota(
-        "Elabora rimborso",
-        "Sui periodi già consuntivati: rimborso forfettario esente, calcolo della ritenuta d'acconto e documento cumulativo per operatore."
+      {currentView === "gestione" && gestioneTab === "evasi" && puoVedere(user, 'compensi', 'gestione', 'evasi') && schedaVuota(
+        "Rimborsi evasi",
+        "I periodi il cui rimborso è già stato elaborato, con il documento pronto da ristampare."
       )}
 
       {currentView === "indicatori" && puoVedere(user, 'compensi', 'indicatori') && schedaVuota(
