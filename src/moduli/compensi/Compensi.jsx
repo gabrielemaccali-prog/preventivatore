@@ -4,6 +4,7 @@ import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import { preventiviPerOperatore, rettificheForfait, oreDiPartita } from './calcolo'
 import { toMinutes } from '../../lib/utils'
+import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
 // finché la riga non è stata letta dal DB, così i campi non partono vuoti al primo render.
@@ -158,6 +159,17 @@ function Compensi({ user }) {
     // comunque, con i suoi valori congelati.
     return { ...p, dettaglio: dettaglio || null };
   }), [periodi, partite, voci, parametri]);
+
+  // Colonne ordinabili della tabella consuntivati, come negli storici degli altri moduli.
+  // Il periodo ordina sulla data d'inizio: è quella con cui si cerca un periodo, non la fine.
+  const COLONNE_CONSUNTIVATI = [
+    { chiave: 'operatore', label: 'Operatore', valore: (p) => p.operatore || '' },
+    { chiave: 'periodo', label: 'Periodo', valore: (p) => p.dal || '' },
+    { chiave: 'consuntivato', label: 'Consuntivato il', valore: (p) => p.creato_il || '' },
+    { chiave: 'costo', label: 'Costo', stile: { textAlign: 'right' }, valore: (p) => parseFloat(p.costo_azienda) || 0 },
+  ];
+  const { ordina: ordinaConsuntivati, propsTestata: testataConsuntivati, frecciaOrdinamento: frecciaConsuntivati } =
+    useOrdinamentoTabella(Object.fromEntries(COLONNE_CONSUNTIVATI.map(c => [c.chiave, c.valore])));
 
   // ---- scritture su op_voci ----
   const recensioneDi = (operatore, prenotazioneId) =>
@@ -924,15 +936,19 @@ function Compensi({ user }) {
               <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
                 <thead>
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                    <th style={{ padding: '10px' }}>Operatore</th>
-                    <th style={{ padding: '10px' }}>Periodo</th>
-                    <th style={{ padding: '10px' }}>Consuntivato il</th>
-                    <th style={{ padding: '10px', textAlign: 'right' }}>Costo</th>
+                    {COLONNE_CONSUNTIVATI.map(c => {
+                      const { style: stileOrdinabile, ...propsOrdinabile } = testataConsuntivati(c.chiave);
+                      return (
+                        <th key={c.chiave} {...propsOrdinabile} style={{ padding: '10px', ...c.stile, ...stileOrdinabile }}>
+                          {c.label}{frecciaConsuntivati(c.chiave)}
+                        </th>
+                      );
+                    })}
                     <th style={{ padding: '10px', width: '44px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {consuntivati.map(p => {
+                  {ordinaConsuntivati(consuntivati).map(p => {
                     const espansa = operatoreEspanso === `cons-${p.id}`;
                     return (
                       <Fragment key={p.id}>
