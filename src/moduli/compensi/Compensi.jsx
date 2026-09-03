@@ -68,6 +68,22 @@ const dataEstesa = (iso) => {
 // All'operatore serve riconoscere il posto, non l'indirizzo per esteso.
 const locationDi = (p) => p.campoNome || p.locationCitta || '—';
 
+// Indirizzo per esteso, come va scritto sul documento: "Via Europa 7, Cormano (MI)".
+// Il nome breve del campo non basta — a chi legge la ricevuta non dice dove si è andati — quindi
+// si antepone solo quando c'è, e sempre davanti all'indirizzo vero.
+const indirizzoDi = (p, campi) => {
+  const campo = p.campoId ? campi.find(c => c.id === p.campoId) : null;
+  const via = campo ? campo.indirizzo : p.locationIndirizzo;
+  const citta = campo ? campo.citta : p.locationCitta;
+  const prov = campo ? campo.provincia : p.locationProvincia;
+  const uguali = (a, b) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
+  // Provincia e nome breve si omettono quando ripetono il comune: "Cormano, Via Europa,
+  // Cormano (Cormano)" dice tre volte la stessa cosa.
+  const luogo = [citta, prov && !uguali(prov, citta) ? `(${prov})` : null].filter(Boolean).join(' ');
+  const nome = campo && !uguali(campo.nome, citta) ? campo.nome : null;
+  return [nome, via, luogo].filter(Boolean).join(', ');
+};
+
 // Orario della singola partita, non del blocco che la contiene: due partite dello stesso blocco
 // hanno lo stesso intervallo di blocco, e mostrarlo su entrambe le farebbe sembrare lunghe uguali.
 const intervalloPartita = (p) => {
@@ -106,6 +122,7 @@ function Compensi({ user }) {
   const [partite, setPartite] = useState([]);
   const [voci, setVoci] = useState([]);
   const [periodi, setPeriodi] = useState([]);
+  const [campi, setCampi] = useState([]);
   const [caricamentoPartite, setCaricamentoPartite] = useState(false);
   const [operatoreEspanso, setOperatoreEspanso] = useState(null);
   const [inCorso, setInCorso] = useState(null); // chiave dell'azione in corso, per disabilitare il pulsante giusto
@@ -120,18 +137,22 @@ function Compensi({ user }) {
   const fetchPartite = async () => {
     setCaricamentoPartite(true);
     // Solo partite confermate: una FORSE non giocata non genera compenso.
-    const [pr, vc, pe] = await Promise.all([
+    const [pr, vc, pe, ca] = await Promise.all([
       supabase.from('prenotazioni')
-        .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoNome, pacchettoNome, locationCitta, operatori')
+        .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoId, campoNome, pacchettoNome, locationIndirizzo, locationCitta, locationProvincia, pacchettoNome, operatori')
         .eq('stato', 'CONF').lte('data', oggiIso()).order('data', { ascending: false }),
       supabase.from('op_voci').select('*').lte('data', oggiIso()),
       supabase.from('op_periodi').select('*').order('dal', { ascending: false }),
+      // Serve per l'indirizzo delle giornate sul documento: la prenotazione porta solo il nome
+      // breve del campo, l'indirizzo per esteso sta in anagrafica.
+      supabase.from('pren_campi').select('id, nome, indirizzo, cap, citta, provincia'),
     ]);
     setCaricamentoPartite(false);
-    if (pr.error || vc.error || pe.error) { console.error(pr.error || vc.error || pe.error); return; }
+    if (pr.error || vc.error || pe.error || ca.error) { console.error(pr.error || vc.error || pe.error || ca.error); return; }
     setPartite((pr.data || []).filter(p => (p.operatori || []).length > 0));
     setVoci(vc.data || []);
     setPeriodi(pe.data || []);
+    setCampi(ca.data || []);
   };
 
   useEffect(() => {
@@ -361,18 +382,17 @@ function Compensi({ user }) {
   const apriElaborazione = (p) => {
     // Le giornate si propongono dalle partite del periodo: una riga per data e luogo, come le
     // scriverebbe a mano il manager. Da lì si correggono o si tolgono.
+    // La trasferta è un attributo della giornata, non un conteggio a parte: si va in un posto
+    // diverso ogni volta, e due giornate possono valere importi diversi.
     const daPartite = [];
     for (const g of (p.dettaglio?.giornate || [])) {
-      const luoghi = [...new Set(g.blocchi.flatMap(b => b.partite.map(x => locationDi(x.partita))))];
-      daPartite.push({ data: g.data, luogo: luoghi.filter(l => l !== '—').join(', ') });
+      const luoghi = [...new Set(g.blocchi.flatMap(b => b.partite.map(x => indirizzoDi(x.partita, campi))))];
+      daPartite.push({ data: g.data, luogo: luoghi.filter(Boolean).join(' · '), trasferta: '' });
     }
     const salvate = p.rimborso?.giornate;
     setElaborazione({
       periodo: p,
-      giornate: salvate?.length ? salvate : daPartite,
-      // Di norma una trasferta per giornata: il numero si corregge, l'importo unitario si decide qui.
-      numeroTrasferte: String(p.rimborso?.trasferte?.numero ?? daPartite.length),
-      importoTrasferta: String(p.rimborso?.trasferte?.importo ?? ''),
+      giornate: (salvate?.length ? salvate : daPartite).map(g => ({ ...g, trasferta: String(g.trasferta ?? '') })),
     });
   };
 
@@ -385,15 +405,21 @@ function Compensi({ user }) {
     if (!elaborazione) return null;
     const p = elaborazione.periodo;
     const elencoSpese = speseDelPeriodo(p);
-    const numero = parseInt(elaborazione.numeroTrasferte, 10) || 0;
-    const unitario = parseFloat(elaborazione.importoTrasferta) || 0;
-    const trasferte = arrotonda2(numero * unitario);
+    // Ogni giornata porta il suo importo di trasferta: il totale è la loro somma.
+    const importi = elaborazione.giornate.map(g => parseFloat(g.trasferta) || 0);
+    const trasferte = arrotonda2(importi.reduce((s, x) => s + x, 0));
+    const conTrasferta = importi.filter(x => x > 0);
+    // Quando le trasferte valgono tutte uguale il documento le scrive come "3 x 10,00": è la
+    // forma della ricevuta di esempio. Con importi diversi resta la sola somma.
+    const uniforme = conTrasferta.length > 1 && conTrasferta.every(x => x === conTrasferta[0]);
     // compenso_netto congelato è già il solo compenso, spese escluse: quelle si sommano ai
     // rimborsi più sotto, non vanno tolte di nuovo qui.
     const compenso = arrotonda2(parseFloat(p.compenso_netto) || 0);
     return {
       ...importiRimborso({ compenso, spese: sommaDi(elencoSpese), trasferte }, p.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta),
-      trasferte, numero, unitario, elencoSpese,
+      trasferte, elencoSpese,
+      numero: conTrasferta.length,
+      unitario: uniforme ? conTrasferta[0] : null,
     };
   }, [elaborazione, speseDelPeriodo, parametri]);
 
@@ -414,7 +440,6 @@ function Compensi({ user }) {
     const i = importiElaborazione;
     if (!e || !i) return;
     if (e.giornate.length === 0) return alert("Indica almeno una giornata: il documento deve dire per cosa si paga.");
-    if (i.numero > 0 && i.unitario <= 0) return alert("Indica l'importo di una trasferta, oppure porta a zero il numero.");
 
     setInCorso('rimborso');
     const { error } = await supabase.from('op_periodi').update({
@@ -422,6 +447,8 @@ function Compensi({ user }) {
       // Il contenuto del documento si congela: serve a ristamparlo identico, non a rifarci i conti.
       rimborso: {
         giornate: e.giornate,
+        // L'importo di ogni trasferta vive dentro la sua giornata: qui basta il totale, più il
+        // valore unitario quando è lo stesso ovunque, che è come il documento lo scrive.
         trasferte: { numero: i.numero, importo: i.unitario, totale: i.trasferte },
         spese: i.elencoSpese.map(v => ({ descrizione: v.descrizione, importo: v.importo, data: v.data })),
         imponibile: i.imponibile, ritenuta: i.ritenuta, netto: i.netto, rimborsi: i.rimborsi, totale: i.totale,
@@ -822,10 +849,11 @@ function Compensi({ user }) {
               <td style={{ padding: '3px 0', textAlign: 'right' }}>{euro(v.importo)}</td>
             </tr>
           ))}
-          {i.numero > 0 && (
+          {i.trasferte > 0 && (
             <tr>
               <td style={{ padding: '3px 0' }}>
-                Rimborso trasferta forfait = {i.numero} x {(+i.unitario).toFixed(2).replace('.', ',')}
+                Rimborso trasferta forfait
+                {i.unitario != null && ` = ${i.numero} x ${(+i.unitario).toFixed(2).replace('.', ',')}`}
               </td>
               <td style={{ padding: '3px 0', textAlign: 'right' }}>{euro(i.trasferte)}</td>
             </tr>
@@ -1280,7 +1308,19 @@ function Compensi({ user }) {
             </p>
 
           <div>
-            <h3 style={{ margin: '0 0 12px 0', fontSize: '1rem' }}>Giornate</h3>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '1rem' }}>Giornate e trasferte</h3>
+            <p style={{ margin: '0 0 12px 0', fontSize: '0.8rem', color: '#777', maxWidth: '70ch' }}>
+              Una riga per giornata, con il rimborso trasferta che le compete: si va in un posto diverso ogni
+              volta, quindi l'importo può cambiare. Come le altre spese resta fuori dalla base imponibile.
+            </p>
+
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', fontSize: '0.75rem', color: '#888', fontWeight: 'bold' }}>
+              <span style={{ width: '160px' }}>Data</span>
+              <span style={{ flex: '1 1 260px' }}>Luogo</span>
+              <span style={{ width: '120px' }}>Trasferta (€)</span>
+              <span style={{ width: '34px' }} />
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {elaborazione.giornate.map((g, i) => (
                 <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1290,9 +1330,14 @@ function Compensi({ user }) {
                     style={{ ...stileInput, width: '160px' }}
                   />
                   <input
-                    type="text" value={g.luogo} placeholder="indirizzo o località"
+                    type="text" value={g.luogo} placeholder="indirizzo, comune (prov)"
                     onChange={(e) => setElaborazione(s => ({ ...s, giornate: s.giornate.map((x, j) => j === i ? { ...x, luogo: e.target.value } : x) }))}
                     style={{ ...stileInput, flex: '1 1 260px' }}
+                  />
+                  <input
+                    type="number" min="0" step="any" value={g.trasferta} placeholder="0,00"
+                    onChange={(e) => setElaborazione(s => ({ ...s, giornate: s.giornate.map((x, j) => j === i ? { ...x, trasferta: e.target.value } : x) }))}
+                    style={{ ...stileInput, width: '120px', textAlign: 'right' }}
                   />
                   <button
                     type="button" className="btn-icon-action" aria-label="Togli la giornata" title="Togli la giornata"
@@ -1302,42 +1347,19 @@ function Compensi({ user }) {
                   </button>
                 </div>
               ))}
-              <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
                 <button
                   type="button"
-                  onClick={() => setElaborazione(s => ({ ...s, giornate: [...s.giornate, { data: s.periodo.dal, luogo: '' }] }))}
+                  onClick={() => setElaborazione(s => ({ ...s, giornate: [...s.giornate, { data: s.periodo.dal, luogo: '', trasferta: '' }] }))}
                   style={{ background: 'none', border: 'none', color: '#0288d1', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}
                 >+ giornata</button>
+                {importiElaborazione.trasferte > 0 && (
+                  <span style={{ fontSize: '0.85rem', color: '#666' }}>
+                    totale trasferte <strong>{euro(importiElaborazione.trasferte)}</strong>
+                  </span>
+                )}
               </div>
             </div>
-
-            <h3 style={{ margin: '22px 0 4px 0', fontSize: '1rem' }}>Rimborso trasferta forfait</h3>
-            <p style={{ margin: '0 0 12px 0', fontSize: '0.8rem', color: '#777', maxWidth: '66ch' }}>
-              Quante trasferte riconosci e quanto vale ciascuna. Come le altre spese resta fuori dalla base
-              imponibile: è denaro anticipato e restituito, non guadagnato.
-            </p>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Numero</label>
-                <input
-                  type="number" min="0" step="1" value={elaborazione.numeroTrasferte}
-                  onChange={(e) => setElaborazione(s => ({ ...s, numeroTrasferte: e.target.value }))}
-                  style={{ ...stileInput, width: '100px' }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Importo unitario (€)</label>
-                <input
-                  type="number" min="0" step="any" value={elaborazione.importoTrasferta}
-                  onChange={(e) => setElaborazione(s => ({ ...s, importoTrasferta: e.target.value }))}
-                  style={{ ...stileInput, width: '140px' }}
-                />
-              </div>
-              <div style={{ paddingBottom: '9px', color: '#666', fontSize: '0.85rem' }}>
-                = <strong>{euro(importiElaborazione.trasferte)}</strong>
-              </div>
-            </div>
-
           </div>
 
             <h4 style={{ margin: '22px 0 10px 0', fontSize: '0.78rem', letterSpacing: '0.09em', textTransform: 'uppercase', color: '#888' }}>
