@@ -282,10 +282,31 @@ function Compensi({ user }) {
     if (!formForfait) return null;
     const op = preventivi.find(o => o.id === formForfait.operatore);
     if (!op) return null;
+    // Un forfait già applicato: serve a dire che c'è e a poterlo togliere.
+    const giorni = new Set(op.giornate.map(g => g.data));
+    const esistenti = voci.filter(v =>
+      v.operatore === op.id && v.tipo === 'rettifica' && v.descrizione === 'forfait' && giorni.has(v.data));
     const importo = parseFloat(formForfait.importo);
-    if (isNaN(importo)) return { op, righe: [], importo: null };
-    return { op, importo, righe: rettificheForfait(op, importo) };
-  }, [formForfait, preventivi]);
+    const base = { op, esistenti, totaleEsistente: op.compensoOrario + sommaDi(esistenti) };
+    if (isNaN(importo)) return { ...base, righe: [], importo: null };
+    return { ...base, importo, righe: rettificheForfait(op, importo) };
+  }, [formForfait, preventivi, voci]);
+
+  const rimuoviForfait = async () => {
+    const a = anteprimaForfait;
+    if (!a || a.esistenti.length === 0) return;
+    if (!window.confirm(
+      `Rimuovere il compenso concordato di ${a.op.nome}?\n\n`
+      + `Le ${a.esistenti.length} rettifiche "forfait" vengono cancellate e il compenso torna al calcolo a ore: `
+      + `${euro(a.op.compensoOrario)}.`
+    )) return;
+    setInCorso('forfait');
+    const { error } = await supabase.from('op_voci').delete().in('id', a.esistenti.map(v => v.id));
+    setInCorso(null);
+    if (error) { console.error(error); return alert("Errore nella rimozione del forfait."); }
+    setFormForfait(null);
+    fetchPartite();
+  };
 
   const applicaForfait = async () => {
     const a = anteprimaForfait;
@@ -853,12 +874,28 @@ function Compensi({ user }) {
               arriva esattamente alla cifra concordata.
             </p>
 
+            {anteprimaForfait.esistenti.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px', padding: '10px 14px', background: '#eef4fb', border: '1px solid #cfe0f2', borderRadius: '6px' }}>
+                <span style={{ fontSize: '0.83rem', color: '#1a4f8a' }}>
+                  Forfait attivo da <strong>{euro(anteprimaForfait.totaleEsistente)}</strong>.
+                  Scrivendo un altro importo lo sostituisci.
+                </span>
+                <button
+                  type="button" onClick={rimuoviForfait} disabled={inCorso === 'forfait'}
+                  className="btn-outline-annulla"
+                  style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: '4px', fontSize: '0.78rem', flexShrink: 0 }}
+                >
+                  <Icona nome="elimina" size={14} style={{ marginRight: '5px' }} />Rimuovi forfait
+                </button>
+              </div>
+            )}
+
             <div>
               <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Importo concordato (€)</label>
               <input
                 type="number" step="any" min="0" autoFocus
                 value={formForfait.importo}
-                placeholder={`ora sarebbero ${(+anteprimaForfait.op.compensoOrario).toFixed(2)}`}
+                placeholder={`a ore sarebbero ${(+anteprimaForfait.op.compensoOrario).toFixed(2)}`}
                 onChange={(e) => setFormForfait(f => ({ ...f, importo: e.target.value }))}
                 style={stileInput}
               />
