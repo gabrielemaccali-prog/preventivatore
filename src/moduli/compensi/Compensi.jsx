@@ -512,9 +512,7 @@ function Compensi({ user }) {
                             </thead>
                             <tbody>
                               {op.giornate.map(g => {
-                                const righePartite = g.blocchi.flatMap((b, iBlocco) =>
-                                  b.partite.map(x => ({ ...x, iBlocco }))
-                                );
+                                const righePartite = g.blocchi.flatMap(b => b.partite);
                                 // Voci registrate sulla giornata e non su una partita: non se ne creano
                                 // più, ma se ne esistono vanno mostrate — nei totali continuano a contare.
                                 const vociGiornata = g.voci.filter(v => !v.riferimento);
@@ -530,28 +528,26 @@ function Compensi({ user }) {
                                       const totRettifiche = sommaDi(rettifiche);
                                       const totSpese = sommaDi(spese);
                                       const chiaveRec = `rec-${op.id}-${x.partita.id}`;
-                                      const nuovoBlocco = i > 0 && x.iBlocco !== righePartite[i - 1].iBlocco;
                                       const apri = (tipo) => setFormVoce({
                                         operatore: op.id, data: g.data, riferimento: x.partita.id,
                                         etichetta: `${x.partita.id}${x.partita.nominativo ? ` · ${x.partita.nominativo}` : ''}`,
                                         tipo, descrizione: '', importo: '',
                                       });
                                       return (
-                                        <tr key={x.partita.id} style={{ borderTop: nuovoBlocco ? '1px dashed #ddd' : undefined }}>
+                                        <tr key={x.partita.id}>
                                           <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
                                             {i === 0 && <strong>{dataBreve(g.data)}</strong>}
                                           </td>
                                           <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
                                             {intervalloPartita(x.partita)}
-                                            {(g.blocchi.length > 1 || x.attesaMin > 0) && (
-                                              <>
-                                                <br />
-                                                <span style={{ fontSize: '0.72rem', color: x.attesaMin > 0 ? '#b26a00' : '#999' }}>
-                                                  {x.attesaMin > 0
-                                                    ? `+${ore(x.attesaMin / 60)} di attesa`
-                                                    : `blocco ${x.iBlocco + 1}`}
-                                                </span>
-                                              </>
+                                            {/* I blocchi restano nel calcolo ma non si nominano qui: è un
+                                                concetto interno alla tariffa, non qualcosa da leggere in
+                                                tabella. L'attesa invece si mostra: è denaro che l'operatore
+                                                incassa senza che ci sia una partita a spiegarlo. */}
+                                            {x.attesaMin > 0 && (
+                                              <><br /><span style={{ fontSize: '0.72rem', color: '#b26a00' }}>
+                                                +{ore(x.attesaMin / 60)} di attesa, pagata
+                                              </span></>
                                             )}
                                           </td>
                                           <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{x.partita.id}</td>
