@@ -141,35 +141,23 @@ function Compensi({ user }) {
     [partite, voci, parametri, giaConsuntivato, nelFiltro]
   );
 
-  // Periodi chiusi, raggruppati per operatore e ricostruiti con gli stessi conti della scheda
-  // precedente. Il dettaglio si ricalcola con i parametri congelati nel periodo, non con quelli
-  // di oggi: altrimenti ritoccare una tariffa cambierebbe sotto gli occhi un consuntivo già chiuso.
-  const consuntivati = useMemo(() => {
-    const perOperatore = new Map();
-    for (const p of periodi) {
-      const parUsati = p.parametri && Object.keys(p.parametri).length ? p.parametri : parametri;
-      const partiteDelPeriodo = partite.filter(x =>
-        x.data >= p.dal && x.data <= p.al && (x.operatori || []).some(o => o.id === p.operatore));
-      const vociDelPeriodo = voci.filter(v =>
-        v.operatore === p.operatore && v.data >= p.dal && v.data <= p.al);
-      // Un eventuale compenso concordato è già dentro le voci, sotto forma di rettifiche "forfait":
-      // qui non serve nessuna regola speciale, il calcolo normale arriva da solo al totale pattuito.
-      const [dettaglio] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
-
-      if (!perOperatore.has(p.operatore)) perOperatore.set(p.operatore, { id: p.operatore, nome: p.operatore, periodi: [] });
-      perOperatore.get(p.operatore).periodi.push({
-        ...p,
-        // Può mancare quando il periodo non ha più partite né voci: la riga resta comunque,
-        // con i suoi valori congelati.
-        dettaglio: dettaglio || null,
-      });
-    }
-    return [...perOperatore.values()].map(o => ({
-      ...o,
-      daPagare: o.periodi.reduce((s, p) => s + (parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0), 0),
-      costoAzienda: o.periodi.reduce((s, p) => s + (parseFloat(p.costo_azienda) || 0), 0),
-    })).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [periodi, partite, voci, parametri]);
+  // Una riga per periodo chiuso, non per operatore: la data di consuntivazione e il ripristino
+  // appartengono al singolo periodo, e raggruppandoli si finiva per doverli ripetere dentro.
+  // Il dettaglio si ricalcola con i parametri congelati nel periodo, non con quelli di oggi:
+  // altrimenti ritoccare una tariffa cambierebbe sotto gli occhi un consuntivo già chiuso.
+  const consuntivati = useMemo(() => periodi.map(p => {
+    const parUsati = p.parametri && Object.keys(p.parametri).length ? p.parametri : parametri;
+    const partiteDelPeriodo = partite.filter(x =>
+      x.data >= p.dal && x.data <= p.al && (x.operatori || []).some(o => o.id === p.operatore));
+    const vociDelPeriodo = voci.filter(v =>
+      v.operatore === p.operatore && v.data >= p.dal && v.data <= p.al);
+    // Un eventuale compenso concordato è già dentro le voci, sotto forma di rettifiche "forfait":
+    // qui non serve nessuna regola speciale, il calcolo normale arriva da solo al totale pattuito.
+    const [dettaglio] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
+    // Il dettaglio può mancare quando il periodo non ha più partite né voci: la riga resta
+    // comunque, con i suoi valori congelati.
+    return { ...p, dettaglio: dettaglio || null };
+  }), [periodi, partite, voci, parametri]);
 
   // ---- scritture su op_voci ----
   const recensioneDi = (operatore, prenotazioneId) =>
@@ -923,8 +911,8 @@ function Compensi({ user }) {
           <h2 style={{ margin: 0 }}>Consuntivati</h2>
           <p className="descrizione-pagina">
             Periodi chiusi, con i valori congelati al momento della consuntivazione. Il dettaglio è ricostruito
-            con i parametri di allora, non con quelli di oggi. Riaprire un periodo rimette le sue giornate fra
-            quelle da consuntivare e cancella i valori salvati; le voci registrate restano.
+            con i parametri di allora, non con quelli di oggi. Ripristinare un periodo rimette le sue giornate
+            fra quelle da consuntivare e cancella i valori salvati; le voci registrate restano.
           </p>
 
           {consuntivati.length === 0 ? (
@@ -932,68 +920,66 @@ function Compensi({ user }) {
               Nessun periodo consuntivato.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
-              {consuntivati.map(op => {
-                const espanso = operatoreEspanso === `cons-${op.id}`;
-                return (
-                  <div key={op.id} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', overflow: 'hidden' }}>
-                    <div
-                      onClick={() => setOperatoreEspanso(espanso ? null : `cons-${op.id}`)}
-                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '14px 16px', cursor: 'pointer' }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '0.7rem', color: '#888' }}>{espanso ? '▼' : '▶'}</span>
-                        <strong style={{ fontSize: '1rem' }}>{op.nome}</strong>
-                        <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                          {op.periodi.length} period{op.periodi.length === 1 ? 'o' : 'i'} chius{op.periodi.length === 1 ? 'o' : 'i'}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.85rem', flexWrap: 'wrap' }}>                        <span style={{ color: '#666' }}>{euro(op.costoAzienda)} costo</span>
-                        <span><strong>{euro(op.daPagare)}</strong> da pagare</span>
-                      </div>
-                    </div>
-
-                    {espanso && (
-                      <div style={{ borderTop: '1px solid #eee' }}>
-                        {op.periodi.map(p => (
-                          <div key={p.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            {/* Intestazione del periodo: i valori congelati, non ricalcolati. */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '12px 16px', background: '#f8fafc' }}>
-                              <div>
-                                <strong style={{ fontSize: '0.88rem' }}>
-                                  {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
-                                </strong>
-                                <div style={{ fontSize: '0.76rem', color: '#888', marginTop: '2px' }}>                                  consuntivato il {dataBreve((p.creato_il || '').slice(0, 10))}
-                                </div>
-                              </div>
-                              <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.82rem', flexWrap: 'wrap' }}>
-                                <span>{euro(p.compenso_netto)} compenso</span>
-                                {p.spese > 0 && <span style={{ color: '#b26a00' }}>+{euro(p.spese)} spese</span>}                                <span><strong>{euro((parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0))}</strong> da pagare</span>
-                                <button
-                                  type="button" className="btn-icon-action" aria-label="Riapri periodo" title="Riapri periodo"
-                                  disabled={inCorso === `riapri-${p.id}`}
-                                  onClick={(e) => { e.stopPropagation(); annullaConsuntivo(p); }}
-                                >
-                                  <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
-                                </button>
-                              </div>
-                            </div>
-
-
-                            {p.dettaglio
-                              ? tabellaDettaglio(p.dettaglio, true)
-                              : (
-                                <div style={{ padding: '16px', color: '#999', fontSize: '0.82rem' }}>
-                                  Nessuna partita né voce in questo intervallo: restano solo i valori congelati.
-                                </div>
-                              )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+            <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+              <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+                <thead>
+                  <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                    <th style={{ padding: '10px' }}>Operatore</th>
+                    <th style={{ padding: '10px' }}>Periodo</th>
+                    <th style={{ padding: '10px' }}>Consuntivato il</th>
+                    <th style={{ padding: '10px', textAlign: 'right' }}>Costo</th>
+                    <th style={{ padding: '10px', width: '44px' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {consuntivati.map(p => {
+                    const espansa = operatoreEspanso === `cons-${p.id}`;
+                    return (
+                      <Fragment key={p.id}>
+                        <tr
+                          onClick={() => setOperatoreEspanso(espansa ? null : `cons-${p.id}`)}
+                          style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee' }}
+                        >
+                          <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                            <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
+                            <strong>{p.operatore}</strong>
+                          </td>
+                          <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                            {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
+                          </td>
+                          <td style={{ padding: '8px 10px', color: '#64748b', whiteSpace: 'nowrap' }}>
+                            {dataBreve((p.creato_il || '').slice(0, 10))}
+                          </td>
+                          <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(p.costo_azienda)}</td>
+                          <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                            <button
+                              type="button" className="btn-icon-action"
+                              aria-label="Ripristina fra i da consuntivare" title="Ripristina fra i da consuntivare"
+                              disabled={inCorso === `riapri-${p.id}`}
+                              onClick={(e) => { e.stopPropagation(); annullaConsuntivo(p); }}
+                            >
+                              <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
+                            </button>
+                          </td>
+                        </tr>
+                        {espansa && (
+                          <tr className="riga-espandibile-dettaglio">
+                            <td colSpan={5} onClick={(e) => e.stopPropagation()} style={{ padding: 0 }}>
+                              {p.dettaglio
+                                ? tabellaDettaglio(p.dettaglio, true)
+                                : (
+                                  <div style={{ padding: '16px', color: '#999', fontSize: '0.82rem' }}>
+                                    Nessuna partita né voce in questo intervallo: restano solo i valori congelati.
+                                  </div>
+                                )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
