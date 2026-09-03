@@ -45,7 +45,6 @@ const euro = (v) => `€${(+v || 0).toFixed(2)}`;
 // Le ore si scrivono senza decimali inutili: 3 invece di 3,00 ma 1,5 resta 1,5.
 const ore = (v) => `${(+v || 0).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')} h`;
 const oggiIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-const primoDelMese = () => `${oggiIso().slice(0, 8)}01`;
 const oraDiMinuti = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(Math.round(min % 60)).padStart(2, '0')}`;
 // "2026-08-14" -> "14/08/26", come le tabelle del modulo prenotazioni. Il campo date del filtro
 // resta ISO, perché è il browser a disegnarlo.
@@ -87,9 +86,10 @@ function Compensi({ user }) {
   useEffect(() => { fetchTutto(); }, []);
 
   // ---------------- DA CONSUNTIVARE ----------------
-  // Il periodo non può arrivare oltre oggi: il futuro non si consuntiva.
-  const [dal, setDal] = useState(primoDelMese);
-  const [al, setAl] = useState(oggiIso);
+  // Nessun periodo di partenza: si apre su tutto quello che resta da consuntivare, perché è quello
+  // che il manager vuole sapere. Le date servono a restringere, non a trovare.
+  const [dal, setDal] = useState('');
+  const [al, setAl] = useState('');
   const [partite, setPartite] = useState([]);
   const [voci, setVoci] = useState([]);
   const [periodi, setPeriodi] = useState([]);
@@ -99,16 +99,19 @@ function Compensi({ user }) {
   const [formVoce, setFormVoce] = useState(null); // { operatore, data, tipo, descrizione, importo }
   const [formConsuntivo, setFormConsuntivo] = useState(null); // { operatore, dal, al, concordato, forfettario }
 
-  const alEffettivo = al > oggiIso() ? oggiIso() : al;
+  // Il limite superiore c'è sempre, anche a filtro vuoto: il futuro non si consuntiva.
+  const alEffettivo = al && al < oggiIso() ? al : oggiIso();
+  // Il limite inferiore invece è facoltativo: vuoto significa "da sempre".
+  const daData = (q) => (dal ? q.gte('data', dal) : q);
 
   const fetchPartite = async () => {
     setCaricamentoPartite(true);
     // Solo partite confermate: una FORSE non giocata non genera compenso.
     const [pr, vc, pe] = await Promise.all([
-      supabase.from('prenotazioni')
+      daData(supabase.from('prenotazioni')
         .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoNome, pacchettoNome, locationCitta, operatori')
-        .eq('stato', 'CONF').gte('data', dal).lte('data', alEffettivo).order('data', { ascending: false }),
-      supabase.from('op_voci').select('*').gte('data', dal).lte('data', alEffettivo),
+        .eq('stato', 'CONF').lte('data', alEffettivo)).order('data', { ascending: false }),
+      daData(supabase.from('op_voci').select('*').lte('data', alEffettivo)),
       // I periodi servono anche fuori dall'intervallo scelto: uno che lo attraversa copre comunque
       // giornate qui dentro, e quelle non vanno riproposte.
       supabase.from('op_periodi').select('*').order('dal', { ascending: false }),
@@ -354,19 +357,32 @@ function Compensi({ user }) {
         <div className="schermata-storico no-print">
           <h2 style={{ margin: 0 }}>Da consuntivare</h2>
           <p className="descrizione-pagina">
-            Preventivo calcolato dalle partite confermate del periodo, operatore per operatore. Spunta le recensioni,
-            aggiungi spese e correzioni, poi consuntiva: da quel momento i valori si congelano e la giornata non
-            accetta più modifiche. Le giornate già consuntivate spariscono da qui.
+            Tutto quello che resta da consuntivare, operatore per operatore, calcolato dalle partite confermate.
+            Spunta le recensioni, aggiungi spese e correzioni, poi consuntiva: da quel momento i valori si congelano
+            e la giornata non accetta più modifiche, sparendo da questo elenco.
           </p>
 
-          <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
+          <div className="filtri-storico" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <div className="filtro-group" style={{ flex: '1 1 160px' }}>
               <label>Dal:</label>
-              <input type="date" value={dal} max={al} onChange={(e) => setDal(e.target.value)} />
+              <input type="date" value={dal} max={al || oggiIso()} onChange={(e) => setDal(e.target.value)} />
             </div>
             <div className="filtro-group" style={{ flex: '1 1 160px' }}>
               <label>Al:</label>
               <input type="date" value={al} min={dal} max={oggiIso()} onChange={(e) => setAl(e.target.value)} />
+            </div>
+            <div className="filtro-group" style={{ flex: '0 0 auto' }}>
+              {(dal || al) ? (
+                <button
+                  type="button" onClick={() => { setDal(''); setAl(''); }}
+                  className="btn-outline-annulla"
+                  style={{ display: 'inline-flex', alignItems: 'center', padding: '7px 14px', borderRadius: '4px', fontSize: '0.8rem' }}
+                >
+                  <Icona nome="annulla" size={14} style={{ marginRight: '5px' }} />Tutto il periodo
+                </button>
+              ) : (
+                <span style={{ fontSize: '0.78rem', color: '#888' }}>Date vuote: tutto quello che resta da consuntivare.</span>
+              )}
             </div>
           </div>
 
@@ -374,7 +390,7 @@ function Compensi({ user }) {
             <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>Calcolo in corso...</div>
           ) : preventivi.length === 0 ? (
             <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>
-              Nessuna partita confermata con operatori assegnati in questo periodo.
+              Niente da consuntivare: tutte le partite confermate con operatori assegnati sono gia state chiuse.
             </div>
           ) : (
             <>
