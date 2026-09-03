@@ -179,7 +179,9 @@ export const preventiviPerOperatore = (prenotazioni, voci, par, giaConsuntivato 
           compensoConVoci: calcolo.compenso + aggiunte,
         };
       })
-      .sort((a, b) => b.data.localeCompare(a.data));
+      // Dalla più vecchia alla più recente: il dettaglio si legge come un diario, e l'ultima riga
+      // prima del totale è l'ultima giornata lavorata.
+      .sort((a, b) => a.data.localeCompare(b.data));
 
     const somma = (f) => giornate.reduce((s, g) => s + f(g), 0);
     const compensoOrario = somma(g => g.compenso);
