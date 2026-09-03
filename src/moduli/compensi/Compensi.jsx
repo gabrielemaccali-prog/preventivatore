@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
-import { preventiviPerOperatore, consuntivoDiPeriodo, ripartisciSuOre, oreDiPartita } from './calcolo'
+import { preventiviPerOperatore, rettificheForfait, oreDiPartita } from './calcolo'
 import { toMinutes } from '../../lib/utils'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -66,7 +66,7 @@ const intervalloPartita = (p) => {
 };
 
 function Compensi({ user }) {
-  const primaScheda = ['config', 'daconsuntivare', 'consuntivati', 'indicatori'].find(s => puoVedere(user, 'compensi', s)) || 'config';
+  const primaScheda = ['config', 'daconsuntivare', 'consuntivati', 'rimborso', 'indicatori'].find(s => puoVedere(user, 'compensi', s)) || 'config';
   const [currentView, setCurrentView] = useState(primaScheda);
 
   const [parametri, setParametri] = useState(PARAMETRI_DEFAULT);
@@ -97,7 +97,6 @@ function Compensi({ user }) {
   const [operatoreEspanso, setOperatoreEspanso] = useState(null);
   const [inCorso, setInCorso] = useState(null); // chiave dell'azione in corso, per disabilitare il pulsante giusto
   const [formVoce, setFormVoce] = useState(null); // { operatore, data, tipo, descrizione, importo }
-  const [formConsuntivo, setFormConsuntivo] = useState(null); // { operatore, dal, al, concordato, forfettario }
 
   // Il limite superiore c'è sempre, anche a filtro vuoto: il futuro non si consuntiva.
   const alEffettivo = al && al < oggiIso() ? al : oggiIso();
@@ -153,12 +152,9 @@ function Compensi({ user }) {
         x.data >= p.dal && x.data <= p.al && (x.operatori || []).some(o => o.id === p.operatore));
       const vociDelPeriodo = voci.filter(v =>
         v.operatore === p.operatore && v.data >= p.dal && v.data <= p.al);
-      const [calcolato] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
-      // Con un compenso concordato le quote per partita non sono più quelle del calcolo a ore:
-      // l'importo pattuito si ripartisce sulle ore effettivamente fatte nel periodo.
-      const dettaglio = calcolato && p.concordato != null
-        ? ripartisciSuOre(calcolato, p.concordato, parUsati)
-        : calcolato;
+      // Un eventuale compenso concordato è già dentro le voci, sotto forma di rettifiche "forfait":
+      // qui non serve nessuna regola speciale, il calcolo normale arriva da solo al totale pattuito.
+      const [dettaglio] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
 
       if (!perOperatore.has(p.operatore)) perOperatore.set(p.operatore, { id: p.operatore, nome: p.operatore, periodi: [] });
       perOperatore.get(p.operatore).periodi.push({
@@ -172,7 +168,6 @@ function Compensi({ user }) {
       ...o,
       daPagare: o.periodi.reduce((s, p) => s + (parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0), 0),
       costoAzienda: o.periodi.reduce((s, p) => s + (parseFloat(p.costo_azienda) || 0), 0),
-      ritenuta: o.periodi.reduce((s, p) => s + (parseFloat(p.ritenuta) || 0), 0),
     })).sort((a, b) => a.nome.localeCompare(b.nome));
   }, [periodi, partite, voci, parametri]);
 
@@ -232,42 +227,29 @@ function Compensi({ user }) {
   };
 
   // ---- consuntivazione ----
-  const anteprimaConsuntivo = useMemo(() => {
-    if (!formConsuntivo) return null;
-    const op = preventivi.find(o => o.id === formConsuntivo.operatore);
-    if (!op) return null;
-    // L'anteprima considera solo le giornate dentro l'intervallo scelto, che può essere piu' stretto
-    // di quello filtrato: quello che si congela deve essere esattamente quello che si vede.
-    const dentro = op.giornate.filter(g => g.data >= formConsuntivo.dal && g.data <= formConsuntivo.al);
-    const somma = (f) => dentro.reduce((s, g) => s + f(g), 0);
-    const parziale = {
-      compensoOrario: somma(g => g.compenso),
-      aggiunte: somma(g => g.aggiunte),
-      spese: somma(g => g.spese),
-      ore: somma(g => g.ore),
-    };
-    return {
-      giornate: dentro,
-      parziale,
-      ...consuntivoDiPeriodo(parziale, { concordato: formConsuntivo.concordato, forfettario: formConsuntivo.forfettario }, parametri),
-    };
-  }, [formConsuntivo, preventivi, parametri]);
+  // Chiudere un periodo lo sposta e basta: congela quello che c'è e lo toglie dall'elenco.
+  // Rimborso forfettario e ritenuta non si calcolano qui — sono il mestiere della scheda
+  // "Elabora rimborso", che arriva dopo e lavora sui periodi già chiusi.
+  const consuntiva = async (op) => {
+    const date = op.giornate.map(g => g.data).sort();
+    if (date.length === 0) return alert("Niente da consuntivare per questo operatore.");
+    const dal = date[0];
+    const al = date[date.length - 1];
+    if (!window.confirm(
+      `Consuntivare ${op.nome} dal ${dataBreve(dal)} al ${dataBreve(al)}?\n\n`
+      + `${euro(op.compenso + op.spese)} da pagare su ${op.giornate.length} giornate.\n\n`
+      + `Il periodo passa fra i consuntivati e le sue giornate non accettano più modifiche.`
+    )) return;
 
-  const confermaConsuntivo = async () => {
-    const f = formConsuntivo;
-    const a = anteprimaConsuntivo;
-    if (!a || a.giornate.length === 0) return alert("Nessuna giornata da consuntivare nell'intervallo scelto.");
-    if (f.al < f.dal) return alert("La data finale non può precedere quella iniziale.");
-    if (f.al > oggiIso()) return alert("Non si consuntiva il futuro: la data finale non può superare oggi.");
-    setInCorso('consuntivo');
+    setInCorso(`consuntiva-${op.id}`);
     const { error } = await supabase.from('op_periodi').insert([{
-      operatore: f.operatore, dal: f.dal, al: f.al,
-      concordato: f.concordato === '' ? null : parseFloat(f.concordato),
-      rimborso_forfettario: a.rimborsoForfettario,
-      compenso_netto: a.compensoNetto, ritenuta: a.ritenuta, spese: a.spese,
-      costo_azienda: a.costoAzienda,
+      operatore: op.id, dal, al,
+      compenso_netto: op.compenso, spese: op.spese,
+      // Il costo azienda qui è il solo esborso verso l'operatore: la ritenuta si aggiunge
+      // quando si elabora il rimborso, non adesso.
+      costo_azienda: op.compenso + op.spese,
       // Snapshot dei parametri: ritoccarli domani non deve riscrivere questo consuntivo.
-      parametri, note: f.note || null,
+      parametri,
     }]);
     setInCorso(null);
     if (error) {
@@ -275,21 +257,62 @@ function Compensi({ user }) {
       // Il vincolo di esclusione è la rete di sicurezza contro il doppio pagamento: se scatta,
       // vale la pena dirlo con parole comprensibili invece del messaggio di Postgres.
       return alert(error.message.includes('op_periodi_no_sovrapposizioni')
-        ? "Una parte di questo intervallo è già stata consuntivata per questo operatore. Restringi le date."
+        ? "Una parte di questo intervallo è già stata consuntivata per questo operatore."
         : "Errore nella consuntivazione.");
     }
-    setFormConsuntivo(null);
     fetchPartite();
   };
 
   const annullaConsuntivo = async (p) => {
-    if (!window.confirm(`Riaprire il periodo di ${p.operatore} dal ${p.dal} al ${p.al}?\n\nLe giornate tornano fra quelle da consuntivare e i valori congelati vengono persi.`)) return;
+    if (!window.confirm(`Riaprire il periodo di ${p.operatore} dal ${dataBreve(p.dal)} al ${dataBreve(p.al)}?\n\nLe giornate tornano fra quelle da consuntivare e i valori congelati vengono persi.`)) return;
     setInCorso(`riapri-${p.id}`);
     const { error } = await supabase.from('op_periodi').delete().eq('id', p.id);
     setInCorso(null);
     if (error) { console.error(error); return alert("Errore nella riapertura del periodo."); }
     fetchPartite();
   };
+
+  // ---- compenso concordato ----
+  // Non è un valore a parte: si materializza in rettifiche "forfait", una per partita, che portano
+  // il calcolo a ore esattamente all'importo pattuito. Da lì in poi tutto il resto del modulo
+  // continua a fare i suoi conti normali senza sapere che c'è stato un accordo.
+  const [formForfait, setFormForfait] = useState(null); // { operatore, nome, importo }
+
+  const anteprimaForfait = useMemo(() => {
+    if (!formForfait) return null;
+    const op = preventivi.find(o => o.id === formForfait.operatore);
+    if (!op) return null;
+    const importo = parseFloat(formForfait.importo);
+    if (isNaN(importo)) return { op, righe: [], importo: null };
+    return { op, importo, righe: rettificheForfait(op, importo) };
+  }, [formForfait, preventivi]);
+
+  const applicaForfait = async () => {
+    const a = anteprimaForfait;
+    if (!a || a.importo == null) return alert("Inserisci l'importo concordato.");
+    if (a.righe.length === 0) return alert("Nessuna partita con ore nel periodo: non c'è su cosa ripartire.");
+
+    setInCorso('forfait');
+    // Un forfait applicato due volte deve sostituire il precedente, non sommarcisi: si tolgono
+    // prima tutte le rettifiche "forfait" delle giornate coinvolte.
+    const date = [...new Set(a.righe.map(r => r.data))];
+    const pulizia = await supabase.from('op_voci').delete()
+      .eq('operatore', a.op.id).eq('tipo', 'rettifica').eq('descrizione', 'forfait').in('data', date);
+    if (pulizia.error) {
+      setInCorso(null); console.error(pulizia.error);
+      return alert("Errore nella rimozione del forfait precedente.");
+    }
+
+    const { error } = await supabase.from('op_voci').insert(a.righe.map(r => ({
+      operatore: a.op.id, data: r.data, tipo: 'rettifica', riferimento: r.riferimento,
+      descrizione: 'forfait', importo: r.differenza, esente_ritenuta: false,
+    })));
+    setInCorso(null);
+    if (error) { console.error(error); return alert("Errore nell'applicazione del forfait."); }
+    setFormForfait(null);
+    fetchPartite();
+  };
+
 
   // Un parametro per volta, come pacchetti e fasce negli altri configuratori: in sola lettura
   // finché non si preme la matita. Sono le cifre da cui dipendono tutti i compensi, e con le
@@ -535,6 +558,9 @@ function Compensi({ user }) {
         {puoVedere(user, 'compensi', 'consuntivati') && (
           <button className={`nav-btn ${currentView === 'consuntivati' ? 'active' : ''}`} onClick={() => setCurrentView("consuntivati")}><Icona nome="consuntivati" />Consuntivati</button>
         )}
+        {puoVedere(user, 'compensi', 'rimborso') && (
+          <button className={`nav-btn ${currentView === 'rimborso' ? 'active' : ''}`} onClick={() => setCurrentView("rimborso")}><Icona nome="rimborso" />Elabora rimborso</button>
+        )}
         {puoVedere(user, 'compensi', 'indicatori') && (
           <button className={`nav-btn ${currentView === 'indicatori' ? 'active' : ''}`} onClick={() => setCurrentView("indicatori")}><Icona nome="indicatori" />Indicatori</button>
         )}
@@ -707,21 +733,21 @@ function Compensi({ user }) {
                               {op.spese !== 0 && <span style={{ color: '#b26a00' }}>+{euro(op.spese)} spese</span>}
                             </>
                           )}
-                          {/* La somma delle voci sopra: quello che l'operatore incassa davvero.
-                              Il costo azienda, che comprende anche la ritenuta, resta nel piede
-                              della tabella e nelle schede in alto. */}
+                          {/* La somma delle voci sopra: quello che l'operatore incassa davvero. */}
                           <span><strong>{euro(op.compenso + op.spese)}</strong> da pagare</span>
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const date = op.giornate.map(g => g.data).sort();
-                              setFormConsuntivo({
-                                operatore: op.id, nome: op.nome,
-                                dal: date[0], al: date[date.length - 1],
-                                concordato: '', forfettario: '', note: '',
-                              });
-                            }}
+                            title="Sostituisce il calcolo a ore con un importo pattuito, ripartito sulle ore del periodo"
+                            onClick={(e) => { e.stopPropagation(); setFormForfait({ operatore: op.id, nome: op.nome, importo: '' }); }}
+                            className="btn-outline-annulla"
+                            style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Icona nome="offerta" size={14} style={{ marginRight: '5px' }} />Concordato
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); consuntiva(op); }}
+                            disabled={inCorso === `consuntiva-${op.id}`}
                             style={{ ...btnSalva, padding: '6px 12px', fontSize: '0.78rem' }}
                           >
                             <Icona nome="consuntivati" size={14} style={{ marginRight: '5px' }} />Consuntiva
@@ -815,96 +841,75 @@ function Compensi({ user }) {
         </div>
       )}
 
-      {/* ---------- Consuntivazione di un periodo ---------- */}
-      {formConsuntivo && anteprimaConsuntivo && (
-        <div className="modal-form-backdrop" onClick={() => setFormConsuntivo(null)}>
+      {/* ---------- Compenso concordato ---------- */}
+      {formForfait && anteprimaForfait && (
+        <div className="modal-form-backdrop" onClick={() => setFormForfait(null)}>
           <div className="modal-form-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '560px' }}>
-            <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setFormConsuntivo(null)}>✕</button>
-            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>Consuntiva {formConsuntivo.nome}</h3>
+            <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setFormForfait(null)}>✕</button>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>Compenso concordato · {formForfait.nome}</h3>
             <p style={{ margin: '0 0 15px 0', fontSize: '0.8rem', color: '#777' }}>
-              I valori vengono congelati come sono adesso. Dopo, le giornate del periodo non accettano più voci.
+              L'importo pattuito si ripartisce sulle ore delle partite in elenco. La differenza rispetto al calcolo
+              a ore diventa una rettifica con causale <strong>forfait</strong> su ogni partita, così il compenso
+              arriva esattamente alla cifra concordata.
             </p>
 
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <div style={{ flex: '1 1 140px' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Dal</label>
-                <input type="date" value={formConsuntivo.dal} max={formConsuntivo.al} onChange={(e) => setFormConsuntivo(f => ({ ...f, dal: e.target.value }))} style={stileInput} />
-              </div>
-              <div style={{ flex: '1 1 140px' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Al</label>
-                <input type="date" value={formConsuntivo.al} min={formConsuntivo.dal} max={oggiIso()} onChange={(e) => setFormConsuntivo(f => ({ ...f, al: e.target.value }))} style={stileInput} />
-              </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Importo concordato (€)</label>
+              <input
+                type="number" step="any" min="0" autoFocus
+                value={formForfait.importo}
+                placeholder={`ora sarebbero ${(+anteprimaForfait.op.compensoOrario).toFixed(2)}`}
+                onChange={(e) => setFormForfait(f => ({ ...f, importo: e.target.value }))}
+                style={stileInput}
+              />
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '10px' }}>
-              <div style={{ flex: '1 1 180px' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Compenso concordato (€)</label>
-                <input
-                  type="number" step="any" min="0" placeholder="lascia vuoto per il calcolo a ore"
-                  value={formConsuntivo.concordato}
-                  onChange={(e) => setFormConsuntivo(f => ({ ...f, concordato: e.target.value }))} style={stileInput}
-                />
-                <p style={{ margin: '4px 0 0 0', fontSize: '0.72rem', color: '#888' }}>Sostituisce le ore; recensioni e correzioni restano sopra.</p>
+            {anteprimaForfait.righe.length > 0 && (
+              <div style={{ marginTop: '16px', background: '#f8fafc', border: '1px solid #e0e0e0', borderRadius: '6px', overflow: 'hidden' }}>
+                <div style={{ padding: '8px 14px', fontSize: '0.78rem', color: '#666', borderBottom: '1px solid #e8e8e8' }}>
+                  {euro(anteprimaForfait.importo)} su {ore(anteprimaForfait.op.ore)} ·{' '}
+                  {euro(anteprimaForfait.importo / (anteprimaForfait.op.ore || 1))} l'ora
+                </div>
+                <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr style={{ background: '#f2f5f8', color: '#666' }}>
+                        <th style={{ padding: '6px 14px', textAlign: 'left' }}>Partita</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>A ore</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>Rettifica</th>
+                        <th style={{ padding: '6px 14px', textAlign: 'right' }}>Quota</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {anteprimaForfait.righe.map(r => (
+                        <tr key={r.riferimento} style={{ borderTop: '1px solid #eee' }}>
+                          <td style={{ padding: '6px 14px' }}>
+                            {r.riferimento}<br />
+                            <span style={{ color: '#999', fontSize: '0.72rem' }}>{dataBreve(r.data)}</span>
+                          </td>
+                          <td style={{ padding: '6px 10px', textAlign: 'right', color: '#888' }}>{euro(r.calcolato)}</td>
+                          <td style={{ padding: '6px 10px', textAlign: 'right', color: r.differenza < 0 ? '#c62828' : '#3949ab' }}>
+                            {r.differenza >= 0 ? '+' : ''}{euro(r.differenza)}
+                          </td>
+                          <td style={{ padding: '6px 14px', textAlign: 'right', fontWeight: 500 }}>{euro(r.quota)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-              <div style={{ flex: '1 1 180px' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Rimborso forfettario (€)</label>
-                <input
-                  type="number" step="any" min="0" placeholder="0"
-                  value={formConsuntivo.forfettario}
-                  onChange={(e) => setFormConsuntivo(f => ({ ...f, forfettario: e.target.value }))} style={stileInput}
-                />
-                <p style={{ margin: '4px 0 0 0', fontSize: '0.72rem', color: '#888' }}>Non cambia quanto incassa: esce dalla base imponibile.</p>
-              </div>
-            </div>
-
-            {/* Anteprima: gli stessi numeri che finiranno congelati */}
-            <div style={{ marginTop: '16px', background: '#f8fafc', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '14px 16px' }}>
-              {anteprimaConsuntivo.giornate.length === 0 ? (
-                <p style={{ margin: 0, color: '#c62828', fontSize: '0.85rem' }}>Nessuna giornata in questo intervallo.</p>
-              ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                  <tbody>
-                    <tr><td style={{ padding: '3px 0', color: '#666' }}>{anteprimaConsuntivo.giornate.length} giornat{anteprimaConsuntivo.giornate.length === 1 ? 'a' : 'e'} · {ore(anteprimaConsuntivo.parziale.ore)}</td><td></td></tr>
-                    <tr>
-                      <td style={{ padding: '3px 0' }}>{anteprimaConsuntivo.concordatoApplicato ? 'Compenso concordato' : 'Compenso a ore'}</td>
-                      <td style={{ textAlign: 'right' }}>{euro(anteprimaConsuntivo.base)}</td>
-                    </tr>
-                    {anteprimaConsuntivo.parziale.aggiunte !== 0 && (
-                      <tr><td style={{ padding: '3px 0' }}>Recensioni e correzioni</td><td style={{ textAlign: 'right' }}>{euro(anteprimaConsuntivo.parziale.aggiunte)}</td></tr>
-                    )}
-                    <tr style={{ borderTop: '1px solid #ddd' }}>
-                      <td style={{ padding: '5px 0', fontWeight: 'bold' }}>Compenso</td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{euro(anteprimaConsuntivo.compensoNetto)}</td>
-                    </tr>
-                    {anteprimaConsuntivo.rimborsoForfettario > 0 && (
-                      <>
-                        <tr><td style={{ padding: '3px 0', color: '#666' }}>di cui forfettario, esente</td><td style={{ textAlign: 'right', color: '#666' }}>{euro(anteprimaConsuntivo.rimborsoForfettario)}</td></tr>
-                        <tr><td style={{ padding: '3px 0', color: '#666' }}>imponibile</td><td style={{ textAlign: 'right', color: '#666' }}>{euro(anteprimaConsuntivo.imponibile)}</td></tr>
-                      </>
-                    )}
-                    <tr><td style={{ padding: '3px 0' }}>Ritenuta {parametri.aliquota_ritenuta}%</td><td style={{ textAlign: 'right', color: '#c62828' }}>{euro(anteprimaConsuntivo.ritenuta)}</td></tr>
-                    {anteprimaConsuntivo.spese > 0 && (
-                      <tr><td style={{ padding: '3px 0' }}>Rimborso spese</td><td style={{ textAlign: 'right' }}>{euro(anteprimaConsuntivo.spese)}</td></tr>
-                    )}
-                    <tr style={{ borderTop: '2px solid #333' }}>
-                      <td style={{ padding: '6px 0', fontWeight: 'bold' }}>Costo azienda</td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{euro(anteprimaConsuntivo.costoAzienda)}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ padding: '3px 0', color: '#666' }}>Incassa {formConsuntivo.nome}</td>
-                      <td style={{ textAlign: 'right', color: '#666' }}>{euro(anteprimaConsuntivo.incassaOperatore)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              )}
-            </div>
+            )}
 
             <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-              <button type="button" onClick={confermaConsuntivo} style={btnSalva} disabled={inCorso === 'consuntivo' || anteprimaConsuntivo.giornate.length === 0}>
+              <button type="button" onClick={applicaForfait} style={btnSalva} disabled={inCorso === 'forfait' || anteprimaForfait.righe.length === 0}>
                 <Icona nome="salva" size={16} style={{ marginRight: '6px' }} />
-                {inCorso === 'consuntivo' ? 'Salvataggio...' : 'Consuntiva e congela'}
+                {inCorso === 'forfait' ? 'Applicazione...' : 'Applica il forfait'}
               </button>
-              <button type="button" className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', borderRadius: '4px', fontSize: '0.85rem' }} onClick={() => setFormConsuntivo(null)}>
+              <button
+                type="button" className="btn-outline-annulla"
+                style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', borderRadius: '4px', fontSize: '0.85rem' }}
+                onClick={() => setFormForfait(null)}
+              >
                 <Icona nome="annulla" size={16} style={{ marginRight: '6px' }} />Annulla
               </button>
             </div>
@@ -943,9 +948,7 @@ function Compensi({ user }) {
                           {op.periodi.length} period{op.periodi.length === 1 ? 'o' : 'i'} chius{op.periodi.length === 1 ? 'o' : 'i'}
                         </span>
                       </div>
-                      <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.85rem', flexWrap: 'wrap' }}>
-                        <span style={{ color: '#666' }}>{euro(op.ritenuta)} ritenuta</span>
-                        <span style={{ color: '#666' }}>{euro(op.costoAzienda)} costo</span>
+                      <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.85rem', flexWrap: 'wrap' }}>                        <span style={{ color: '#666' }}>{euro(op.costoAzienda)} costo</span>
                         <span><strong>{euro(op.daPagare)}</strong> da pagare</span>
                       </div>
                     </div>
@@ -960,17 +963,12 @@ function Compensi({ user }) {
                                 <strong style={{ fontSize: '0.88rem' }}>
                                   {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
                                 </strong>
-                                <div style={{ fontSize: '0.76rem', color: '#888', marginTop: '2px' }}>
-                                  {p.concordato != null && <span style={{ color: '#0288d1' }}>compenso concordato {euro(p.concordato)} · </span>}
-                                  {p.rimborso_forfettario > 0 && <span style={{ color: '#b26a00' }}>forfettario {euro(p.rimborso_forfettario)} · </span>}
-                                  consuntivato il {dataBreve((p.creato_il || '').slice(0, 10))}
+                                <div style={{ fontSize: '0.76rem', color: '#888', marginTop: '2px' }}>                                  consuntivato il {dataBreve((p.creato_il || '').slice(0, 10))}
                                 </div>
                               </div>
                               <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.82rem', flexWrap: 'wrap' }}>
                                 <span>{euro(p.compenso_netto)} compenso</span>
-                                {p.spese > 0 && <span style={{ color: '#b26a00' }}>+{euro(p.spese)} spese</span>}
-                                <span style={{ color: '#c62828' }}>{euro(p.ritenuta)} ritenuta</span>
-                                <span><strong>{euro((parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0))}</strong> da pagare</span>
+                                {p.spese > 0 && <span style={{ color: '#b26a00' }}>+{euro(p.spese)} spese</span>}                                <span><strong>{euro((parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0))}</strong> da pagare</span>
                                 <button
                                   type="button" className="btn-icon-action" aria-label="Riapri periodo" title="Riapri periodo"
                                   disabled={inCorso === `riapri-${p.id}`}
@@ -981,12 +979,6 @@ function Compensi({ user }) {
                               </div>
                             </div>
 
-                            {p.concordato != null && p.dettaglio && (
-                              <div style={{ padding: '8px 16px', background: '#eef4fb', color: '#1a4f8a', fontSize: '0.78rem' }}>
-                                Compenso concordato di {euro(p.concordato)} ripartito sulle {ore(p.dettaglio.ore)} del periodo:
-                                {' '}{euro(p.concordato / (p.dettaglio.ore || 1))} l'ora. Il calcolo a ore non si applica.
-                              </div>
-                            )}
 
                             {p.dettaglio
                               ? tabellaDettaglio(p.dettaglio, true)
@@ -1006,6 +998,11 @@ function Compensi({ user }) {
           )}
         </div>
       )}
+      {currentView === "rimborso" && puoVedere(user, 'compensi', 'rimborso') && schedaVuota(
+        "Elabora rimborso",
+        "Sui periodi già consuntivati: rimborso forfettario esente, calcolo della ritenuta d'acconto e documento cumulativo per operatore."
+      )}
+
       {currentView === "indicatori" && puoVedere(user, 'compensi', 'indicatori') && schedaVuota(
         "Indicatori",
         "Ore per operatore, costo medio orario e incidenza del personale sul margine."

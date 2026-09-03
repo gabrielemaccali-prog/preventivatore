@@ -62,6 +62,7 @@ export const SCHEDE_REGISTRY = {
       { id: 'config', label: 'Configuratore' },
       { id: 'daconsuntivare', label: 'Da consuntivare' },
       { id: 'consuntivati', label: 'Consuntivati' },
+      { id: 'rimborso', label: 'Elabora rimborso' },
       { id: 'indicatori', label: 'Indicatori' },
     ],
   },

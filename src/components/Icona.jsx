@@ -43,6 +43,7 @@ const REGISTRO_ICONE = {
   miedisp: IconListCheck,
   daconsuntivare: IconChecklist,
   consuntivati: IconFileInvoice,
+  rimborso: IconCurrencyEuro,
   indicatori: IconChartBar,
   utenti: IconUsers,
   ruoli: IconShield,

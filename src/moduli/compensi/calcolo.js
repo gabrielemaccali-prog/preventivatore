@@ -202,6 +202,39 @@ export const preventiviPerOperatore = (prenotazioni, voci, par, giaConsuntivato 
   }).sort((a, b) => a.nome.localeCompare(b.nome));
 };
 
+// Rettifiche che portano il compenso a ore di un periodo esattamente all'importo concordato.
+//
+// Invece di tenere il concordato come valore a parte e ricalcolare tutto in modo diverso, si
+// materializza la differenza in righe di rettifica: da quel momento il calcolo normale arriva da
+// solo al totale pattuito, e il dettaglio per partita è leggibile senza conoscere regole speciali.
+// La quota di ogni partita è proporzionale alle ore attribuite; l'ultima assorbe il resto, così la
+// somma torna al centesimo.
+//
+// Restituisce una riga per partita (anche a differenza nulla, per non lasciare buchi nel racconto).
+// Senza ore non c'è divisore e non si genera niente.
+export const rettificheForfait = (preventivo, importo) => {
+  const tutte = preventivo.giornate.flatMap(g =>
+    g.blocchi.flatMap(b => b.partite.map(x => ({ ...x, data: g.data }))));
+  const oreTotali = tutte.reduce((s, x) => s + x.oreAttribuite, 0);
+  if (oreTotali <= 0 || tutte.length === 0) return [];
+
+  const totale = arrotondaCentesimi(parseFloat(importo) || 0);
+  let assegnato = 0;
+  return tutte.map((x, i) => {
+    const quota = i === tutte.length - 1
+      ? arrotondaCentesimi(totale - assegnato)
+      : arrotondaCentesimi(totale * (x.oreAttribuite / oreTotali));
+    assegnato = arrotondaCentesimi(assegnato + quota);
+    return {
+      riferimento: x.partita.id,
+      data: x.data,
+      quota,
+      calcolato: x.compenso,
+      differenza: arrotondaCentesimi(quota - x.compenso),
+    };
+  });
+};
+
 // Riparto di un compenso concordato sulle partite del periodo, in proporzione alle ore attribuite.
 // Qui non vale la regola cronologica della prima ora: quella descrive una tariffa che il concordato
 // ha sostituito. L'importo pattuito è un blocco unico, e si divide per le ore effettivamente fatte —

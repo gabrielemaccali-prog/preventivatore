@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   preventivoGiornata, lordizza, preventiviPerOperatore, consuntivoDiPeriodo, blocchiDiGiornata,
-  ripartisciSuOre,
+  ripartisciSuOre, rettificheForfait,
 } from './calcolo.js';
 
 const par = {
@@ -177,6 +177,33 @@ const soloVoci = preventiviPerOperatore([], [
   { operatore: 'd', data: '2026-08-02', tipo: 'spesa', importo: 20, esente_ritenuta: true },
 ], par)[0];
 verifica('concordato senza ore: nessun riparto', 0, ripartisciSuOre(soloVoci, 500, par).compensoOrario);
+
+// ---------- rettifiche che portano il compenso all'importo concordato ----------
+const rett = rettificheForfait(prevD, 500);
+verifica('forfait: una riga per partita', 3, rett.length);
+verifica('forfait: le differenze coprono lo scarto', 390,
+  rett.reduce((s, r) => s + r.differenza, 0));
+verifica('forfait: quota + differenza tornano alla quota', true,
+  rett.every(r => Math.abs((r.calcolato + r.differenza) - r.quota) < 0.005));
+
+// Applicando le rettifiche il calcolo normale arriva da solo al concordato.
+const vociForfait = rett.map(r => ({
+  operatore: 'd', data: r.data, tipo: 'rettifica', riferimento: r.riferimento,
+  descrizione: 'forfait', importo: r.differenza, esente_ritenuta: false,
+}));
+const [conForfait] = preventiviPerOperatore(perConcordato, vociForfait, par);
+verifica('forfait: il compenso arriva al concordato', 500, conForfait.compenso);
+verifica('forfait: le ore restano quelle vere', 5, conForfait.ore);
+
+// Le recensioni restano sopra il concordato, non ci finiscono dentro.
+const [conForfaitERecensione] = preventiviPerOperatore(perConcordato, [
+  ...vociForfait,
+  { operatore: 'd', data: '2026-08-30', tipo: 'recensione', riferimento: 'C', importo: 5, esente_ritenuta: false },
+], par);
+verifica('forfait: la recensione si somma sopra', 505, conForfaitERecensione.compenso);
+
+// Senza ore non si genera nulla.
+verifica('forfait senza ore: nessuna rettifica', 0, rettificheForfait(soloVoci, 500).length);
 
 // ---------- una spesa in un giorno senza partite ----------
 const soloSpesa = preventiviPerOperatore([], [
