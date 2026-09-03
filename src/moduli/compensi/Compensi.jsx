@@ -419,11 +419,11 @@ function Compensi({ user }) {
       .map(g => ({ comune: comuneDa(g.luogo), data: g.data, importo: arrotonda2(parseFloat(g.trasferta) || 0) }))
       .filter(r => r.importo > 0);
     const trasferte = arrotonda2(righeTrasferta.reduce((s, r) => s + r.importo, 0));
-    // compenso_netto congelato è già il solo compenso, spese escluse: quelle si sommano ai
-    // rimborsi più sotto, non vanno tolte di nuovo qui.
-    const compenso = arrotonda2(parseFloat(p.compenso_netto) || 0);
+    // Il totale a pagare è quello deciso consuntivando e non si muove: compenso più spese.
+    // I rimborsi si scorporano da dentro, non si aggiungono sopra.
+    const daPagare = arrotonda2((parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0));
     return {
-      ...importiRimborso({ compenso, spese: sommaDi(elencoSpese), trasferte }, p.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta),
+      ...importiRimborso({ daPagare, spese: sommaDi(elencoSpese), trasferte }, p.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta),
       trasferte, elencoSpese, righeTrasferta,
     };
   }, [elaborazione, speseDelPeriodo, parametri]);

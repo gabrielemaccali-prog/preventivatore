@@ -278,20 +278,27 @@ export const ripartisciSuOre = (preventivo, importo, par) => {
 
 // Importi del documento di rimborso.
 //
-// La ritenuta si paga sul solo compenso: tutto ciò che è rimborso — trasferte, pranzi, caselli —
-// esce dalla base imponibile, perché è denaro anticipato e restituito, non guadagnato. Il compenso
-// che l'operatore incassa è netto, quindi l'imponibile si ottiene lordizzandolo e la ritenuta è la
-// differenza: è un costo che l'azienda aggiunge sopra, non una trattenuta che riduce l'incasso.
-export const importiRimborso = ({ compenso, spese = 0, trasferte = 0 }, aliquotaPerc) => {
-  const netto = arrotondaCentesimi(parseFloat(compenso) || 0);
-  const rimborsi = arrotondaCentesimi((parseFloat(spese) || 0) + (parseFloat(trasferte) || 0));
+// Il totale a pagare è deciso in consuntivazione e non si muove: è quanto l'operatore incassa.
+// I rimborsi — spese registrate e trasferte — non si aggiungono sopra, si scorporano da dentro:
+// spostano una fetta dal compenso ai rimborsi, e su quella la ritenuta non si paga perché è denaro
+// anticipato e restituito, non guadagnato. L'operatore incassa uguale, l'azienda versa meno
+// ritenuta. Sul solo compenso residuo, che è netto in mano, l'imponibile si ottiene lordizzando.
+export const importiRimborso = ({ daPagare, spese = 0, trasferte = 0 }, aliquotaPerc) => {
+  const totale = arrotondaCentesimi(parseFloat(daPagare) || 0);
+  // I rimborsi non possono superare quello che c'è da pagare: oltre, si starebbe restituendo
+  // denaro mai maturato e il compenso diventerebbe negativo.
+  const rimborsi = Math.min(
+    arrotondaCentesimi((parseFloat(spese) || 0) + (parseFloat(trasferte) || 0)),
+    Math.max(totale, 0)
+  );
+  const netto = arrotondaCentesimi(totale - rimborsi);
   const { lordo, ritenuta } = lordizza(netto, aliquotaPerc);
   return {
     imponibile: arrotondaCentesimi(lordo),
     ritenuta: arrotondaCentesimi(ritenuta),
     netto,
     rimborsi,
-    totale: arrotondaCentesimi(netto + rimborsi),
+    totale,
   };
 };
 

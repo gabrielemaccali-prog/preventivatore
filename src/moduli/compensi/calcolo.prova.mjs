@@ -206,8 +206,8 @@ verifica('forfait: la recensione si somma sopra', 505, conForfaitERecensione.com
 verifica('forfait senza ore: nessuna rettifica', 0, rettificheForfait(soloVoci, 500).length);
 
 // ---------- importi del documento di rimborso ----------
-// L'esempio del PDF: 65 di compenso e 20 di trasferte.
-const doc = importiRimborso({ compenso: 65, trasferte: 20 }, 20);
+// L'esempio del PDF: 85 da pagare, di cui 20 di trasferte.
+const doc = importiRimborso({ daPagare: 85, trasferte: 20 }, 20);
 verifica('documento: imponibile', 81.25, doc.imponibile);
 verifica('documento: ritenuta', 16.25, doc.ritenuta);
 verifica('documento: netto a pagare', 65, doc.netto);
@@ -215,16 +215,30 @@ verifica('documento: rimborsi', 20, doc.rimborsi);
 verifica('documento: totale a pagare', 85, doc.totale);
 verifica('documento: netto = imponibile - ritenuta', 0, doc.imponibile - doc.ritenuta - doc.netto);
 
-// Le spese registrate a mano si sommano alle trasferte e restano fuori dall'imponibile.
-const conSpese = importiRimborso({ compenso: 505, spese: 50, trasferte: 20 }, 20);
-verifica('con spese: imponibile sul solo compenso', 631.25, conSpese.imponibile);
-verifica('con spese: rimborsi sommati', 70, conSpese.rimborsi);
-verifica('con spese: totale', 575, conSpese.totale);
+// Il caso di Diego: 165 da pagare, di cui 50 di spesa registrata.
+const diego = importiRimborso({ daPagare: 165, spese: 50 }, 20);
+verifica('Diego senza trasferte: netto', 115, diego.netto);
+verifica('Diego senza trasferte: totale', 165, diego.totale);
+
+// Aggiungendo 10 di trasferta il totale non si muove: cambia il netto, che scende a 105.
+const diegoTrasferta = importiRimborso({ daPagare: 165, spese: 50, trasferte: 10 }, 20);
+verifica('Diego con trasferta: totale invariato', 165, diegoTrasferta.totale);
+verifica('Diego con trasferta: netto scende', 105, diegoTrasferta.netto);
+verifica('Diego con trasferta: rimborsi', 60, diegoTrasferta.rimborsi);
+verifica('Diego con trasferta: imponibile', 131.25, diegoTrasferta.imponibile);
+// La leva vale il 25% di quanto si sposta: 10 spostati fanno 2,50 di ritenuta in meno.
+verifica('la trasferta abbassa la ritenuta', 2.5, diego.ritenuta - diegoTrasferta.ritenuta);
+
+// I rimborsi non possono superare quello che c'e' da pagare.
+const eccessivo = importiRimborso({ daPagare: 165, spese: 50, trasferte: 999 }, 20);
+verifica('rimborsi oltre il totale: limitati', 165, eccessivo.rimborsi);
+verifica('rimborsi oltre il totale: nessun compenso', 0, eccessivo.netto);
+verifica('rimborsi oltre il totale: nessuna ritenuta', 0, eccessivo.ritenuta);
 
 // Senza rimborsi il totale coincide col netto.
-verifica('senza rimborsi: totale = netto', 65, importiRimborso({ compenso: 65 }, 20).totale);
+verifica('senza rimborsi: totale = netto', 65, importiRimborso({ daPagare: 65 }, 20).netto);
 // Ad aliquota zero non c'e' nulla da lordizzare.
-verifica('aliquota zero: imponibile = netto', 65, importiRimborso({ compenso: 65 }, 0).imponibile);
+verifica('aliquota zero: imponibile = netto', 65, importiRimborso({ daPagare: 65 }, 0).imponibile);
 
 // ---------- una spesa in un giorno senza partite ----------
 const soloSpesa = preventiviPerOperatore([], [
