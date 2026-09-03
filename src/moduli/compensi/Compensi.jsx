@@ -252,23 +252,27 @@ function Compensi({ user }) {
     if (error) { console.error(error); return alert("Errore nella riapertura del periodo."); }
     fetchPartite();
   };
-  const totali = useMemo(() => preventivi.reduce((a, o) => ({
-    ore: a.ore + o.ore, oreAttesa: a.oreAttesa + o.oreAttesa,
-    compenso: a.compenso + o.compenso, spese: a.spese + o.spese, lordo: a.lordo + o.lordo,
-  }), { ore: 0, oreAttesa: 0, compenso: 0, spese: 0, lordo: 0 }), [preventivi]);
 
-  const salvaParametri = async (e) => {
-    e.preventDefault();
-    const mancante = CAMPI_PARAMETRI.find(c => parametri[c.chiave] === "" || parametri[c.chiave] == null);
-    if (mancante) return alert(`Inserisci un valore per "${mancante.label}".`);
+  // Un parametro per volta, come pacchetti e fasce negli altri configuratori: in sola lettura
+  // finché non si preme la matita. Sono le cifre da cui dipendono tutti i compensi, e con le
+  // caselle sempre aperte bastava un clic distratto per cambiarne una senza accorgersene.
+  const [chiaveInline, setChiaveInline] = useState(null);
+  const [valoreInline, setValoreInline] = useState("");
+
+  const iniziaModificaParametro = (chiave) => {
+    setChiaveInline(chiave);
+    setValoreInline(String(parametri[chiave] ?? ""));
+  };
+
+  const salvaParametro = async (chiave) => {
+    if (valoreInline === "" || isNaN(parseFloat(valoreInline))) return alert("Inserisci un valore numerico.");
     setSalvataggio(true);
-    const rec = Object.fromEntries(CAMPI_PARAMETRI.map(c => [c.chiave, parseFloat(parametri[c.chiave]) || 0]));
     const { error } = await supabase.from('compensi_parametri')
-      .update({ ...rec, aggiornato_il: new Date().toISOString() }).eq('id', 1);
+      .update({ [chiave]: parseFloat(valoreInline), aggiornato_il: new Date().toISOString() }).eq('id', 1);
     setSalvataggio(false);
-    if (error) { console.error(error); return alert("Errore nel salvataggio dei parametri."); }
+    if (error) { console.error(error); return alert("Errore nel salvataggio del parametro."); }
+    setChiaveInline(null);
     fetchTutto();
-    alert("Parametri salvati.");
   };
 
   const schedaVuota = (titolo, testo) => (
@@ -316,39 +320,81 @@ function Compensi({ user }) {
               </span>
             </div>
           )}
-
-          <form onSubmit={salvaParametri} className="admin-table-box-full" style={{ marginTop: '20px', padding: '20px' }}>
+          <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '20px' }}>
             <h3 style={{ margin: '0 0 4px 0', fontSize: '1rem' }}>Calcolo a ore</h3>
-            <p style={{ margin: '0 0 18px 0', fontSize: '0.82rem', color: '#777', maxWidth: '72ch' }}>
-              Le ore di più partite dello stesso giorno si sommano in un unico blocco se lo stacco fra una e l'altra
-              rientra nel limite qui sotto. Il preventivo si calcola così per tutti: un eventuale compenso concordato
-              si applica in fase di consuntivazione, non qui.
+            <p style={{ margin: '0 0 6px 0', fontSize: '0.82rem', color: '#777', maxWidth: '68ch' }}>
+              Le ore di più partite dello stesso giorno si sommano in un unico blocco se lo stacco fra una e
+              l'altra rientra nel limite qui sotto. Il preventivo si calcola così per tutti: un eventuale
+              compenso concordato si applica in fase di consuntivazione, non qui.
             </p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-              {CAMPI_PARAMETRI.map(c => (
-                <div key={c.chiave}>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '5px' }}>
-                    {c.label} <span style={{ color: '#888', fontWeight: 'normal' }}>({c.unita})</span>
-                  </label>
-                  <input
-                    type="number" step="any" min="0"
-                    value={parametri[c.chiave] ?? ""}
-                    onChange={(e) => setParametri(p => ({ ...p, [c.chiave]: e.target.value }))}
-                    style={stileInput}
-                  />
-                  <p style={{ margin: '5px 0 0 0', fontSize: '0.75rem', color: '#888', lineHeight: 1.4 }}>{c.aiuto}</p>
-                </div>
-              ))}
-            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {CAMPI_PARAMETRI.map((c, i) => {
+                const inModifica = chiaveInline === c.chiave;
+                return (
+                  <div
+                    key={c.chiave}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      gap: '16px', flexWrap: 'wrap', padding: '12px 0',
+                      borderTop: i > 0 ? '1px solid #f0f0f0' : '1px solid #eee',
+                    }}
+                  >
+                    <div style={{ flex: '1 1 320px' }}>
+                      <div style={{ fontSize: '0.88rem', fontWeight: 'bold' }}>{c.label}</div>
+                      <div style={{ fontSize: '0.78rem', color: '#888', lineHeight: 1.4, marginTop: '2px' }}>{c.aiuto}</div>
+                    </div>
 
-            <div style={{ marginTop: '20px' }}>
-              <button type="submit" style={btnSalva} disabled={salvataggio}>
-                <Icona nome="salva" size={16} style={{ marginRight: '6px' }} />
-                {salvataggio ? "Salvataggio..." : "Salva parametri"}
-              </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {inModifica ? (
+                        <>
+                          <input
+                            type="number" step="any" min="0" autoFocus
+                            value={valoreInline}
+                            onChange={(e) => setValoreInline(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.preventDefault(); salvaParametro(c.chiave); }
+                              if (e.key === 'Escape') setChiaveInline(null);
+                            }}
+                            style={{ ...stileInput, width: '110px', textAlign: 'right' }}
+                          />
+                          <span style={{ color: '#888', fontSize: '0.85rem', width: '26px' }}>{c.unita}</span>
+                          <button
+                            type="button" className="btn-icon-action" aria-label="Salva" title="Salva"
+                            disabled={salvataggio} onClick={() => salvaParametro(c.chiave)}
+                          >
+                            <Icona nome="salva" size={16} style={{ marginRight: 0 }} />
+                          </button>
+                          <button
+                            type="button" className="btn-icon-action" aria-label="Annulla" title="Annulla"
+                            onClick={() => setChiaveInline(null)}
+                          >
+                            <Icona nome="annulla" size={16} style={{ marginRight: 0 }} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ fontSize: '1rem', fontWeight: 500, minWidth: '110px', textAlign: 'right' }}>
+                            {c.unita === '€' ? euro(parametri[c.chiave]) : `${parametri[c.chiave]}`}
+                          </span>
+                          <span style={{ color: '#888', fontSize: '0.85rem', width: '26px' }}>{c.unita === '€' ? '' : c.unita}</span>
+                          <button
+                            type="button" className="btn-icon-action" aria-label="Modifica" title="Modifica"
+                            onClick={() => iniziaModificaParametro(c.chiave)}
+                          >
+                            <Icona nome="modifica" size={16} style={{ marginRight: 0 }} />
+                          </button>
+                          {/* Segnaposto della larghezza del secondo pulsante, così i valori
+                              restano incolonnati anche sulla riga in modifica. */}
+                          <span style={{ display: 'inline-block', width: '30px' }} />
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          </form>
+          </div>
         </div>
       )}
 
@@ -394,34 +440,6 @@ function Compensi({ user }) {
             </div>
           ) : (
             <>
-              {/* I due numeri che contano sono quanto esce di tasca: hanno peso pieno.
-                  Operatori e ore restano come contesto, in corpo minore. */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '20px', alignItems: 'stretch' }}>
-                <div style={{ flex: '2 1 220px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px 18px' }}>
-                  <span style={{ display: 'block', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#888', marginBottom: '4px' }}>Incassano gli operatori</span>
-                  <strong style={{ fontSize: '1.7rem', lineHeight: 1.1 }}>{euro(totali.compenso + totali.spese)}</strong>
-                  <span style={{ display: 'block', fontSize: '0.74rem', color: '#888', marginTop: '3px' }}>
-                    {euro(totali.compenso)} di compenso{totali.spese > 0 ? ` · ${euro(totali.spese)} di rimborsi` : ''}
-                  </span>
-                </div>
-                <div style={{ flex: '2 1 220px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px 18px' }}>
-                  <span style={{ display: 'block', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#888', marginBottom: '4px' }}>Costo azienda</span>
-                  <strong style={{ fontSize: '1.7rem', lineHeight: 1.1 }}>{euro(totali.lordo + totali.spese)}</strong>
-                  <span style={{ display: 'block', fontSize: '0.74rem', color: '#888', marginTop: '3px' }}>
-                    include {euro(totali.lordo - totali.compenso)} di ritenuta al {parametri.aliquota_ritenuta}%
-                  </span>
-                </div>
-                <div style={{ flex: '1 1 150px', background: '#fafafa', border: '1px solid #e8e8e8', borderRadius: '8px', padding: '16px 18px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '6px' }}>
-                  <div style={{ fontSize: '0.8rem', color: '#666' }}>
-                    <strong style={{ color: '#333' }}>{preventivi.length}</strong> operator{preventivi.length === 1 ? 'e' : 'i'}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#666' }}>
-                    <strong style={{ color: '#333' }}>{ore(totali.ore)}</strong> pagate
-                    {totali.oreAttesa > 0 && <span style={{ color: '#b26a00' }}>, {ore(totali.oreAttesa)} di attesa</span>}
-                  </div>
-                </div>
-              </div>
-
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
                 {preventivi.map(op => {
                   const espanso = operatoreEspanso === op.id;
