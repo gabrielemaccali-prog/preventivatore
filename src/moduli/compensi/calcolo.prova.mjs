@@ -3,6 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   preventivoGiornata, lordizza, preventiviPerOperatore, consuntivoDiPeriodo, blocchiDiGiornata,
+  ripartisciSuOre,
 } from './calcolo.js';
 
 const par = {
@@ -133,6 +134,49 @@ verifica('concordato sostituisce le ore', 80, conc.base);
 verifica('concordato: recensione resta sopra', 85, conc.compensoNetto);
 verifica('concordato: costo azienda', r2(85 / 0.8 + 3.5), conc.costoAzienda);
 verifica('senza concordato si usa il calcolo', 50, consuntivoDiPeriodo(edo, {}, par).base);
+
+// ---------- riparto del compenso concordato sulle ore ----------
+// Tre partite: 2h il 21, 2h il 21, 1h il 30. Totale 5 ore, concordato 500 -> 100 euro/ora.
+const perConcordato = [
+  { id: 'A', data: '2026-08-21', oraInizio: '11:00', oraFine: '13:00', operatori: [{ id: 'd', nome: 'Diego' }] },
+  { id: 'B', data: '2026-08-21', oraInizio: '15:00', oraFine: '17:00', operatori: [{ id: 'd', nome: 'Diego' }] },
+  { id: 'C', data: '2026-08-30', oraInizio: '17:00', oraFine: '18:00', operatori: [{ id: 'd', nome: 'Diego' }] },
+];
+const [prevD] = preventiviPerOperatore(perConcordato, [], par);
+verifica('a ore: totale prima del concordato', 110, prevD.compensoOrario);
+
+const spalmato = ripartisciSuOre(prevD, 500, par);
+const quoteSpalmate = spalmato.giornate.flatMap(g => g.blocchi.flatMap(b => b.partite))
+  .map(x => ({ id: x.partita.id, ore: x.oreAttribuite, quota: x.compenso }));
+verifica('concordato: somma delle quote', 500, quoteSpalmate.reduce((s, q) => s + q.quota, 0));
+verifica('concordato: quota di 1 ora', 100, quoteSpalmate.find(q => q.id === 'C').quota);
+verifica('concordato: quota di 2 ore', 200, quoteSpalmate.find(q => q.id === 'A').quota);
+verifica('concordato: le due da 2 ore prendono uguale', true,
+  quoteSpalmate.find(q => q.id === 'A').quota === quoteSpalmate.find(q => q.id === 'B').quota);
+verifica('concordato: totale operatore', 500, spalmato.compensoOrario);
+verifica('concordato: costo azienda', 625, spalmato.costoAzienda);
+
+// Il totale della giornata segue le sue partite, non il calcolo a ore.
+verifica('concordato: giornata da 4 ore', 400, spalmato.giornate.find(g => g.data === '2026-08-21').compenso);
+verifica('concordato: giornata da 1 ora', 100, spalmato.giornate.find(g => g.data === '2026-08-30').compenso);
+
+// Importo che non si divide esatto: le quote devono comunque sommare al centesimo.
+const dispari = ripartisciSuOre(prevD, 100, par);
+verifica('concordato indivisibile: somma esatta', 100,
+  dispari.giornate.flatMap(g => g.blocchi.flatMap(b => b.partite)).reduce((s, x) => s + x.compenso, 0));
+
+// Il tetto giornaliero non si applica a un importo pattuito a mano.
+const lungo = preventiviPerOperatore([
+  { id: 'X', data: '2026-08-21', oraInizio: '08:00', oraFine: '20:00', operatori: [{ id: 'd', nome: 'Diego' }] },
+], [], par)[0];
+verifica('a ore: il tetto morde', 120, lungo.compensoOrario);
+verifica('concordato: il tetto non si applica', 300, ripartisciSuOre(lungo, 300, par).compensoOrario);
+
+// Senza ore non c'è divisore: il preventivo resta com'era.
+const soloVoci = preventiviPerOperatore([], [
+  { operatore: 'd', data: '2026-08-02', tipo: 'spesa', importo: 20, esente_ritenuta: true },
+], par)[0];
+verifica('concordato senza ore: nessun riparto', 0, ripartisciSuOre(soloVoci, 500, par).compensoOrario);
 
 // ---------- una spesa in un giorno senza partite ----------
 const soloSpesa = preventiviPerOperatore([], [

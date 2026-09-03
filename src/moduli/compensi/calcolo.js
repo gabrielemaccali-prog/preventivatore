@@ -202,6 +202,45 @@ export const preventiviPerOperatore = (prenotazioni, voci, par, giaConsuntivato 
   }).sort((a, b) => a.nome.localeCompare(b.nome));
 };
 
+// Riparto di un compenso concordato sulle partite del periodo, in proporzione alle ore attribuite.
+// Qui non vale la regola cronologica della prima ora: quella descrive una tariffa che il concordato
+// ha sostituito. L'importo pattuito è un blocco unico, e si divide per le ore effettivamente fatte —
+// quindi ogni partita ne prende la sua quota. Anche il tetto giornaliero decade: il tetto limita il
+// calcolo a ore, non un importo deciso a mano.
+//
+// Senza ore non c'è divisore: il preventivo torna com'era e l'importo resta non attribuito.
+export const ripartisciSuOre = (preventivo, importo, par) => {
+  const tutte = preventivo.giornate.flatMap(g => g.blocchi.flatMap(b => b.partite));
+  const oreTotali = tutte.reduce((s, x) => s + x.oreAttribuite, 0);
+  if (oreTotali <= 0) return preventivo;
+
+  const totale = arrotondaCentesimi(parseFloat(importo) || 0);
+  // L'ultima quota assorbe il resto, così la somma torna esattamente all'importo pattuito.
+  const quote = new Map();
+  let assegnato = 0;
+  tutte.forEach((x, i) => {
+    const quota = i === tutte.length - 1
+      ? arrotondaCentesimi(totale - assegnato)
+      : arrotondaCentesimi(totale * (x.oreAttribuite / oreTotali));
+    quote.set(x, quota);
+    assegnato = arrotondaCentesimi(assegnato + quota);
+  });
+
+  const giornate = preventivo.giornate.map(g => {
+    const blocchi = g.blocchi.map(b => {
+      const partite = b.partite.map(x => ({ ...x, compenso: quote.get(x) }));
+      return { ...b, partite, compenso: arrotondaCentesimi(partite.reduce((s, x) => s + x.compenso, 0)) };
+    });
+    const compenso = arrotondaCentesimi(blocchi.reduce((s, b) => s + b.compenso, 0));
+    return { ...g, blocchi, compenso, primaDelTetto: compenso, tettoApplicato: false, compensoConVoci: compenso + g.aggiunte };
+  });
+
+  const compensoOrario = arrotondaCentesimi(giornate.reduce((s, g) => s + g.compenso, 0));
+  const compenso = compensoOrario + preventivo.aggiunte;
+  const { lordo, ritenuta } = lordizza(compenso, par.aliquota_ritenuta);
+  return { ...preventivo, giornate, compensoOrario, compenso, lordo, ritenuta, costoAzienda: lordo + preventivo.spese };
+};
+
 // Consuntivo di un periodo: prende il preventivo di un operatore e ci applica le due leve del
 // manager. Restituisce i numeri che verranno congelati in op_periodi.
 //

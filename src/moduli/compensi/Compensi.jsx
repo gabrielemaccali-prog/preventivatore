@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
-import { preventiviPerOperatore, consuntivoDiPeriodo, oreDiPartita } from './calcolo'
+import { preventiviPerOperatore, consuntivoDiPeriodo, ripartisciSuOre, oreDiPartita } from './calcolo'
 import { toMinutes } from '../../lib/utils'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -153,7 +153,12 @@ function Compensi({ user }) {
         x.data >= p.dal && x.data <= p.al && (x.operatori || []).some(o => o.id === p.operatore));
       const vociDelPeriodo = voci.filter(v =>
         v.operatore === p.operatore && v.data >= p.dal && v.data <= p.al);
-      const [dettaglio] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
+      const [calcolato] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
+      // Con un compenso concordato le quote per partita non sono più quelle del calcolo a ore:
+      // l'importo pattuito si ripartisce sulle ore effettivamente fatte nel periodo.
+      const dettaglio = calcolato && p.concordato != null
+        ? ripartisciSuOre(calcolato, p.concordato, parUsati)
+        : calcolato;
 
       if (!perOperatore.has(p.operatore)) perOperatore.set(p.operatore, { id: p.operatore, nome: p.operatore, periodi: [] });
       perOperatore.get(p.operatore).periodi.push({
@@ -976,13 +981,10 @@ function Compensi({ user }) {
                               </div>
                             </div>
 
-                            {/* Con un compenso concordato il dettaglio sotto mostra il calcolo a ore
-                                che l'importo pattuito ha sostituito: i due totali non coincidono, ed
-                                è giusto così — ma senza dirlo sembra un conto sbagliato. */}
-                            {p.concordato != null && (
+                            {p.concordato != null && p.dettaglio && (
                               <div style={{ padding: '8px 16px', background: '#eef4fb', color: '#1a4f8a', fontSize: '0.78rem' }}>
-                                Il dettaglio qui sotto è il calcolo a ore, sostituito dal compenso concordato di {euro(p.concordato)}:
-                                i due totali non coincidono per costruzione.
+                                Compenso concordato di {euro(p.concordato)} ripartito sulle {ore(p.dettaglio.ore)} del periodo:
+                                {' '}{euro(p.concordato / (p.dettaglio.ore || 1))} l'ora. Il calcolo a ore non si applica.
                               </div>
                             )}
 
