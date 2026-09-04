@@ -624,11 +624,12 @@ function Prenotazioni({ user }) {
   };
   const eliminaPrenotazione = async (id) => {
     if (!window.confirm(`Eliminare la prenotazione ${id}?`)) return;
-    // Libera l'eventuale voucher usato e cancella i suoi pagamenti: non esistono vincoli a livello di DB.
+    // Libera l'eventuale voucher usato e il preventivo collegato, e cancella i pagamenti: non esistono vincoli a livello di DB.
     const pren = prenotazioni.find(p => p.id === id);
     await supabase.from('prenotazioni').delete().eq('id', id);
     await supabase.from('pagamenti').delete().eq('tipo', 'prenotazione').eq('riferimento', id);
     if (pren?.voucherCodice) await supabase.from('voucher').update({ stato: 'emesso' }).eq('codice', pren.voucherCodice);
+    if (pren?.preventivoCollegato) await supabase.from('preventivi').update({ stato: 'Confermato' }).eq('codice', pren.preventivoCollegato);
     fetchTutto();
   };
 
@@ -813,6 +814,21 @@ function Prenotazioni({ user }) {
     if (codiceNuovo) await supabase.from('voucher').update({ stato: 'usato' }).eq('codice', codiceNuovo);
   };
 
+  // Un preventivo passa a "Prenotato" quando viene collegato a una prenotazione, e torna "Confermato"
+  // se viene scollegato (o se la prenotazione viene eliminata). Finché è prenotato non compare più
+  // tra quelli selezionabili, così lo stesso preventivo non finisce su due prenotazioni.
+  const aggiornaPreventivoCollegato = async (codicePrecedente, codiceNuovo) => {
+    const cambiaStato = async (codice, stato) => {
+      const { error } = await supabase.from('preventivi').update({ stato }).eq('codice', codice);
+      if (error) console.error(`Preventivo ${codice}: stato non aggiornato a ${stato}`, error);
+    };
+    if (codicePrecedente && String(codicePrecedente) !== String(codiceNuovo || "")) await cambiaStato(codicePrecedente, 'Confermato');
+    // Lo stato del preventivo agganciato viene riaffermato a ogni salvataggio, anche quando il
+    // collegamento non è cambiato: così una prenotazione già esistente allinea il suo preventivo
+    // appena la si risalva, senza doverlo scollegare e ricollegare.
+    if (codiceNuovo) await cambiaStato(codiceNuovo, 'Prenotato');
+  };
+
   const salvaPrenotazione = async () => {
     const f = formPren;
     const pac = pacchetti.find(p => p.id === f.pacchettoId);
@@ -886,6 +902,7 @@ function Prenotazioni({ user }) {
     setSalvataggioPren(true);
     let codice = codicePrenInModifica;
     const voucherPrecedente = codice ? (prenotazioni.find(p => p.id === codice)?.voucherCodice || "") : "";
+    const preventivoPrecedente = codice ? (prenotazioni.find(p => p.id === codice)?.preventivoCollegato || "") : "";
     if (!codice) {
       codice = await generaCodicePren();
       const { error } = await supabase.from('prenotazioni').insert([{ id: codice, ...rec }]);
@@ -897,6 +914,7 @@ function Prenotazioni({ user }) {
     }
     await sincronizzaPagamenti(codice, f.pagamenti);
     await aggiornaVoucherCollegato(voucherPrecedente, f.voucherCodice);
+    await aggiornaPreventivoCollegato(preventivoPrecedente, f.preventivoCollegato);
     setSalvataggioPren(false);
     setCodicePrenInModifica(codice);
     setFormPrenOriginale(f);

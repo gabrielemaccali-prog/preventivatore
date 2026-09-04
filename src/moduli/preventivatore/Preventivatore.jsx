@@ -17,10 +17,15 @@ import {
   formattaIndirizzoPulito
 } from '../../lib/utils';
 
-// Stato effettivo di un preventivo. A database esistono solo "Registrato" e "Confermato":
+// Colore della banda laterale nelle righe di tabella, uno per stato.
+const COLORE_STATO_PREVENTIVO = { Prenotato: '#0288d1', Confermato: '#16a34a', Scaduto: '#94a3b8', Registrato: '#f59e0b' };
+
+// Stato effettivo di un preventivo. A database esistono "Registrato", "Confermato" e "Prenotato":
 // "Scaduto" è derivato dalla data di emissione secondo la validità dichiarata sul documento.
-// Un preventivo già confermato non scade mai.
+// Un preventivo già confermato non scade mai, e "Prenotato" (collegato a una prenotazione, quindi
+// non più selezionabile) lo decide il modulo prenotazioni: qui si legge soltanto.
 const statoPreventivo = (p) => {
+  if (p?.stato === "Prenotato") return "Prenotato";
   if (p?.stato === "Confermato") return "Confermato";
   if (!p?.dataEmissione) return p?.stato || "Registrato";
   const scadenza = new Date(p.dataEmissione).getTime() + GIORNI_VALIDITA_PREVENTIVO * 24 * 60 * 60 * 1000;
@@ -51,7 +56,7 @@ function Preventivatore({ user }) {
   // --- NAVIGAZIONE INTERNA AL MODULO ---
   const primaSchedaVisibile = ['admin', 'gestione', 'storico'].find(s => puoVedere(user, 'preventivatore', s)) || 'gestione';
   const [currentView, setCurrentView] = useState(primaSchedaVisibile);
-  const [gestioneTab, setGestioneTab] = useState("registrati"); // registrati | confermati | scaduti
+  const [gestioneTab, setGestioneTab] = useState("registrati"); // registrati | confermati | prenotati | scaduti
   const [showFormPreventivo, setShowFormPreventivo] = useState(false); // form Nuovo/Modifica preventivo come overlay
 
   // --- STATI DEI DATI ---
@@ -415,8 +420,9 @@ function Preventivatore({ user }) {
     ripristinaSnapshot(snap);
     setStatoOriginale(snap);
     setDataEmissionePreventivo(p.dataEmissione || null);
-    // A database esistono solo "Registrato" e "Confermato": "Scaduto" è derivato e non va risalvato.
-    setStatoDocumento(p.stato === "Confermato" ? "Confermato" : "Registrato");
+    // "Scaduto" è derivato e non va risalvato; "Confermato" e "Prenotato" invece vanno conservati,
+    // altrimenti salvando un preventivo già collegato a una prenotazione lo si riporterebbe indietro.
+    setStatoDocumento(p.stato === "Confermato" || p.stato === "Prenotato" ? p.stato : "Registrato");
     setIdPreventivo({ codice, dettagliLogistici: (typeof p.id === 'object' ? p.id.dettagliLogistici : null) });
     return codice;
   };
@@ -1732,7 +1738,7 @@ function Preventivatore({ user }) {
     const codice = typeof p.id === 'object' ? p.id.codice : p.id;
     const espansa = rigaEspansaId === codice;
     const stato = statoPreventivo(p);
-    const coloreStatoRiga = stato === 'Confermato' ? '#16a34a' : (stato === 'Scaduto' ? '#94a3b8' : '#f59e0b');
+    const coloreStatoRiga = COLORE_STATO_PREVENTIVO[stato] || COLORE_STATO_PREVENTIVO.Registrato;
     return (
       <Fragment key={`${codice}-${index}`}>
         <tr onClick={() => setRigaEspansaId(prev => prev === codice ? null : codice)} style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}>
@@ -2279,10 +2285,12 @@ function Preventivatore({ user }) {
         const registrati = preventiviSalvati.filter(p => statoPreventivo(p) === 'Registrato');
         const confermati = preventiviSalvati.filter(p => statoPreventivo(p) === 'Confermato');
         const scaduti = preventiviSalvati.filter(p => statoPreventivo(p) === 'Scaduto');
-        const liste = { registrati, confermati, scaduti };
+        const prenotati = preventiviSalvati.filter(p => statoPreventivo(p) === 'Prenotato');
+        const liste = { registrati, confermati, prenotati, scaduti };
         const messaggiVuoto = {
           registrati: "Nessun preventivo in attesa di conferma.",
           confermati: "Nessun preventivo confermato.",
+          prenotati: "Nessun preventivo collegato a una prenotazione.",
           scaduti: "Nessun preventivo scaduto.",
         };
         return (
@@ -2293,11 +2301,13 @@ function Preventivatore({ user }) {
             </div>
             <p className="descrizione-pagina">
               Preventivi raggruppati per stato. Un preventivo non confermato entro {GIORNI_VALIDITA_PREVENTIVO} giorni dall'emissione risulta scaduto,
-              in linea con la validità dichiarata sul documento di offerta.
+              in linea con la validità dichiarata sul documento di offerta. "Prenotato" significa collegato a una prenotazione:
+              lo si libera togliendolo dalla prenotazione, e allora torna confermato.
             </p>
             <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
               <button className={`nav-btn ${gestioneTab === 'registrati' ? 'active' : ''}`} onClick={() => setGestioneTab('registrati')}><Icona nome="daConfermare" />Registrati ({registrati.length})</button>
               <button className={`nav-btn ${gestioneTab === 'confermati' ? 'active' : ''}`} onClick={() => setGestioneTab('confermati')}><Icona nome="completate" />Confermati ({confermati.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'prenotati' ? 'active' : ''}`} onClick={() => setGestioneTab('prenotati')}><Icona nome="prenotazioni" />Prenotati ({prenotati.length})</button>
               <button className={`nav-btn ${gestioneTab === 'scaduti' ? 'active' : ''}`} onClick={() => setGestioneTab('scaduti')}><Icona nome="attesaPagamento" />Scaduti ({scaduti.length})</button>
             </nav>
             {tabellaPreventivi(liste[gestioneTab], messaggiVuoto[gestioneTab], apriPreventivoOverlay)}
@@ -2339,6 +2349,7 @@ function Preventivatore({ user }) {
                 <option value="">Tutti gli stati</option>
                 <option value="Registrato">Registrato</option>
                 <option value="Confermato">Confermato</option>
+                <option value="Prenotato">Prenotato</option>
                 <option value="Scaduto">Scaduto</option>
               </select>
             </div>
