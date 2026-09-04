@@ -400,18 +400,23 @@ function Compensi({ user }) {
     const dentro = evasi.filter(p => (!indDal || p.al >= indDal) && (!indAl || p.dal <= indAl));
     const per = new Map();
     for (const p of dentro) {
-      const r = per.get(p.operatore) || { operatore: p.operatore, rimborsi: 0, giornate: 0, netto: 0 };
+      const r = per.get(p.operatore) || { operatore: p.operatore, rimborsi: 0, giornate: 0, netto: 0, ritenuta: 0, totale: 0 };
       r.rimborsi += 1;
       r.giornate += p.rimborso?.giornate?.length || 0;
       r.netto = arrotonda2(r.netto + (parseFloat(p.rimborso?.netto) || 0));
+      r.ritenuta = arrotonda2(r.ritenuta + (parseFloat(p.rimborso?.ritenuta) || 0));
+      r.totale = arrotonda2(r.totale + (parseFloat(p.rimborso?.totale) || 0));
       per.set(p.operatore, r);
     }
     const righe = [...per.values()];
+    const somma = (campo) => arrotonda2(righe.reduce((s, r) => s + r[campo], 0));
     return {
       righe,
       rimborsi: dentro.length,
       giornate: righe.reduce((s, r) => s + r.giornate, 0),
-      netto: arrotonda2(righe.reduce((s, r) => s + r.netto, 0)),
+      netto: somma('netto'),
+      ritenuta: somma('ritenuta'),
+      totale: somma('totale'),
     };
   }, [evasi, indDal, indAl]);
 
@@ -420,6 +425,8 @@ function Compensi({ user }) {
     { chiave: 'operatore', label: 'Operatore', valore: (r) => r.operatore || '' },
     { chiave: 'giornate', label: 'Giornate pagate', stile: { textAlign: 'right' }, valore: (r) => r.giornate },
     { chiave: 'netto', label: 'Netto a pagare', stile: { textAlign: 'right' }, valore: (r) => r.netto },
+    { chiave: 'ritenuta', label: "Ritenuta d'acconto", stile: { textAlign: 'right' }, valore: (r) => r.ritenuta },
+    { chiave: 'totale', label: 'Totale', stile: { textAlign: 'right' }, valore: (r) => r.totale },
   ];
   const { ordina: ordinaIndicatori, propsTestata: testataIndicatori, frecciaOrdinamento: frecciaIndicatori } =
     useOrdinamentoTabella(Object.fromEntries(COLONNE_INDICATORI.map(c => [c.chiave, c.valore])));
@@ -1486,7 +1493,9 @@ function Compensi({ user }) {
                           </span>
                         </td>
                         <td style={{ padding: '8px 10px', textAlign: 'right' }}>{r.giornate}</td>
-                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(r.netto)}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{euro(r.netto)}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>{euro(r.ritenuta)}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(r.totale)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1495,12 +1504,16 @@ function Compensi({ user }) {
                       <td style={{ padding: '10px', fontWeight: 'bold' }}>Totale</td>
                       <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{indicatori.giornate}</td>
                       <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(indicatori.netto)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(indicatori.ritenuta)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(indicatori.totale)}</td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
               <p style={{ marginTop: '14px', fontSize: '0.8rem', color: '#888' }}>
-                Un periodo a cavallo dell&apos;intervallo entra per intero: giornate e netto non si spezzano.
+                Il totale è quanto è uscito di cassa: netto più i rimborsi, che non hanno una colonna qui.
+                La ritenuta non ci si somma — è trattenuta dal lordo e versata all&apos;erario, non pagata al bubbler.
+                Un periodo a cavallo dell&apos;intervallo entra per intero: giornate e importi non si spezzano.
               </p>
             </>
           )}
