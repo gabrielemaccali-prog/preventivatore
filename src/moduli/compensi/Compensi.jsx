@@ -137,10 +137,10 @@ function Compensi({ user }) {
   const [operatoreEspanso, setOperatoreEspanso] = useState(null);
   const [inCorso, setInCorso] = useState(null); // chiave dell'azione in corso, per disabilitare il pulsante giusto
   const [formVoce, setFormVoce] = useState(null); // { operatore, data, tipo, descrizione, importo }
-  // Filtro degli indicatori, separato da quello della gestione: sono due domande diverse e
-  // cambiare l'una non deve spostare l'altra sotto gli occhi di chi guarda.
-  const [indDal, setIndDal] = useState('');
-  const [indAl, setIndAl] = useState('');
+  // Gli indicatori ragionano per anno solare e non per intervallo libero: la soglia oltre la quale
+  // il lavoro occasionale cambia trattamento è annuale, quindi un totale su un periodo qualsiasi
+  // non si potrebbe confrontare con niente.
+  const [indAnno, setIndAnno] = useState(String(new Date().getFullYear()));
 
   // Il limite superiore c'è sempre, anche a filtro vuoto: il futuro non si consuntiva.
   const alEffettivo = al && al < oggiIso() ? al : oggiIso();
@@ -396,8 +396,16 @@ function Compensi({ user }) {
   // Gli indicatori contano solo i rimborsi già evasi: prima dell'elaborazione le giornate del
   // documento non esistono ancora e il netto non è ancora deciso. Un periodo entra se tocca
   // l'intervallo scelto e ci entra intero, giornate e netto: spezzarlo direbbe una cifra falsa.
+  // L'anno è quello del pagamento, non quello delle partite: la soglia guarda i compensi percepiti
+  // nell'anno solare, quindi un periodo di dicembre pagato a gennaio pesa sull'anno nuovo.
+  const anniDisponibili = useMemo(() => {
+    const anni = new Set(evasi.map(p => (p.evaso_il || '').slice(0, 4)).filter(Boolean));
+    anni.add(String(new Date().getFullYear()));
+    return [...anni].sort().reverse();
+  }, [evasi]);
+
   const indicatori = useMemo(() => {
-    const dentro = evasi.filter(p => (!indDal || p.al >= indDal) && (!indAl || p.dal <= indAl));
+    const dentro = evasi.filter(p => (p.evaso_il || '').slice(0, 4) === indAnno);
     const per = new Map();
     for (const p of dentro) {
       const r = per.get(p.operatore) || { operatore: p.operatore, rimborsi: 0, giornate: 0, netto: 0, ritenuta: 0 };
@@ -420,7 +428,7 @@ function Compensi({ user }) {
       ritenuta: somma('ritenuta'),
       totale: somma('totale'),
     };
-  }, [evasi, indDal, indAl]);
+  }, [evasi, indAnno]);
 
   // Colonne ordinabili degli indicatori, come nelle altre tabelle del modulo.
   const COLONNE_INDICATORI = [
@@ -1437,37 +1445,27 @@ function Compensi({ user }) {
         <div className="schermata-storico no-print">
           <h2 style={{ margin: 0 }}>Indicatori</h2>
           <p className="descrizione-pagina">
-            Quanto è stato pagato ai bubbler e per quante giornate. Le giornate sono quelle scritte sui
-            documenti di rimborso, non quelle calcolate dalle partite: contano i documenti emessi.
+            Quanto è stato pagato ai bubbler nell&apos;anno e per quante giornate. Le giornate sono quelle
+            scritte sui documenti di rimborso, non quelle calcolate dalle partite: contano i documenti emessi.
           </p>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
-              <label>Dal:</label>
-              <input type="date" value={indDal} max={indAl || undefined} onChange={(e) => setIndDal(e.target.value)} />
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
-              <label>Al:</label>
-              <input type="date" value={indAl} min={indDal || undefined} onChange={(e) => setIndAl(e.target.value)} />
+            <div className="filtro-group" style={{ flex: '0 0 auto' }}>
+              <label>Anno:</label>
+              <select value={indAnno} onChange={(e) => setIndAnno(e.target.value)}>
+                {anniDisponibili.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
             </div>
             <div className="filtro-group" style={{ flex: '0 0 auto' }}>
-              {(indDal || indAl) ? (
-                <button
-                  type="button" onClick={() => { setIndDal(''); setIndAl(''); }}
-                  className="btn-outline-annulla"
-                  style={{ display: 'inline-flex', alignItems: 'center', padding: '7px 14px', borderRadius: '4px', fontSize: '0.8rem' }}
-                >
-                  <Icona nome="annulla" size={14} style={{ marginRight: '5px' }} />Tutto il periodo
-                </button>
-              ) : (
-                <span style={{ fontSize: '0.78rem', color: '#888' }}>Date vuote: tutti i rimborsi evasi.</span>
-              )}
+              <span style={{ fontSize: '0.78rem', color: '#888' }}>
+                Conta l&apos;anno in cui il rimborso è stato elaborato, non quello delle partite.
+              </span>
             </div>
           </div>
 
           {indicatori.righe.length === 0 ? (
             <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>
-              Nessun rimborso evaso in questo intervallo.
+              Nessun rimborso elaborato nel {indAnno}.
             </div>
           ) : (
             <>
@@ -1515,7 +1513,7 @@ function Compensi({ user }) {
               <p style={{ marginTop: '14px', fontSize: '0.8rem', color: '#888' }}>
                 Il totale è il compenso lordo, netto più ritenuta. I rimborsi di spese e trasferte restano
                 fuori: sono denaro anticipato e restituito, non compenso.
-                Un periodo a cavallo dell&apos;intervallo entra per intero: giornate e importi non si spezzano.
+                Un periodo a cavallo di due anni non si spezza: pesa tutto sull&apos;anno in cui è stato pagato.
               </p>
             </>
           )}
