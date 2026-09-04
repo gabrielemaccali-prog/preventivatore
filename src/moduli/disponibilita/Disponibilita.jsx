@@ -88,6 +88,15 @@ function Disponibilita({ user }) {
     alert(`${contesto}\n\n${dettaglio || 'Errore sconosciuto'}`);
   };
 
+  // Le disponibilità sono agganciate all'id dell'utente. Una sessione aperta prima che l'id
+  // esistesse non ce l'ha, e senza questo controllo si finirebbe a scrivere righe senza padrone:
+  // il database le rifiuta, ma con un messaggio che non dice cosa fare.
+  const sessioneValida = () => {
+    if (user?.id) return true;
+    alert("La tua sessione è stata aperta prima dell'ultimo aggiornamento e non è più valida.\n\nEsci e rientra: le tue disponibilità torneranno visibili.");
+    return false;
+  };
+
   // Il bubbler si cerca per id: il nome può cambiare, l'id no.
   const nomeBubbler = (utenteId) => {
     const b = bubblers.find(x => x.id === utenteId);
@@ -187,6 +196,7 @@ function Disponibilita({ user }) {
   const targetConfermato = campiTarget.length > 0 && campiTarget.every(cid => campoConfermato(cid));
 
   const confermaMese = async () => {
+    if (!sessioneValida()) return;
     const daInserire = campiTarget.filter(cid => !campoConfermato(cid)).map(cid => ({ utente_id: user.id, campo_id: cid, mese: meseVisualizzato }));
     if (daInserire.length === 0) return;
     const { error } = await supabase.from('disp_conferme').insert(daInserire);
@@ -194,6 +204,7 @@ function Disponibilita({ user }) {
     fetchTutto();
   };
   const annullaConfermaMese = async () => {
+    if (!sessioneValida()) return;
     if (!window.confirm(`Annullare la conferma di ${etichettaMese} su ${nomeTarget}? Le disponibilità restano, torna solo "da confermare".`)) return;
     const { error } = await supabase.from('disp_conferme').delete().eq('utente_id', user.id).in('campo_id', campiTarget).eq('mese', meseVisualizzato);
     if (error) { return segnalaErrore('Errore annullamento conferma', error); }
@@ -202,6 +213,7 @@ function Disponibilita({ user }) {
 
   // ---------------- Svuota il mese ----------------
   const svuotaMese = async () => {
+    if (!sessioneValida()) return;
     const isoList = giorniMese.map(g => toISODate(g));
     if (!window.confirm(`Rimuovere TUTTE le disponibilità di ${etichettaMese} su ${nomeTarget}? Il mese torna completamente vuoto.`)) return;
     const { error } = await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).in('data', isoList);
@@ -218,6 +230,7 @@ function Disponibilita({ user }) {
     mieRigheMeseDi(c.id).length > 0
   );
   const ereditaDisponibilita = async () => {
+    if (!sessioneValida()) return;
     const righeSorgente = mieRigheMeseDi(sorgenteEredita);
     if (righeSorgente.length === 0) return;
     if (!window.confirm(`Copiare le ${righeSorgente.length} disponibilità di ${nomeCampo(sorgenteEredita)} di ${etichettaMese} su ${nomeTarget}? Quanto già presente in questo mese verrà sostituito.`)) return;
@@ -248,6 +261,7 @@ function Disponibilita({ user }) {
   // Clic su una lettera: se non è attiva ovunque la si attiva sui campi che ancora non ce l'hanno,
   // se è già attiva ovunque si apre il dettaglio orario/note.
   const onClickBadgeEditor = async (iso, fasciaId) => {
+    if (!sessioneValida()) return;
     if (campiTarget.length === 0) return;
     if (statoFascia(iso, fasciaId) === 'piena') {
       const riga = rigaDisp(user.id, campiTarget[0], iso, fasciaId);
@@ -264,6 +278,7 @@ function Disponibilita({ user }) {
   };
 
   const salvaOverride = async () => {
+    if (!sessioneValida()) return;
     const { data, fascia } = fasciaSelezionata;
     const f = fasciaInfo(fascia);
     const inizioFascia = oraHHMM(f?.ora_inizio);
@@ -279,6 +294,7 @@ function Disponibilita({ user }) {
     setFasciaSelezionata(null); fetchTutto();
   };
   const rimuoviDisponibilita = async () => {
+    if (!sessioneValida()) return;
     const { data, fascia } = fasciaSelezionata;
     await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).eq('data', data).eq('fascia', fascia);
     setFasciaSelezionata(null); fetchTutto();
@@ -305,6 +321,7 @@ function Disponibilita({ user }) {
     : `la settimana ${etichettaSettimana(settimanaCorrente)}`;
 
   const applicaBulk = async (disponibile) => {
+    if (!sessioneValida()) return;
     if (campiTarget.length === 0) return;
     const giorni = ambitoBulk === 'mese' ? giorniMese : (settimaneMese[settimanaCorrente] || []);
     const label = fasciaInfo(fasciaBulk)?.label;
