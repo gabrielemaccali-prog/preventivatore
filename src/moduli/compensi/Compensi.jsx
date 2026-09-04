@@ -400,15 +400,17 @@ function Compensi({ user }) {
     const dentro = evasi.filter(p => (!indDal || p.al >= indDal) && (!indAl || p.dal <= indAl));
     const per = new Map();
     for (const p of dentro) {
-      const r = per.get(p.operatore) || { operatore: p.operatore, rimborsi: 0, giornate: 0, netto: 0, ritenuta: 0, totale: 0 };
+      const r = per.get(p.operatore) || { operatore: p.operatore, rimborsi: 0, giornate: 0, netto: 0, ritenuta: 0 };
       r.rimborsi += 1;
       r.giornate += p.rimborso?.giornate?.length || 0;
       r.netto = arrotonda2(r.netto + (parseFloat(p.rimborso?.netto) || 0));
       r.ritenuta = arrotonda2(r.ritenuta + (parseFloat(p.rimborso?.ritenuta) || 0));
-      r.totale = arrotonda2(r.totale + (parseFloat(p.rimborso?.totale) || 0));
       per.set(p.operatore, r);
     }
-    const righe = [...per.values()];
+    // Il totale è il compenso lordo: netto più ritenuta, cioè le due colonne accanto. Si somma qui
+    // e non si legge dal documento, così la riga torna a occhio anche quando gli arrotondamenti
+    // dei singoli rimborsi non coincidono col lordo congelato.
+    const righe = [...per.values()].map(r => ({ ...r, totale: arrotonda2(r.netto + r.ritenuta) }));
     const somma = (campo) => arrotonda2(righe.reduce((s, r) => s + r[campo], 0));
     return {
       righe,
@@ -1511,8 +1513,8 @@ function Compensi({ user }) {
                 </table>
               </div>
               <p style={{ marginTop: '14px', fontSize: '0.8rem', color: '#888' }}>
-                Il totale è quanto è uscito di cassa: netto più i rimborsi, che non hanno una colonna qui.
-                La ritenuta non ci si somma — è trattenuta dal lordo e versata all&apos;erario, non pagata al bubbler.
+                Il totale è il compenso lordo, netto più ritenuta. I rimborsi di spese e trasferte restano
+                fuori: sono denaro anticipato e restituito, non compenso.
                 Un periodo a cavallo dell&apos;intervallo entra per intero: giornate e importi non si spezzano.
               </p>
             </>
