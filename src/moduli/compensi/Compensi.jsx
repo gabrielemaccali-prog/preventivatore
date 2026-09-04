@@ -137,6 +137,10 @@ function Compensi({ user }) {
   const [operatoreEspanso, setOperatoreEspanso] = useState(null);
   const [inCorso, setInCorso] = useState(null); // chiave dell'azione in corso, per disabilitare il pulsante giusto
   const [formVoce, setFormVoce] = useState(null); // { operatore, data, tipo, descrizione, importo }
+  // Filtro degli indicatori, separato da quello della gestione: sono due domande diverse e
+  // cambiare l'una non deve spostare l'altra sotto gli occhi di chi guarda.
+  const [indDal, setIndDal] = useState('');
+  const [indAl, setIndAl] = useState('');
 
   // Il limite superiore c'è sempre, anche a filtro vuoto: il futuro non si consuntiva.
   const alEffettivo = al && al < oggiIso() ? al : oggiIso();
@@ -165,8 +169,10 @@ function Compensi({ user }) {
     setCampi(ca.data || []);
   };
 
+  // Anche gli indicatori leggono i periodi, quindi devono far scattare lo scarico: senza,
+  // chi apre la scheda senza passare dalla gestione vedrebbe zero e crederebbe di non aver pagato.
   useEffect(() => {
-    if (currentView === 'gestione') fetchPartite();
+    if (currentView === 'gestione' || currentView === 'indicatori') fetchPartite();
   }, [currentView]);
 
   const nelFiltro = useCallback((data) => (!dal || data >= dal) && data <= alEffettivo, [dal, alEffettivo]);
@@ -386,6 +392,37 @@ function Compensi({ user }) {
   // contraddirla.
   const daElaborare = useMemo(() => consuntivati.filter(p => !p.evaso_il), [consuntivati]);
   const evasi = useMemo(() => consuntivati.filter(p => p.evaso_il), [consuntivati]);
+
+  // Gli indicatori contano solo i rimborsi già evasi: prima dell'elaborazione le giornate del
+  // documento non esistono ancora e il netto non è ancora deciso. Un periodo entra se tocca
+  // l'intervallo scelto e ci entra intero, giornate e netto: spezzarlo direbbe una cifra falsa.
+  const indicatori = useMemo(() => {
+    const dentro = evasi.filter(p => (!indDal || p.al >= indDal) && (!indAl || p.dal <= indAl));
+    const per = new Map();
+    for (const p of dentro) {
+      const r = per.get(p.operatore) || { operatore: p.operatore, rimborsi: 0, giornate: 0, netto: 0 };
+      r.rimborsi += 1;
+      r.giornate += p.rimborso?.giornate?.length || 0;
+      r.netto = arrotonda2(r.netto + (parseFloat(p.rimborso?.netto) || 0));
+      per.set(p.operatore, r);
+    }
+    const righe = [...per.values()];
+    return {
+      righe,
+      rimborsi: dentro.length,
+      giornate: righe.reduce((s, r) => s + r.giornate, 0),
+      netto: arrotonda2(righe.reduce((s, r) => s + r.netto, 0)),
+    };
+  }, [evasi, indDal, indAl]);
+
+  // Colonne ordinabili degli indicatori, come nelle altre tabelle del modulo.
+  const COLONNE_INDICATORI = [
+    { chiave: 'operatore', label: 'Operatore', valore: (r) => r.operatore || '' },
+    { chiave: 'giornate', label: 'Giornate pagate', stile: { textAlign: 'right' }, valore: (r) => r.giornate },
+    { chiave: 'netto', label: 'Netto a pagare', stile: { textAlign: 'right' }, valore: (r) => r.netto },
+  ];
+  const { ordina: ordinaIndicatori, propsTestata: testataIndicatori, frecciaOrdinamento: frecciaIndicatori } =
+    useOrdinamentoTabella(Object.fromEntries(COLONNE_INDICATORI.map(c => [c.chiave, c.valore])));
 
   // ---- elaborazione del rimborso ----
   // Un periodo consuntivato aspetta che se ne faccia la ricevuta. Qui si sceglie cosa scrivere
@@ -875,16 +912,6 @@ function Compensi({ user }) {
       </table>
 
       <div style={{ marginTop: '34px' }}>Milano, {dataBreve(oggiIso())}</div>
-    </div>
-  );
-
-  const schedaVuota = (titolo, testo) => (
-    <div className="schermata-storico no-print">
-      <h2 style={{ margin: 0 }}>{titolo}</h2>
-      <p className="descrizione-pagina">{testo}</p>
-      <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '40px 20px', textAlign: 'center', color: '#666' }}>
-        Scheda non ancora attiva: arriva con i prossimi passi del modulo.
-      </div>
     </div>
   );
 
@@ -1397,9 +1424,87 @@ function Compensi({ user }) {
         </div>
       )}
 
-      {currentView === "indicatori" && puoVedere(user, 'compensi', 'indicatori') && schedaVuota(
-        "Indicatori",
-        "Ore per operatore, costo medio orario e incidenza del personale sul margine."
+      {currentView === "indicatori" && puoVedere(user, 'compensi', 'indicatori') && (
+        <div className="schermata-storico no-print">
+          <h2 style={{ margin: 0 }}>Indicatori</h2>
+          <p className="descrizione-pagina">
+            Quanto è stato pagato ai bubbler e per quante giornate. Le giornate sono quelle scritte sui
+            documenti di rimborso, non quelle calcolate dalle partite: contano i documenti emessi.
+          </p>
+
+          <div className="filtri-storico" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
+              <label>Dal:</label>
+              <input type="date" value={indDal} max={indAl || undefined} onChange={(e) => setIndDal(e.target.value)} />
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
+              <label>Al:</label>
+              <input type="date" value={indAl} min={indDal || undefined} onChange={(e) => setIndAl(e.target.value)} />
+            </div>
+            <div className="filtro-group" style={{ flex: '0 0 auto' }}>
+              {(indDal || indAl) ? (
+                <button
+                  type="button" onClick={() => { setIndDal(''); setIndAl(''); }}
+                  className="btn-outline-annulla"
+                  style={{ display: 'inline-flex', alignItems: 'center', padding: '7px 14px', borderRadius: '4px', fontSize: '0.8rem' }}
+                >
+                  <Icona nome="annulla" size={14} style={{ marginRight: '5px' }} />Tutto il periodo
+                </button>
+              ) : (
+                <span style={{ fontSize: '0.78rem', color: '#888' }}>Date vuote: tutti i rimborsi evasi.</span>
+              )}
+            </div>
+          </div>
+
+          {indicatori.righe.length === 0 ? (
+            <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>
+              Nessun rimborso evaso in questo intervallo.
+            </div>
+          ) : (
+            <>
+              <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+                <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+                  <thead>
+                    <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                      {COLONNE_INDICATORI.map(c => {
+                        const { style: stileOrdinabile, ...propsOrdinabile } = testataIndicatori(c.chiave);
+                        return (
+                          <th key={c.chiave} {...propsOrdinabile} style={{ padding: '10px', ...c.stile, ...stileOrdinabile }}>
+                            {c.label}{frecciaIndicatori(c.chiave)}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ordinaIndicatori(indicatori.righe).map(r => (
+                      <tr key={r.operatore} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '8px 10px' }}>
+                          <strong>{r.operatore}</strong>
+                          <span style={{ color: '#94a3b8', fontSize: '0.76rem' }}>
+                            {' '}· {r.rimborsi} {r.rimborsi === 1 ? 'rimborso' : 'rimborsi'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{r.giornate}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(r.netto)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ borderTop: '2px solid #333', background: '#f5f8fa' }}>
+                      <td style={{ padding: '10px', fontWeight: 'bold' }}>Totale</td>
+                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{indicatori.giornate}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(indicatori.netto)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p style={{ marginTop: '14px', fontSize: '0.8rem', color: '#888' }}>
+                Un periodo a cavallo dell&apos;intervallo entra per intero: giornate e netto non si spezzano.
+              </p>
+            </>
+          )}
+        </div>
       )}
     </>
   );
