@@ -100,8 +100,8 @@ const partite = [
   { id: 'B', data: '2026-08-01', oraInizio: '16:00', oraFine: '17:00', operatori: [{ id: 'edo', nome: 'Edoardo' }] },
 ];
 const voci = [
-  { operatore: 'edo', data: '2026-08-01', tipo: 'recensione', riferimento: 'B', importo: 5, esente_ritenuta: false },
-  { operatore: 'edo', data: '2026-08-01', tipo: 'spesa', descrizione: 'panino', importo: 3.5, esente_ritenuta: true },
+  { operatore_id: 'edo', data: '2026-08-01', tipo: 'recensione', riferimento: 'B', importo: 5, esente_ritenuta: false },
+  { operatore_id: 'edo', data: '2026-08-01', tipo: 'spesa', descrizione: 'panino', importo: 3.5, esente_ritenuta: true },
 ];
 const [edo] = preventiviPerOperatore(partite, voci, par);
 
@@ -174,7 +174,7 @@ verifica('concordato: il tetto non si applica', 300, ripartisciSuOre(lungo, 300,
 
 // Senza ore non c'è divisore: il preventivo resta com'era.
 const soloVoci = preventiviPerOperatore([], [
-  { operatore: 'd', data: '2026-08-02', tipo: 'spesa', importo: 20, esente_ritenuta: true },
+  { operatore_id: 'd', data: '2026-08-02', tipo: 'spesa', importo: 20, esente_ritenuta: true },
 ], par)[0];
 verifica('concordato senza ore: nessun riparto', 0, ripartisciSuOre(soloVoci, 500, par).compensoOrario);
 
@@ -188,7 +188,7 @@ verifica('forfait: quota + differenza tornano alla quota', true,
 
 // Applicando le rettifiche il calcolo normale arriva da solo al concordato.
 const vociForfait = rett.map(r => ({
-  operatore: 'd', data: r.data, tipo: 'rettifica', riferimento: r.riferimento,
+  operatore_id: 'd', data: r.data, tipo: 'rettifica', riferimento: r.riferimento,
   descrizione: 'forfait', importo: r.differenza, esente_ritenuta: false,
 }));
 const [conForfait] = preventiviPerOperatore(perConcordato, vociForfait, par);
@@ -198,7 +198,7 @@ verifica('forfait: le ore restano quelle vere', 5, conForfait.ore);
 // Le recensioni restano sopra il concordato, non ci finiscono dentro.
 const [conForfaitERecensione] = preventiviPerOperatore(perConcordato, [
   ...vociForfait,
-  { operatore: 'd', data: '2026-08-30', tipo: 'recensione', riferimento: 'C', importo: 5, esente_ritenuta: false },
+  { operatore_id: 'd', data: '2026-08-30', tipo: 'recensione', riferimento: 'C', importo: 5, esente_ritenuta: false },
 ], par);
 verifica('forfait: la recensione si somma sopra', 505, conForfaitERecensione.compenso);
 
@@ -242,11 +242,23 @@ verifica('aliquota zero: imponibile = netto', 65, importiRimborso({ daPagare: 65
 
 // ---------- una spesa in un giorno senza partite ----------
 const soloSpesa = preventiviPerOperatore([], [
-  { operatore: 'x', data: '2026-08-02', tipo: 'spesa', importo: 20, esente_ritenuta: true },
+  { operatore_id: 'x', data: '2026-08-02', tipo: 'spesa', importo: 20, esente_ritenuta: true },
 ], par);
 verifica('giorno di sola spesa: esiste comunque', 1, soloSpesa.length);
 verifica('giorno di sola spesa: compenso zero', 0, soloSpesa[0].compenso);
 verifica('giorno di sola spesa: spesa contata', 20, soloSpesa[0].spese);
+
+// ---------- operatori identificati da un id numerico ----------
+// L'operatore non e' piu' una stringa: chi ha solo voci registrate arriva senza nome, e
+// l'ordinamento alfabetico non deve inciampare su un id che e' un numero.
+const idNumerici = preventiviPerOperatore(
+  [{ id: 'P1', data: '2026-08-02', oraInizio: '10:00', oraFine: '11:00', operatori: [{ id: 7, nome: 'Ester' }] }],
+  [{ operatore_id: 3, data: '2026-08-02', tipo: 'spesa', importo: 20, esente_ritenuta: true }],
+  par,
+);
+verifica('id numerici: due operatori', 2, idNumerici.length);
+verifica('id numerici: chi ha solo voci resta senza nome', null, idNumerici.find(o => o.id === 3).nome);
+verifica('id numerici: chi ha partite tiene il suo', 'Ester', idNumerici.find(o => o.id === 7).nome);
 
 // ---------- esito ----------
 const falliti = esiti.filter(e => !e.ok);

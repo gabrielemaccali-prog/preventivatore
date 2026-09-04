@@ -140,8 +140,12 @@ export const totaliVoci = (voci) => (voci || []).reduce((a, v) => {
 // aperta per un altro che c'era insieme a lui.
 export const preventiviPerOperatore = (prenotazioni, voci, par, giaConsuntivato = () => false) => {
   const perOperatore = new Map();
+  // Il nome arriva dallo snapshot della prenotazione e può mancare: un operatore che ha solo
+  // voci registrate, e nessuna partita, non ce l'ha. Resta null e lo risolve chi mostra il dato,
+  // che ha l'anagrafica sotto mano: qui l'id è un numero, e spacciarlo per nome faceva esplodere
+  // l'ordinamento alfabetico.
   const registra = (id, nome) => {
-    if (!perOperatore.has(id)) perOperatore.set(id, { id, nome: nome || id, giorni: new Map() });
+    if (!perOperatore.has(id)) perOperatore.set(id, { id, nome: nome || null, giorni: new Map() });
     return perOperatore.get(id);
   };
 
@@ -158,11 +162,11 @@ export const preventiviPerOperatore = (prenotazioni, voci, par, giaConsuntivato 
   // (un pernottamento alla vigilia), quindi il giorno va creato lo stesso.
   const vociPerChiave = new Map();
   for (const v of (voci || [])) {
-    if (giaConsuntivato(v.operatore, v.data)) continue;
-    const chiave = `${v.operatore}|${v.data}`;
+    if (giaConsuntivato(v.operatore_id, v.data)) continue;
+    const chiave = `${v.operatore_id}|${v.data}`;
     if (!vociPerChiave.has(chiave)) vociPerChiave.set(chiave, []);
     vociPerChiave.get(chiave).push(v);
-    const voceOp = registra(v.operatore, null);
+    const voceOp = registra(v.operatore_id, null);
     if (!voceOp.giorni.has(v.data)) voceOp.giorni.set(v.data, []);
   }
 
@@ -201,7 +205,7 @@ export const preventiviPerOperatore = (prenotazioni, voci, par, giaConsuntivato 
       totaleRettifiche: perTipo('rettifica'), totaleRecensioni: perTipo('recensione'),
       costoAzienda: lordo + spese,
     };
-  }).sort((a, b) => a.nome.localeCompare(b.nome));
+  }).sort((a, b) => String(a.nome ?? a.id).localeCompare(String(b.nome ?? b.id)));
 };
 
 // Rettifiche che portano il compenso a ore di un periodo esattamente all'importo concordato.

@@ -11,14 +11,29 @@ import Impostazioni from './moduli/impostazioni/Impostazioni';
 import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
 import Icona from './components/Icona';
 
-// Sessione conservata per sopravvivere a un aggiornamento della pagina (F5). Contiene solo il
-// nome utente e il modulo aperto: mai la password. Ruolo e permessi si rileggono dal database a
+// Sessione conservata per sopravvivere a un aggiornamento della pagina (F5). Contiene solo
+// l'id dell'utente e il modulo aperto: mai la password. Ruolo e permessi si rileggono dal database a
 // ogni ripristino, così un ruolo modificato o un utente eliminato hanno effetto subito.
 // È in sessionStorage e non in localStorage: vale per la scheda del browser e si chiude con essa.
 const CHIAVE_SESSIONE = 'bfm_sessione';
 
 // Primo modulo visibile per un utente (evita di atterrare su un modulo senza permessi)
 const primoModuloVisibile = (u) => MODULI_REGISTRY.find(m => moduloVisibile(u, m.id))?.id || "preventivatore";
+
+// Quello che dell'utente serve in giro per l'applicazione: l'id con cui i suoi dati sono
+// agganciati, come si chiama e cosa può fare. L'username non è più una chiave, resta solo
+// come vecchia credenziale di accesso.
+const datiSessione = (u, permessi) => ({
+  id: u.id,
+  username: u.username,
+  email: u.email || '',
+  nome: u.nome || '',
+  cognome: u.cognome || '',
+  nomeCompleto: [u.nome, u.cognome].filter(Boolean).join(' ') || u.username,
+  ruolo: u.ruolo,
+  permessi,
+  bubbler: !!u.bubbler,
+});
 
 function App() {
   // --- AUTENTICAZIONE ---
@@ -40,7 +55,7 @@ function App() {
   const [utentiDev, setUtentiDev] = useState([]);
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    supabase.from('utenti').select('username, ruolo, bubbler').order('username').then(({ data }) => { if (data) setUtentiDev(data); });
+    supabase.from('utenti').select('id, username, email, nome, cognome, ruolo, bubbler').order('username').then(({ data }) => { if (data) setUtentiDev(data); });
   }, []);
 
   // Evita che la rotella del mouse modifichi per sbaglio un campo numerico (prezzi, costi, sconti):
@@ -79,15 +94,17 @@ function App() {
     let annullato = false;
     (async () => {
       try {
-        const { username, modulo } = JSON.parse(sessionStorage.getItem(CHIAVE_SESSIONE));
+        const { id, username, modulo } = JSON.parse(sessionStorage.getItem(CHIAVE_SESSIONE));
         // L'utente si rilegge sempre dal database: se nel frattempo è stato eliminato o gli è
         // cambiato ruolo, la sessione salvata non deve dargli accessi che non ha più.
-        const { data } = await supabase.from('utenti').select('*').eq('username', username).maybeSingle();
+        // Le sessioni aperte prima di questa versione contengono ancora solo l'username.
+        const query = supabase.from('utenti').select('*');
+        const { data } = await (id ? query.eq('id', id) : query.eq('username', username)).maybeSingle();
         if (annullato) return;
         if (data) {
           const permessi = await fetchPermessiRuolo(data.ruolo);
           if (annullato) return;
-          const ripristinato = { username: data.username, ruolo: data.ruolo, permessi, bubbler: !!data.bubbler };
+          const ripristinato = datiSessione(data, permessi);
           const moduloAncoraVisibile = modulo === 'impostazioni'
             ? data.ruolo === 'admin'
             : moduloVisibile(ripristinato, modulo);
@@ -105,25 +122,31 @@ function App() {
     return () => { annullato = true; };
   }, [ripristinoInCorso, fetchPermessiRuolo, fetchModuliConfig]);
 
-  // Tiene allineata la sessione salvata: basta il nome utente e il modulo a video per riaprire
-  // la pagina dov'era, senza conservare nulla di riservato.
+  // Tiene allineata la sessione salvata: bastano l'id e il modulo a video per riaprire la
+  // pagina dov'era, senza conservare nulla di riservato.
   useEffect(() => {
-    if (user) sessionStorage.setItem(CHIAVE_SESSIONE, JSON.stringify({ username: user.username, modulo: currentModule }));
+    if (user) sessionStorage.setItem(CHIAVE_SESSIONE, JSON.stringify({ id: user.id, modulo: currentModule }));
   }, [user, currentModule]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      const { data } = await supabase
-        .from('utenti')
-        .select('*')
-        .eq('username', loginUser)
-        .eq('password', loginPass)
-        .maybeSingle();
+      // Si entra con l'email. L'username resta accettato come ripiego finché non tutti hanno
+      // un'email in anagrafica: i tre account di servizio ne sono ancora sprovvisti, e senza
+      // questa seconda strada resterebbero fuori dalla loro stessa applicazione.
+      const credenziale = loginUser.trim();
+      let { data } = await supabase
+        .from('utenti').select('*')
+        .ilike('email', credenziale).eq('password', loginPass).maybeSingle();
+      if (!data) {
+        ({ data } = await supabase
+          .from('utenti').select('*')
+          .eq('username', credenziale).eq('password', loginPass).maybeSingle());
+      }
 
       if (data) {
         const permessi = await fetchPermessiRuolo(data.ruolo);
-        const nuovoUser = { username: data.username, ruolo: data.ruolo, permessi, bubbler: !!data.bubbler };
+        const nuovoUser = datiSessione(data, permessi);
         setUser(nuovoUser);
         setCurrentModule(primoModuloVisibile(nuovoUser));
         fetchModuliConfig();
@@ -138,7 +161,7 @@ function App() {
 
   const handleQuickLogin = async (u) => {
     const permessi = await fetchPermessiRuolo(u.ruolo);
-    const nuovoUser = { username: u.username, ruolo: u.ruolo, permessi, bubbler: !!u.bubbler };
+    const nuovoUser = datiSessione(u, permessi);
     setUser(nuovoUser);
     setCurrentModule(primoModuloVisibile(nuovoUser));
     fetchModuliConfig();
@@ -168,7 +191,7 @@ function App() {
           <img src="/logo.png" alt="Logo Azienda" style={{ maxWidth: '140px', display: 'block', margin: '0 auto 15px auto' }} />
           <h2>Accesso Gestionale</h2>
           <form onSubmit={handleLogin}>
-            <input type="text" placeholder="Username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} />
+            <input type="text" placeholder="Email" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} />
             <input type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} />
             <button type="submit">Accedi</button>
           </form>
@@ -178,8 +201,8 @@ function App() {
               <p style={{ fontSize: '0.75rem', color: '#94a3b8', textAlign: 'center', margin: '0 0 8px 0' }}>🛠️ Accesso rapido (solo sviluppo locale, senza password)</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center' }}>
                 {utentiDev.map(u => (
-                  <button key={u.username} type="button" onClick={() => handleQuickLogin(u)} style={{ padding: '6px 12px', fontSize: '0.8rem', background: '#e2e8f0', color: '#334155', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
-                    {u.username} <span style={{ opacity: 0.6 }}>({u.ruolo})</span>
+                  <button key={u.id} type="button" onClick={() => handleQuickLogin(u)} style={{ padding: '6px 12px', fontSize: '0.8rem', background: '#e2e8f0', color: '#334155', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                    {[u.nome, u.cognome].filter(Boolean).join(" ") || u.username} <span style={{ opacity: 0.6 }}>({u.ruolo})</span>
                   </button>
                 ))}
               </div>
@@ -227,7 +250,7 @@ function App() {
               <span className="sidebar-icona"><Icona nome={IMPOSTAZIONI_VOCE.icon} /></span> {IMPOSTAZIONI_VOCE.label}
             </button>
           )}
-          <p>Connesso come: <strong>{user.username}</strong></p>
+          <p>Connesso come: <strong>{user.nomeCompleto}</strong></p>
           <button className="btn-logout" onClick={handleLogout}><Icona nome="logout" />Esci</button>
         </div>
       </aside>

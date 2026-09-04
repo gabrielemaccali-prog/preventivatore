@@ -148,6 +148,12 @@ function Compensi({ user }) {
   const [periodi, setPeriodi] = useState([]);
   const [campi, setCampi] = useState([]);
   const [anagrafiche, setAnagrafiche] = useState([]);
+  // I periodi portano l'id dell'operatore, non il suo nome: il nome si chiede all'anagrafica,
+  // così cambiarlo si riflette ovunque invece di lasciare in giro copie vecchie.
+  const nomeOperatore = (utenteId) => {
+    const u = anagrafiche.find(a => a.id === utenteId);
+    return u ? ([u.nome, u.cognome].filter(Boolean).join(' ') || u.username) : `utente ${utenteId}`;
+  };
   const [caricamentoPartite, setCaricamentoPartite] = useState(false);
   const [operatoreEspanso, setOperatoreEspanso] = useState(null);
   const [inCorso, setInCorso] = useState(null); // chiave dell'azione in corso, per disabilitare il pulsante giusto
@@ -176,8 +182,8 @@ function Compensi({ user }) {
       // breve del campo, l'indirizzo per esteso sta in anagrafica.
       supabase.from('pren_campi').select('id, nome, indirizzo, cap, citta, provincia'),
       // Residenza e codice fiscale del bubbler, che vanno in testa al documento: si compilano in
-      // Disponibilità > Configuratore. op_periodi.operatore è proprio lo username di utenti.
-      supabase.from('utenti').select('username, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true),
+      // Disponibilità > Configuratore. I periodi e le voci puntano a utenti.id.
+      supabase.from('utenti').select('id, username, nome, cognome, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true),
     ]);
     setCaricamentoPartite(false);
     if (pr.error || vc.error || pe.error || ca.error) { console.error(pr.error || vc.error || pe.error || ca.error); return; }
@@ -200,7 +206,7 @@ function Compensi({ user }) {
   const nelFiltro = useCallback((data) => (!dal || data >= dal) && data <= alEffettivo, [dal, alEffettivo]);
 
   const giaConsuntivato = useCallback(
-    (operatore, data) => periodi.some(p => p.operatore === operatore && data >= p.dal && data <= p.al),
+    (operatore, data) => periodi.some(p => p.operatore_id === operatore && data >= p.dal && data <= p.al),
     [periodi]
   );
 
@@ -220,9 +226,9 @@ function Compensi({ user }) {
   const consuntivati = useMemo(() => periodi.map(p => {
     const parUsati = p.parametri && Object.keys(p.parametri).length ? p.parametri : parametri;
     const partiteDelPeriodo = partite.filter(x =>
-      x.data >= p.dal && x.data <= p.al && (x.operatori || []).some(o => o.id === p.operatore));
+      x.data >= p.dal && x.data <= p.al && (x.operatori || []).some(o => o.id === p.operatore_id));
     const vociDelPeriodo = voci.filter(v =>
-      v.operatore === p.operatore && v.data >= p.dal && v.data <= p.al);
+      v.operatore_id === p.operatore_id && v.data >= p.dal && v.data <= p.al);
     // Un eventuale compenso concordato è già dentro le voci, sotto forma di rettifiche "forfait":
     // qui non serve nessuna regola speciale, il calcolo normale arriva da solo al totale pattuito.
     const [dettaglio] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
@@ -234,7 +240,7 @@ function Compensi({ user }) {
   // Colonne ordinabili della tabella consuntivati, come negli storici degli altri moduli.
   // Il periodo ordina sulla data d'inizio: è quella con cui si cerca un periodo, non la fine.
   const COLONNE_CONSUNTIVATI = [
-    { chiave: 'operatore', label: 'Operatore', valore: (p) => p.operatore || '' },
+    { chiave: 'operatore', label: 'Operatore', valore: (p) => nomeOperatore(p.operatore_id) },
     { chiave: 'periodo', label: 'Periodo', valore: (p) => p.dal || '' },
     { chiave: 'consuntivato', label: 'Consuntivato il', valore: (p) => dataConsuntivoDi(p) },
     // Sugli evasi il costo mostrato è il totale congelato sul documento: l'ordinamento segue quello.
@@ -247,11 +253,11 @@ function Compensi({ user }) {
 
   // ---- scritture su op_voci ----
   const recensioneDi = (operatore, prenotazioneId) =>
-    voci.find(v => v.tipo === 'recensione' && v.operatore === operatore && v.riferimento === prenotazioneId);
+    voci.find(v => v.tipo === 'recensione' && v.operatore_id === operatore && v.riferimento === prenotazioneId);
 
   // Voci di un certo tipo attaccate a una partita (o alla giornata, con riferimento nullo).
   const vociDi = (operatore, riferimento, tipo) =>
-    voci.filter(v => v.operatore === operatore && v.tipo === tipo && (v.riferimento || null) === (riferimento || null));
+    voci.filter(v => v.operatore_id === operatore && v.tipo === tipo && (v.riferimento || null) === (riferimento || null));
 
   const sommaDi = (elenco) => elenco.reduce((s, v) => s + (parseFloat(v.importo) || 0), 0);
 
@@ -262,7 +268,7 @@ function Compensi({ user }) {
     const { error } = esistente
       ? await supabase.from('op_voci').delete().eq('id', esistente.id)
       : await supabase.from('op_voci').insert([{
-          operatore, data, tipo: 'recensione', riferimento: prenotazioneId,
+          operatore_id: operatore, data, tipo: 'recensione', riferimento: prenotazioneId,
           descrizione: 'Recensione positiva',
           importo: parseFloat(parametri.bonus_recensione) || 0, esente_ritenuta: false,
         }]);
@@ -279,7 +285,7 @@ function Compensi({ user }) {
     setInCorso('voce');
     // Le spese sono rimborsi (esenti da ritenuta), le rettifiche correggono il compenso (imponibili).
     const { error } = await supabase.from('op_voci').insert([{
-      operatore: f.operatore, data: f.data, tipo: f.tipo,
+      operatore_id: f.operatore, data: f.data, tipo: f.tipo,
       riferimento: f.riferimento || null, descrizione: f.descrizione.trim(),
       importo: parseFloat(f.importo), esente_ritenuta: f.tipo === 'spesa',
     }]);
@@ -310,14 +316,14 @@ function Compensi({ user }) {
     const dal = date[0];
     const al = date[date.length - 1];
     if (!window.confirm(
-      `Consuntivare ${op.nome} dal ${dataBreve(dal)} al ${dataBreve(al)}?\n\n`
+      `Consuntivare ${op.nome || nomeOperatore(op.id)} dal ${dataBreve(dal)} al ${dataBreve(al)}?\n\n`
       + `${euro(op.compenso + op.spese)} da pagare su ${op.giornate.length} giornate.\n\n`
       + `Il periodo passa fra i consuntivati e le sue giornate non accettano più modifiche.`
     )) return;
 
     setInCorso(`consuntiva-${op.id}`);
     const { error } = await supabase.from('op_periodi').insert([{
-      operatore: op.id, dal, al,
+      operatore_id: op.id, dal, al,
       compenso_netto: op.compenso, spese: op.spese,
       // Il costo azienda qui è il solo esborso verso l'operatore: la ritenuta si aggiunge
       // quando si elabora il rimborso, non adesso.
@@ -338,7 +344,7 @@ function Compensi({ user }) {
   };
 
   const annullaConsuntivo = async (p) => {
-    if (!window.confirm(`Riaprire il periodo di ${p.operatore} dal ${dataBreve(p.dal)} al ${dataBreve(p.al)}?\n\nLe giornate tornano fra quelle da consuntivare e i valori congelati vengono persi.`)) return;
+    if (!window.confirm(`Riaprire il periodo di ${nomeOperatore(p.operatore_id)} dal ${dataBreve(p.dal)} al ${dataBreve(p.al)}?\n\nLe giornate tornano fra quelle da consuntivare e i valori congelati vengono persi.`)) return;
     setInCorso(`riapri-${p.id}`);
     const { error } = await supabase.from('op_periodi').delete().eq('id', p.id);
     setInCorso(null);
@@ -359,7 +365,7 @@ function Compensi({ user }) {
     // Un forfait già applicato: serve a dire che c'è e a poterlo togliere.
     const giorni = new Set(op.giornate.map(g => g.data));
     const esistenti = voci.filter(v =>
-      v.operatore === op.id && v.tipo === 'rettifica' && v.descrizione === 'forfait' && giorni.has(v.data));
+      v.operatore_id === op.id && v.tipo === 'rettifica' && v.descrizione === 'forfait' && giorni.has(v.data));
     const importo = parseFloat(formForfait.importo);
     const base = { op, esistenti, totaleEsistente: op.compensoOrario + sommaDi(esistenti) };
     if (isNaN(importo)) return { ...base, righe: [], importo: null };
@@ -370,7 +376,7 @@ function Compensi({ user }) {
     const a = anteprimaForfait;
     if (!a || a.esistenti.length === 0) return;
     if (!window.confirm(
-      `Rimuovere il compenso concordato di ${a.op.nome}?\n\n`
+      `Rimuovere il compenso concordato di ${a.op.nome || nomeOperatore(a.op.id)}?\n\n`
       + `Le ${a.esistenti.length} rettifiche "forfait" vengono cancellate e il compenso torna al calcolo a ore: `
       + `${euro(a.op.compensoOrario)}.`
     )) return;
@@ -392,14 +398,14 @@ function Compensi({ user }) {
     // prima tutte le rettifiche "forfait" delle giornate coinvolte.
     const date = [...new Set(a.righe.map(r => r.data))];
     const pulizia = await supabase.from('op_voci').delete()
-      .eq('operatore', a.op.id).eq('tipo', 'rettifica').eq('descrizione', 'forfait').in('data', date);
+      .eq('operatore_id', a.op.id).eq('tipo', 'rettifica').eq('descrizione', 'forfait').in('data', date);
     if (pulizia.error) {
       setInCorso(null); console.error(pulizia.error);
       return alert("Errore nella rimozione del forfait precedente.");
     }
 
     const { error } = await supabase.from('op_voci').insert(a.righe.map(r => ({
-      operatore: a.op.id, data: r.data, tipo: 'rettifica', riferimento: r.riferimento,
+      operatore_id: a.op.id, data: r.data, tipo: 'rettifica', riferimento: r.riferimento,
       descrizione: 'forfait', importo: r.differenza, esente_ritenuta: false,
     })));
     setInCorso(null);
@@ -430,12 +436,12 @@ function Compensi({ user }) {
     const dentro = evasi.filter(p => (p.evaso_il || '').slice(0, 4) === indAnno);
     const per = new Map();
     for (const p of dentro) {
-      const r = per.get(p.operatore) || { operatore: p.operatore, rimborsi: 0, giornate: 0, netto: 0, ritenuta: 0 };
+      const r = per.get(p.operatore_id) || { operatoreId: p.operatore_id, rimborsi: 0, giornate: 0, netto: 0, ritenuta: 0 };
       r.rimborsi += 1;
       r.giornate += p.rimborso?.giornate?.length || 0;
       r.netto = arrotonda2(r.netto + (parseFloat(p.rimborso?.netto) || 0));
       r.ritenuta = arrotonda2(r.ritenuta + (parseFloat(p.rimborso?.ritenuta) || 0));
-      per.set(p.operatore, r);
+      per.set(p.operatore_id, r);
     }
     // Il totale è il compenso lordo: netto più ritenuta, cioè le due colonne accanto. Si somma qui
     // e non si legge dal documento, così la riga torna a occhio anche quando gli arrotondamenti
@@ -454,7 +460,7 @@ function Compensi({ user }) {
 
   // Colonne ordinabili degli indicatori, come nelle altre tabelle del modulo.
   const COLONNE_INDICATORI = [
-    { chiave: 'operatore', label: 'Operatore', valore: (r) => r.operatore || '' },
+    { chiave: 'operatore', label: 'Operatore', valore: (r) => nomeOperatore(r.operatoreId) },
     { chiave: 'giornate', label: 'Giornate pagate', stile: { textAlign: 'right' }, valore: (r) => r.giornate },
     { chiave: 'netto', label: 'Netto a pagare', stile: { textAlign: 'right' }, valore: (r) => r.netto },
     { chiave: 'ritenuta', label: "Ritenuta d'acconto", stile: { textAlign: 'right' }, valore: (r) => r.ritenuta },
@@ -469,8 +475,8 @@ function Compensi({ user }) {
   const [elaborazione, setElaborazione] = useState(null);
 
   // I soli campi che finiscono sul documento: quello che si congela è quello che si stampa.
-  const anagraficaDi = (username) => {
-    const u = anagrafiche.find(a => a.username === username) || {};
+  const anagraficaDi = (utenteId) => {
+    const u = anagrafiche.find(a => a.id === utenteId) || {};
     return {
       indirizzo: u.indirizzo || '', cap: u.cap || '', citta: u.citta || '',
       provincia: u.provincia || '', codice_fiscale: u.codice_fiscale || '',
@@ -496,14 +502,14 @@ function Compensi({ user }) {
       // il rimborso è da elaborare si rilegge invece sempre l'anagrafica di adesso, altrimenti un
       // periodo riaperto si porterebbe dietro i dati di quando non erano ancora stati compilati.
       dataDocumento: (p.evaso_il && p.rimborso?.data) || dataConsuntivoDi(p) || oggiIso(),
-      anagrafica: (p.evaso_il && p.rimborso?.anagrafica) || anagraficaDi(p.operatore),
+      anagrafica: (p.evaso_il && p.rimborso?.anagrafica) || anagraficaDi(p.operatore_id),
     });
   };
 
   // Le spese registrate a mano sul periodo: vanno elencate come rimborsi ed escono dalla base
   // imponibile, perché sono denaro anticipato e restituito, non guadagnato.
   const speseDelPeriodo = useCallback((p) => voci.filter(v =>
-    v.operatore === p.operatore && v.tipo === 'spesa' && v.data >= p.dal && v.data <= p.al), [voci]);
+    v.operatore_id === p.operatore_id && v.tipo === 'spesa' && v.data >= p.dal && v.data <= p.al), [voci]);
 
   const importiElaborazione = useMemo(() => {
     if (!elaborazione) return null;
@@ -563,7 +569,7 @@ function Compensi({ user }) {
     setInCorso(null);
     if (error) { console.error(error); return alert("Errore nel salvataggio del rimborso."); }
 
-    scaricaDocumentoRimborso(`rimborso-${e.periodo.operatore.replace(/\s+/g, '-')}-${e.periodo.dal}`);
+    scaricaDocumentoRimborso(`rimborso-${nomeOperatore(e.periodo.operatore_id).replace(/\s+/g, '-')}-${e.periodo.dal}`);
     setElaborazione(null);
     fetchPartite();
   };
@@ -574,12 +580,12 @@ function Compensi({ user }) {
     if (!p.rimborso) return alert("Questo periodo non ha un documento salvato: riaprilo e rielaboralo.");
     apriElaborazione(p);
     // Il nodo del documento esiste solo quando la schermata è a video: si aspetta il render.
-    setTimeout(() => scaricaDocumentoRimborso(`rimborso-${p.operatore.replace(/\s+/g, '-')}-${p.dal}`), 600);
+    setTimeout(() => scaricaDocumentoRimborso(`rimborso-${nomeOperatore(p.operatore_id).replace(/\s+/g, '-')}-${p.dal}`), 600);
   };
 
   const riapriRimborso = async (p) => {
     if (!window.confirm(
-      `Riaprire l'elaborazione del rimborso di ${p.operatore}?\n\n`
+      `Riaprire l'elaborazione del rimborso di ${nomeOperatore(p.operatore_id)}?\n\n`
       + `Il periodo torna fra quelli da elaborare. Il documento salvato resta come bozza, `
       + `così ripartendo ritrovi giornate e trasferte già impostate.`
     )) return;
@@ -788,7 +794,7 @@ function Compensi({ user }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid #333', background: '#f5f8fa' }}>
-            <td style={{ padding: '10px', fontWeight: 'bold' }} colSpan="6">Totale {op.nome}</td>
+            <td style={{ padding: '10px', fontWeight: 'bold' }} colSpan="6">Totale {op.nome || nomeOperatore(op.id)}</td>
             <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{ore(op.ore)}</td>
             <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compensoOrario)}</td>
             <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.totaleRettifiche)}</td>
@@ -838,7 +844,7 @@ function Compensi({ user }) {
                   >
                     <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                       <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
-                      <strong>{p.operatore}</strong>
+                      <strong>{nomeOperatore(p.operatore_id)}</strong>
                     </td>
                     <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                       {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
@@ -928,7 +934,7 @@ function Compensi({ user }) {
     <div className="documento-preventivo" id="documento-rimborso" style={{ background: '#fff', padding: '34px 40px', maxWidth: '820px', color: '#000', fontSize: '0.9rem', lineHeight: 1.6 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '40px', marginBottom: '34px' }}>
         <div>
-          <div style={{ fontWeight: 'bold' }}>{periodo.operatore}</div>
+          <div style={{ fontWeight: 'bold' }}>{nomeOperatore(periodo.operatore_id)}</div>
           {righeResidenza(a).map((r, k) => <div key={k}>{r}</div>)}
           {a.codice_fiscale && <div>{a.codice_fiscale}</div>}
         </div>
@@ -1175,7 +1181,7 @@ function Compensi({ user }) {
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ fontSize: '0.7rem', color: '#888' }}>{espanso ? '▼' : '▶'}</span>
-                          <strong style={{ fontSize: '1rem' }}>{op.nome}</strong>
+                          <strong style={{ fontSize: '1rem' }}>{op.nome || nomeOperatore(op.id)}</strong>
                           <span style={{ color: '#888', fontSize: '0.8rem' }}>{op.giornate.length} giornat{op.giornate.length === 1 ? 'a' : 'e'}</span>
                         </div>
                         <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.85rem', flexWrap: 'wrap' }}>
@@ -1189,7 +1195,7 @@ function Compensi({ user }) {
                           <button
                             type="button"
                             title="Sostituisce il calcolo a ore con un importo pattuito, ripartito sulle ore del periodo"
-                            onClick={(e) => { e.stopPropagation(); setFormForfait({ operatore: op.id, nome: op.nome, importo: '' }); }}
+                            onClick={(e) => { e.stopPropagation(); setFormForfait({ operatore: op.id, nome: op.nome || nomeOperatore(op.id), importo: '' }); }}
                             className="btn-outline-annulla"
                             style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: '4px', fontSize: '0.78rem' }}
                           >
@@ -1403,7 +1409,7 @@ function Compensi({ user }) {
           <div className="modal-form-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px' }}>
             <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setElaborazione(null)}>✕</button>
             <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>
-              Rimborso · {elaborazione.periodo.operatore}
+              Rimborso · {nomeOperatore(elaborazione.periodo.operatore_id)}
             </h3>
             <p style={{ margin: '0 0 15px 0', fontSize: '0.8rem', color: '#777' }}>
               Quello che scrivi qui finisce nel documento. Le giornate sono proposte dalle partite del periodo:
@@ -1429,7 +1435,7 @@ function Compensi({ user }) {
                 prima di generarlo, che scoprirlo guardando il PDF. */}
             {righeResidenza(elaborazione.anagrafica).length === 0 || !elaborazione.anagrafica?.codice_fiscale ? (
               <p style={{ margin: '0 0 16px 0', fontSize: '0.8rem', color: '#c62828' }}>
-                Di {elaborazione.periodo.operatore} manca{' '}
+                Di {nomeOperatore(elaborazione.periodo.operatore_id)} manca{' '}
                 {righeResidenza(elaborazione.anagrafica).length === 0 && !elaborazione.anagrafica?.codice_fiscale
                   ? 'la residenza e il codice fiscale'
                   : righeResidenza(elaborazione.anagrafica).length === 0 ? 'la residenza' : 'il codice fiscale'}:
@@ -1571,9 +1577,9 @@ function Compensi({ user }) {
                   </thead>
                   <tbody>
                     {ordinaIndicatori(indicatori.righe).map(r => (
-                      <tr key={r.operatore} style={{ borderBottom: '1px solid #eee' }}>
+                      <tr key={r.operatoreId} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ padding: '8px 10px' }}>
-                          <strong>{r.operatore}</strong>
+                          <strong>{nomeOperatore(r.operatoreId)}</strong>
                           <span style={{ color: '#94a3b8', fontSize: '0.76rem' }}>
                             {' '}· {r.rimborsi} {r.rimborsi === 1 ? 'rimborso' : 'rimborsi'}
                           </span>

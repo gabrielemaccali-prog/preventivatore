@@ -352,7 +352,7 @@ function Prenotazioni({ user }) {
     const [p, o, c, t, pr, pv, vc, dc, df, pag] = await Promise.all([
       supabase.from('pren_pacchetti').select('*').order('nome'),
       // Operatori = bubbler configurati in Disponibilità (utenti con flag bubbler), non più una tabella a parte.
-      supabase.from('utenti').select('username, nome_breve, telefono, email').eq('bubbler', true).order('nome_breve'),
+      supabase.from('utenti').select('id, username, nome, cognome, nome_breve, telefono, email').eq('bubbler', true).order('nome_breve'),
       supabase.from('pren_campi').select('*').order('nome'),
       supabase.from('pren_campi_tariffe').select('*'),
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
@@ -363,7 +363,7 @@ function Prenotazioni({ user }) {
       supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data'),
     ]);
     if (p.data) setPacchetti(p.data);
-    if (o.data) setOperatori(o.data.map(b => ({ id: b.username, nome: b.nome_breve || b.username, email: b.email, telefono: b.telefono })));
+    if (o.data) setOperatori(o.data.map(b => ({ id: b.id, nome: b.nome_breve || [b.nome, b.cognome].filter(Boolean).join(' ') || b.username, email: b.email, telefono: b.telefono })));
     if (c.data) setCampi(c.data);
     if (t.data) setTariffe(t.data);
     // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher): vengono agganciati
@@ -387,12 +387,12 @@ function Prenotazioni({ user }) {
   // Disponibilità di un operatore (bubbler), incrociando il campo (se la location è un campo registrato)
   // e la data/orario della prenotazione con il calendario di Disponibilità.
   // null = non è ancora possibile determinarlo (manca data o orario), true/false = disponibile o no.
-  const disponibilitaOperatore = (username, iso, oraInizio, oraFine, campoId) => {
+  const disponibilitaOperatore = (utenteId, iso, oraInizio, oraFine, campoId) => {
     // In Disponibilità > Disponibilità Calendario ogni riga è già per campo + data + fascia:
     // se la location è un campo registrato basta filtrare su quel campo.
-    if (campoId && !dispCalendario.some(d => d.utente_username === username && d.campo_id === campoId)) return false;
+    if (campoId && !dispCalendario.some(d => d.utente_id === utenteId && d.campo_id === campoId)) return false;
     if (!iso) return null;
-    const righeGiorno = dispCalendario.filter(d => d.utente_username === username && d.data === iso && (!campoId || d.campo_id === campoId));
+    const righeGiorno = dispCalendario.filter(d => d.utente_id === utenteId && d.data === iso && (!campoId || d.campo_id === campoId));
     if (righeGiorno.length === 0) return false;
     const iniMin = toMinutes(oraInizio);
     const fineMin = toMinutes(oraFine);

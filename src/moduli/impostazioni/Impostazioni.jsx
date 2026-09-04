@@ -10,7 +10,7 @@ const permessiVuoti = () => {
 };
 
 const RUOLO_VUOTO = { nome: "", permessi: permessiVuoti() };
-const UTENTE_VUOTO = { username: "", password: "", ruolo: "", bubbler: false };
+const UTENTE_VUOTO = { username: "", email: "", password: "", ruolo: "", bubbler: false };
 
 function MatricePermessi({ permessi, onToggleScheda, onToggleSottoscheda }) {
   return (
@@ -88,30 +88,42 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
   };
 
   // ====================== UTENTI ======================
+  // Un account ha bisogno di un'email — è con quella che si entra — di una password e di un ruolo.
+  // Nome e cognome della persona si compilano in Disponibilità, insieme al resto dell'anagrafica.
+  const utenteIncompleto = (u) => !u.email || !u.password || !u.ruolo;
+
   const addUtente = async (e) => {
     e.preventDefault();
-    if (!nuovoUtente.username || !nuovoUtente.password || !nuovoUtente.ruolo) return alert("Compila username, password e ruolo");
-    const { error } = await supabase.from('utenti').insert([nuovoUtente]);
+    if (utenteIncompleto(nuovoUtente)) return alert("Compila email, password e ruolo");
+    const { error } = await supabase.from('utenti')
+      .insert([{ ...nuovoUtente, username: nuovoUtente.username || nuovoUtente.email }]);
     if (!error) { setNuovoUtente(UTENTE_VUOTO); setShowFormUtente(false); fetchUtenti(); }
-    else { console.error(error); alert("Errore salvataggio utente (username già esistente?)"); }
+    else { console.error(error); alert("Errore salvataggio utente: email già usata da un altro account?"); }
   };
 
   const salvaModificaUtente = async () => {
-    if (!datiUtenteInModifica.username || !datiUtenteInModifica.password || !datiUtenteInModifica.ruolo) return alert("Compila username, password e ruolo");
+    if (utenteIncompleto(datiUtenteInModifica)) return alert("Compila email, password e ruolo");
     const { error } = await supabase.from('utenti').update({
-      username: datiUtenteInModifica.username,
+      email: datiUtenteInModifica.email,
       password: datiUtenteInModifica.password,
       ruolo: datiUtenteInModifica.ruolo,
       bubbler: datiUtenteInModifica.bubbler
     }).eq('id', idUtenteInModifica);
     if (!error) { setIdUtenteInModifica(null); fetchUtenti(); }
-    else { console.error(error); alert("Errore salvataggio utente"); }
+    else { console.error(error); alert("Errore salvataggio utente: email già usata da un altro account?"); }
   };
 
   const rimuoviUtente = async (u) => {
-    if (u.username === user.username) return alert("Non puoi eliminare l'utente con cui hai effettuato l'accesso.");
-    if (!window.confirm(`Eliminare l'utente ${u.username}?`)) return;
-    await supabase.from('utenti').delete().eq('id', u.id);
+    if (u.id === user.id) return alert("Non puoi eliminare l'utente con cui hai effettuato l'accesso.");
+    const nome = [u.nome, u.cognome].filter(Boolean).join(' ') || u.username;
+    if (!window.confirm(`Eliminare l'utente ${nome}?`)) return;
+    const { error } = await supabase.from('utenti').delete().eq('id', u.id);
+    // Il database rifiuta di cancellare chi ha disponibilità, voci o compensi alle spalle: prima
+    // quei dati andrebbero riassegnati o rimossi, altrimenti resterebbero senza padrone.
+    if (error) {
+      console.error(error);
+      return alert(`Impossibile eliminare ${nome}: ha disponibilità o compensi collegati.\n\nPer togliergli l'accesso senza perdere lo storico, cambiagli la password o il ruolo.`);
+    }
     fetchUtenti();
   };
 
@@ -199,7 +211,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                 <button type="button" className="modal-form-close" onClick={() => setShowFormUtente(false)} aria-label="Chiudi">✕</button>
                 <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Nuovo Utente</h3>
                 <form onSubmit={addUtente} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <input type="text" placeholder="Username" value={nuovoUtente.username} onChange={(e) => setNuovoUtente({ ...nuovoUtente, username: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <input type="email" placeholder="Email" value={nuovoUtente.email} onChange={(e) => setNuovoUtente({ ...nuovoUtente, email: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
                   <input type="text" placeholder="Password" value={nuovoUtente.password} onChange={(e) => setNuovoUtente({ ...nuovoUtente, password: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
                   <select value={nuovoUtente.ruolo} onChange={(e) => setNuovoUtente({ ...nuovoUtente, ruolo: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}>
                     <option value="">Seleziona ruolo...</option>
@@ -218,7 +230,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
             <table style={{ width: '100%', minWidth: '550px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '10px 12px' }}>Username</th>
+                  <th style={{ padding: '10px 12px' }}>Utente</th>
                   <th style={{ padding: '10px 12px' }}>Password</th>
                   <th style={{ padding: '10px 12px' }}>Ruolo</th>
                   <th style={{ padding: '10px 12px', textAlign: 'center', width: '90px' }}>Bubbler</th>
@@ -230,7 +242,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                   <tr key={u.id} style={{ borderBottom: '1px solid #eee' }}>
                     {idUtenteInModifica === u.id ? (
                       <>
-                        <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiUtenteInModifica.username} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, username: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
+                        <td style={{ padding: '10px 12px' }}><input type="email" className="table-input" value={datiUtenteInModifica.email} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, email: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiUtenteInModifica.password} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, password: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}>
                           <select className="table-input" value={datiUtenteInModifica.ruolo} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, ruolo: e.target.value })} style={{ width: '100%', height: '30px' }}>
@@ -249,7 +261,10 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                       </>
                     ) : (
                       <>
-                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}><strong>{u.username}</strong></td>
+                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>
+                          <strong>{[u.nome, u.cognome].filter(Boolean).join(' ') || u.username}</strong>
+                          <div style={{ fontSize: '0.78rem', color: '#888' }}>{u.email || 'nessuna email: entra ancora con l\'username'}</div>
+                        </td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#888' }}>••••••••</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{u.ruolo}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
@@ -257,7 +272,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                            <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, password: u.password, ruolo: u.ruolo, bubbler: !!u.bubbler }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                            <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, email: u.email || "", password: u.password, ruolo: u.ruolo, bubbler: !!u.bubbler }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
                             <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviUtente(u)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                           </div>
                         </td>

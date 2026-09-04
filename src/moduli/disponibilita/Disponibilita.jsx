@@ -64,7 +64,7 @@ function Disponibilita({ user }) {
   const fetchTutto = async () => {
     const [fasceRes, bubblersRes, campiRes, dCalRes, dConfRes] = await Promise.all([
       supabase.from('disp_fasce').select('*').order('ordine'),
-      supabase.from('utenti').select('username, nome_breve, telefono, email, bubbler, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true).order('username'),
+      supabase.from('utenti').select('id, username, nome, cognome, nome_breve, telefono, email, bubbler, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true).order('username'),
       supabase.from('pren_campi').select('id, nome, citta, provincia').order('nome'),
       supabase.from('disp_calendario').select('*'),
       supabase.from('disp_conferme').select('*'),
@@ -88,14 +88,18 @@ function Disponibilita({ user }) {
     alert(`${contesto}\n\n${dettaglio || 'Errore sconosciuto'}`);
   };
 
-  const nomeBubbler = (username) => bubblers.find(b => b.username === username)?.nome_breve || username;
+  // Il bubbler si cerca per id: il nome può cambiare, l'id no.
+  const nomeBubbler = (utenteId) => {
+    const b = bubblers.find(x => x.id === utenteId);
+    return b ? (b.nome_breve || [b.nome, b.cognome].filter(Boolean).join(' ') || b.username) : utenteId;
+  };
   const fasciaInfo = (id) => fasce.find(f => f.id === id);
   const campoInfo = (id) => campi.find(c => c.id === id);
   const nomeCampo = (id) => campoInfo(id)?.nome || id;
-  const rigaDisp = (username, campoId, iso, fasciaId) => dispCalendario.find(d => d.utente_username === username && d.campo_id === campoId && d.data === iso && d.fascia === fasciaId);
+  const rigaDisp = (utenteId, campoId, iso, fasciaId) => dispCalendario.find(d => d.utente_id === utenteId && d.campo_id === campoId && d.data === iso && d.fascia === fasciaId);
   // Campi (id) su cui un bubbler ha almeno una disponibilità: sostituisce la vecchia tabella disp_campi.
-  const campiIdDiBubbler = (username) => [...new Set(dispCalendario.filter(d => d.utente_username === username).map(d => d.campo_id))];
-  const campiDiBubbler = (username) => campiIdDiBubbler(username).map(id => campoInfo(id)).filter(Boolean);
+  const campiIdDiBubbler = (utenteId) => [...new Set(dispCalendario.filter(d => d.utente_id === utenteId).map(d => d.campo_id))];
+  const campiDiBubbler = (utenteId) => campiIdDiBubbler(utenteId).map(id => campoInfo(id)).filter(Boolean);
   const provinciaCampo = (campoId) => campoInfo(campoId)?.provincia || 'Senza provincia';
   const orarioRiga = (riga) => `${oraHHMM(riga.ora_inizio) || oraHHMM(fasciaInfo(riga.fascia)?.ora_inizio)}–${oraHHMM(riga.ora_fine) || oraHHMM(fasciaInfo(riga.fascia)?.ora_fine)}`;
 
@@ -124,14 +128,14 @@ function Disponibilita({ user }) {
 
   // ====================== CONFIGURATORE: BUBBLER ======================
   const [idBubblerInline, setIdBubblerInline] = useState(null);
-  const BUBBLER_VUOTO = { nome_breve: '', telefono: '', email: '', indirizzo: '', cap: '', citta: '', provincia: '', codice_fiscale: '' };
+  const BUBBLER_VUOTO = { nome: '', cognome: '', nome_breve: '', telefono: '', email: '', indirizzo: '', cap: '', citta: '', provincia: '', codice_fiscale: '' };
   const [datiBubblerInline, setDatiBubblerInline] = useState(BUBBLER_VUOTO);
   const iniziaInlineBubbler = (b) => {
-    setIdBubblerInline(b.username);
+    setIdBubblerInline(b.id);
     setDatiBubblerInline(Object.fromEntries(Object.keys(BUBBLER_VUOTO).map(k => [k, b[k] || ''])));
   };
   const salvaInlineBubbler = async () => {
-    const { error } = await supabase.from('utenti').update(datiBubblerInline).eq('username', idBubblerInline);
+    const { error } = await supabase.from('utenti').update(datiBubblerInline).eq('id', idBubblerInline);
     if (error) { return segnalaErrore('Errore salvataggio bubbler', error); }
     setIdBubblerInline(null); fetchTutto();
   };
@@ -149,7 +153,7 @@ function Disponibilita({ user }) {
 
   // Le mie righe di disponibilità: servono sia all'editor (per la copia da un altro campo)
   // sia al riepilogo personale, quindi stanno qui sopra a entrambi.
-  const mieRighe = dispCalendario.filter(d => d.utente_username === user.username);
+  const mieRighe = dispCalendario.filter(d => d.utente_id === user.id);
   const mieRigheMese = mieRighe.filter(d => (d.data || '').slice(0, 7) === meseVisualizzato);
   const mieRigheMeseDi = (campoId) => mieRigheMese.filter(d => d.campo_id === campoId);
 
@@ -179,11 +183,11 @@ function Disponibilita({ user }) {
   // ---------------- Conferma del mese ----------------
   // Un mese confermato è un mese "rivisto e chiuso": nel riepilogo prende il bollino blu e i
   // giorni prendono i colori verde/arancio/rosso, che prima della conferma restano neutri.
-  const campoConfermato = (campoId, mese = meseVisualizzato) => dispConferme.some(c => c.utente_username === user.username && c.campo_id === campoId && c.mese === mese);
+  const campoConfermato = (campoId, mese = meseVisualizzato) => dispConferme.some(c => c.utente_id === user.id && c.campo_id === campoId && c.mese === mese);
   const targetConfermato = campiTarget.length > 0 && campiTarget.every(cid => campoConfermato(cid));
 
   const confermaMese = async () => {
-    const daInserire = campiTarget.filter(cid => !campoConfermato(cid)).map(cid => ({ utente_username: user.username, campo_id: cid, mese: meseVisualizzato }));
+    const daInserire = campiTarget.filter(cid => !campoConfermato(cid)).map(cid => ({ utente_id: user.id, campo_id: cid, mese: meseVisualizzato }));
     if (daInserire.length === 0) return;
     const { error } = await supabase.from('disp_conferme').insert(daInserire);
     if (error) { return segnalaErrore('Errore conferma del mese', error); }
@@ -191,7 +195,7 @@ function Disponibilita({ user }) {
   };
   const annullaConfermaMese = async () => {
     if (!window.confirm(`Annullare la conferma di ${etichettaMese} su ${nomeTarget}? Le disponibilità restano, torna solo "da confermare".`)) return;
-    const { error } = await supabase.from('disp_conferme').delete().eq('utente_username', user.username).in('campo_id', campiTarget).eq('mese', meseVisualizzato);
+    const { error } = await supabase.from('disp_conferme').delete().eq('utente_id', user.id).in('campo_id', campiTarget).eq('mese', meseVisualizzato);
     if (error) { return segnalaErrore('Errore annullamento conferma', error); }
     fetchTutto();
   };
@@ -200,7 +204,7 @@ function Disponibilita({ user }) {
   const svuotaMese = async () => {
     const isoList = giorniMese.map(g => toISODate(g));
     if (!window.confirm(`Rimuovere TUTTE le disponibilità di ${etichettaMese} su ${nomeTarget}? Il mese torna completamente vuoto.`)) return;
-    const { error } = await supabase.from('disp_calendario').delete().eq('utente_username', user.username).in('campo_id', campiTarget).in('data', isoList);
+    const { error } = await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).in('data', isoList);
     if (error) { return segnalaErrore('Errore svuotamento del mese', error); }
     fetchTutto();
   };
@@ -218,11 +222,11 @@ function Disponibilita({ user }) {
     if (righeSorgente.length === 0) return;
     if (!window.confirm(`Copiare le ${righeSorgente.length} disponibilità di ${nomeCampo(sorgenteEredita)} di ${etichettaMese} su ${nomeTarget}? Quanto già presente in questo mese verrà sostituito.`)) return;
     const isoList = giorniMese.map(g => toISODate(g));
-    const { error: errPulizia } = await supabase.from('disp_calendario').delete().eq('utente_username', user.username).in('campo_id', campiTarget).in('data', isoList);
+    const { error: errPulizia } = await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).in('data', isoList);
     if (errPulizia) { return segnalaErrore('Errore durante la copia', errPulizia); }
     const nuove = [];
     campiTarget.forEach(cid => righeSorgente.forEach(r => nuove.push({
-      utente_username: user.username, campo_id: cid, data: r.data, fascia: r.fascia,
+      utente_id: user.id, campo_id: cid, data: r.data, fascia: r.fascia,
       ora_inizio: r.ora_inizio, ora_fine: r.ora_fine, note: r.note,
     })));
     const { error } = await supabase.from('disp_calendario').insert(nuove);
@@ -233,7 +237,7 @@ function Disponibilita({ user }) {
 
   // Stato di una fascia in un giorno sul bersaglio: attiva su tutti i campi, su alcuni, o su nessuno.
   const statoFascia = (iso, fasciaId) => {
-    const attivi = campiTarget.filter(cid => rigaDisp(user.username, cid, iso, fasciaId)).length;
+    const attivi = campiTarget.filter(cid => rigaDisp(user.id, cid, iso, fasciaId)).length;
     if (attivi === 0) return 'vuota';
     return attivi === campiTarget.length ? 'piena' : 'parziale';
   };
@@ -246,14 +250,14 @@ function Disponibilita({ user }) {
   const onClickBadgeEditor = async (iso, fasciaId) => {
     if (campiTarget.length === 0) return;
     if (statoFascia(iso, fasciaId) === 'piena') {
-      const riga = rigaDisp(user.username, campiTarget[0], iso, fasciaId);
+      const riga = rigaDisp(user.id, campiTarget[0], iso, fasciaId);
       setFasciaSelezionata({ data: iso, fascia: fasciaId });
       setFormOverride({ ora_inizio: oraHHMM(riga.ora_inizio), ora_fine: oraHHMM(riga.ora_fine), note: riga.note || '' });
       return;
     }
     const daInserire = campiTarget
-      .filter(cid => !rigaDisp(user.username, cid, iso, fasciaId))
-      .map(cid => ({ utente_username: user.username, campo_id: cid, data: iso, fascia: fasciaId }));
+      .filter(cid => !rigaDisp(user.id, cid, iso, fasciaId))
+      .map(cid => ({ utente_id: user.id, campo_id: cid, data: iso, fascia: fasciaId }));
     const { error } = await supabase.from('disp_calendario').insert(daInserire);
     if (error) { return segnalaErrore('Errore salvataggio disponibilità', error); }
     fetchTutto();
@@ -270,13 +274,13 @@ function Disponibilita({ user }) {
     if (formOverride.ora_fine && formOverride.ora_fine > fineFascia) return alert(`L'orario di fine non può essere dopo le ${fineFascia} (fine fascia ${f?.label}).`);
     if (formOverride.ora_inizio && formOverride.ora_fine && formOverride.ora_inizio >= formOverride.ora_fine) return alert("L'orario di inizio deve essere precedente all'orario di fine.");
     const rec = { ora_inizio: formOverride.ora_inizio || null, ora_fine: formOverride.ora_fine || null, note: formOverride.note || null };
-    const { error } = await supabase.from('disp_calendario').update(rec).eq('utente_username', user.username).in('campo_id', campiTarget).eq('data', data).eq('fascia', fascia);
+    const { error } = await supabase.from('disp_calendario').update(rec).eq('utente_id', user.id).in('campo_id', campiTarget).eq('data', data).eq('fascia', fascia);
     if (error) { return segnalaErrore('Errore salvataggio disponibilità', error); }
     setFasciaSelezionata(null); fetchTutto();
   };
   const rimuoviDisponibilita = async () => {
     const { data, fascia } = fasciaSelezionata;
-    await supabase.from('disp_calendario').delete().eq('utente_username', user.username).in('campo_id', campiTarget).eq('data', data).eq('fascia', fascia);
+    await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).eq('data', data).eq('fascia', fascia);
     setFasciaSelezionata(null); fetchTutto();
   };
 
@@ -310,20 +314,20 @@ function Disponibilita({ user }) {
     if (disponibile) {
       const daInserire = [];
       campiTarget.forEach(cid => isoList.forEach(iso => {
-        if (!rigaDisp(user.username, cid, iso, fasciaBulk)) daInserire.push({ utente_username: user.username, campo_id: cid, data: iso, fascia: fasciaBulk });
+        if (!rigaDisp(user.id, cid, iso, fasciaBulk)) daInserire.push({ utente_id: user.id, campo_id: cid, data: iso, fascia: fasciaBulk });
       }));
       if (daInserire.length === 0) return;
       const { error } = await supabase.from('disp_calendario').insert(daInserire);
       if (error) { return segnalaErrore('Errore salvataggio disponibilità', error); }
     } else {
-      const { error } = await supabase.from('disp_calendario').delete().eq('utente_username', user.username).in('campo_id', campiTarget).eq('fascia', fasciaBulk).in('data', isoList);
+      const { error } = await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).eq('fascia', fasciaBulk).in('data', isoList);
       if (error) { return segnalaErrore('Errore rimozione disponibilità', error); }
     }
     fetchTutto();
   };
 
   // ====================== LE MIE DISPONIBILITA' (riepilogo personale) ======================
-  const mieiCampiId = campiIdDiBubbler(user.username);
+  const mieiCampiId = campiIdDiBubbler(user.id);
   // Campi con almeno una disponibilità nel mese visualizzato
   const mieiCampiMeseId = [...new Set(mieRigheMese.map(d => d.campo_id))];
   // Tutti i campi registrati, sempre: prima quelli compilati nel mese, poi quelli ancora vuoti
@@ -351,20 +355,20 @@ function Disponibilita({ user }) {
     .sort((a, b) => a.data.localeCompare(b.data) || FASCE_ORDINE.indexOf(a.fascia) - FASCE_ORDINE.indexOf(b.fascia));
 
   // ====================== RIEPILOGO (tutti i bubbler) ======================
-  const [dettaglioRiepilogo, setDettaglioRiepilogo] = useState(null); // { username, iso }
+  const [dettaglioRiepilogo, setDettaglioRiepilogo] = useState(null); // { utenteId, iso }
   const [filtroProvincia, setFiltroProvincia] = useState("");
   const [filtroCampo, setFiltroCampo] = useState("");
-  const bubblersOrdinati = [...bubblers].sort((a, b) => (a.nome_breve || a.username).localeCompare(b.nome_breve || b.username));
+  const bubblersOrdinati = [...bubblers].sort((a, b) => (a.nome_breve || a.cognome || a.username).localeCompare(b.nome_breve || b.cognome || b.username));
 
   const campiFiltroDisponibili = filtroProvincia ? campi.filter(c => (c.provincia || 'Senza provincia') === filtroProvincia) : campi;
   const bubblersFiltrati = (!filtroProvincia && !filtroCampo) ? bubblersOrdinati : bubblersOrdinati.filter(b => {
-    const idCampiBubbler = campiIdDiBubbler(b.username);
+    const idCampiBubbler = campiIdDiBubbler(b.id);
     if (filtroCampo) return idCampiBubbler.includes(filtroCampo);
     return idCampiBubbler.some(id => provinciaCampo(id) === filtroProvincia);
   });
   // Righe di disponibilità di un bubbler in un giorno/fascia, già ristrette al filtro campo/provincia attivo.
-  const righeDisp = (username, iso, fasciaId) => dispCalendario.filter(d =>
-    d.utente_username === username && d.data === iso && d.fascia === fasciaId &&
+  const righeDisp = (utenteId, iso, fasciaId) => dispCalendario.filter(d =>
+    d.utente_id === utenteId && d.data === iso && d.fascia === fasciaId &&
     (!filtroCampo || d.campo_id === filtroCampo) &&
     (!filtroProvincia || provinciaCampo(d.campo_id) === filtroProvincia)
   );
@@ -430,7 +434,7 @@ function Disponibilita({ user }) {
             <table style={{ width: '100%', minWidth: '980px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                  <th style={{ padding: '10px 12px' }}>Username</th>
+                  <th style={{ padding: '10px 12px' }}>Nome e cognome</th>
                   <th style={{ padding: '10px 12px' }}>Nome breve</th>
                   <th style={{ padding: '10px 12px' }}>Telefono</th>
                   <th style={{ padding: '10px 12px' }}>Email</th>
@@ -441,10 +445,15 @@ function Disponibilita({ user }) {
               </thead>
               <tbody>
                 {bubblers.map(b => (
-                  <tr key={b.username} style={{ borderBottom: '1px solid #eee' }}>
-                    {idBubblerInline === b.username ? (
+                  <tr key={b.id} style={{ borderBottom: '1px solid #eee' }}>
+                    {idBubblerInline === b.id ? (
                       <>
-                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}><strong>{b.username}</strong></td>
+                        <td style={{ padding: '10px 12px', minWidth: '190px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+                            <input type="text" className="table-input" placeholder="Nome" value={datiBubblerInline.nome} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, nome: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                            <input type="text" className="table-input" placeholder="Cognome" value={datiBubblerInline.cognome} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, cognome: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                          </div>
+                        </td>
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiBubblerInline.nome_breve} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, nome_breve: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiBubblerInline.telefono} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, telefono: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}><input type="email" className="table-input" value={datiBubblerInline.email} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, email: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
@@ -472,7 +481,7 @@ function Disponibilita({ user }) {
                       </>
                     ) : (
                       <>
-                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}><strong>{b.username}</strong></td>
+                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}><strong>{[b.nome, b.cognome].filter(Boolean).join(' ') || b.username}</strong></td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.nome_breve || '—'}</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.telefono || '—'}</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.email || '—'}</td>
@@ -740,7 +749,7 @@ function Disponibilita({ user }) {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'center' }}>
                       {FASCE_ORDINE.map(fid => {
                         const stato = statoFascia(iso, fid);
-                        const riga = rigaDisp(user.username, campiTarget[0], iso, fid);
+                        const riga = rigaDisp(user.id, campiTarget[0], iso, fid);
                         const particolare = stato === 'piena' && !!(riga && (riga.ora_inizio || riga.ora_fine || riga.note));
                         const etichetta = fasciaInfo(fid)?.label;
                         const titolo = stato === 'piena'
@@ -865,7 +874,7 @@ function Disponibilita({ user }) {
                         {settimana.map((giorno, di) => {
                           const iso = toISODate(giorno);
                           const fuoriMese = giorno.getMonth() !== calDate.getMonth();
-                          const disponibili = bubblersFiltrati.map(b => ({ b, righe: righeDisp(b.username, iso, fid) })).filter(x => x.righe.length > 0);
+                          const disponibili = bubblersFiltrati.map(b => ({ b, righe: righeDisp(b.id, iso, fid) })).filter(x => x.righe.length > 0);
                           return (
                             <div key={di} style={{ minWidth: 0, minHeight: '22px', opacity: fuoriMese ? 0.35 : 1, background: disponibili.length > 0 ? c.bg : '#f8fafc', border: `1px solid ${disponibili.length > 0 ? c.bd : '#e2e8f0'}`, boxShadow: iso === oggiIso ? 'inset 0 0 0 2px #2563eb' : 'none', borderRadius: '4px', padding: '2px 4px' }}>
                               {disponibili.length > 0 && (
@@ -876,7 +885,7 @@ function Disponibilita({ user }) {
                                       const particolare = righe.some(r => r.ora_inizio || r.ora_fine || r.note);
                                       const dettaglio = righe.map(r => `${nomeCampo(r.campo_id)} ${orarioRiga(r)}${r.note ? ` · ${r.note}` : ''}`).join(' | ');
                                       return (
-                                        <span key={b.username} onClick={() => setDettaglioRiepilogo({ username: b.username, iso })} title={`${b.nome_breve || b.username} · ${dettaglio}`} style={{ cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px', borderRadius: '3px', background: '#fff', border: `1px solid ${c.bd}`, color: c.tx, whiteSpace: 'nowrap' }}>
+                                        <span key={b.id} onClick={() => setDettaglioRiepilogo({ utenteId: b.id, iso })} title={`${b.nome_breve || b.username} · ${dettaglio}`} style={{ cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px', borderRadius: '3px', background: '#fff', border: `1px solid ${c.bd}`, color: c.tx, whiteSpace: 'nowrap' }}>
                                           {b.nome_breve || b.username}{particolare ? ' *' : ''}
                                         </span>
                                       );
@@ -897,13 +906,13 @@ function Disponibilita({ user }) {
 
           {/* MODALE DETTAGLIO GIORNO/BUBBLER */}
           {dettaglioRiepilogo && (() => {
-            const { username, iso } = dettaglioRiepilogo;
-            const campiBubbler = campiDiBubbler(username);
+            const { utenteId, iso } = dettaglioRiepilogo;
+            const campiBubbler = campiDiBubbler(utenteId);
             return (
               <div className="modal-preventivo-backdrop" onClick={() => setDettaglioRiepilogo(null)}>
                 <div style={{ background: '#fff', maxWidth: '460px', margin: '80px auto', borderRadius: '10px', padding: '22px' }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <h3 style={{ margin: 0 }}>{nomeBubbler(username)} · {new Date(iso).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}</h3>
+                    <h3 style={{ margin: 0 }}>{nomeBubbler(utenteId)} · {new Date(iso).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}</h3>
                     <button className="btn-chiudi" title="Chiudi" style={{ float: 'none', padding: '4px 9px' }} onClick={() => setDettaglioRiepilogo(null)}>✕</button>
                   </div>
                   <p style={{ fontSize: '0.8rem', color: '#666', margin: '0 0 14px 0' }}>
@@ -911,7 +920,7 @@ function Disponibilita({ user }) {
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {FASCE_ORDINE.map(fid => {
-                      const righe = righeDisp(username, iso, fid);
+                      const righe = righeDisp(utenteId, iso, fid);
                       const f = fasciaInfo(fid);
                       const c = FASCIA_COLORE[fid];
                       return (
