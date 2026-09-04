@@ -88,6 +88,25 @@ function App() {
     setUser(u => u ? { ...u, permessi } : u);
   }, [user, fetchPermessiRuolo]);
 
+  // Una scheda rimasta aperta attraverso un aggiornamento dell'applicazione tiene in memoria un
+  // utente nato col codice di prima, senza id — e senza id le sue disponibilità non si trovano e
+  // non si salvano. Invece di chiedergli di uscire e rientrare, la sessione si ripara da sola:
+  // l'utente si rilegge dal database e riprende il suo posto.
+  useEffect(() => {
+    if (!user || user.id) return;
+    let annullato = false;
+    (async () => {
+      const { data } = await supabase.from('utenti').select('*').eq('username', user.username).maybeSingle();
+      if (annullato) return;
+      if (data) { setUser(u => (u && !u.id ? { ...u, ...datiSessione(data, u.permessi) } : u)); return; }
+      // L'utente non esiste più: meglio la schermata di accesso di una sessione fantasma.
+      sessionStorage.removeItem(CHIAVE_SESSIONE);
+      setUser(null);
+    })();
+    return () => { annullato = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.username]);
+
   // --- RIPRISTINO DELLA SESSIONE DOPO UN AGGIORNAMENTO DELLA PAGINA ---
   useEffect(() => {
     if (!ripristinoInCorso) return;

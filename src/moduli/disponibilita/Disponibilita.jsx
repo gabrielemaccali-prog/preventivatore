@@ -88,12 +88,13 @@ function Disponibilita({ user }) {
     alert(`${contesto}\n\n${dettaglio || 'Errore sconosciuto'}`);
   };
 
-  // Le disponibilità sono agganciate all'id dell'utente. Una sessione aperta prima che l'id
-  // esistesse non ce l'ha, e senza questo controllo si finirebbe a scrivere righe senza padrone:
-  // il database le rifiuta, ma con un messaggio che non dice cosa fare.
+  // Le disponibilità sono agganciate all'id dell'utente. Se manca — una scheda rimasta aperta
+  // attraverso un aggiornamento — non si scrive: la riga finirebbe senza padrone. È una condizione
+  // che si ripara da sola in un istante (App rilegge l'utente), quindi qui basta chiedere di
+  // riprovare invece di mandare qualcuno a cercare il pulsante di uscita.
   const sessioneValida = () => {
     if (user?.id) return true;
-    alert("La tua sessione è stata aperta prima dell'ultimo aggiornamento e non è più valida.\n\nEsci e rientra: le tue disponibilità torneranno visibili.");
+    alert("Sto ricaricando il tuo profilo, riprova fra un istante.\n\nSe l'errore si ripete, ricarica la pagina.");
     return false;
   };
 
