@@ -4,7 +4,7 @@ import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import html2pdf from 'html2pdf.js'
 import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita } from './calcolo'
-import { toMinutes } from '../../lib/utils'
+import { toMinutes, righeResidenza } from '../../lib/utils'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -44,6 +44,20 @@ const cellaVoce = (valorizzata, colore) => ({
 // Misure dei pulsanti che stanno in una riga di tabella, uguali per l'outline e per il blu.
 const btnRiga = { display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: '4px', fontSize: '0.78rem', marginLeft: '6px' };
 const btnSalva = { display: 'inline-flex', alignItems: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' };
+
+// Intestazione societaria del documento di rimborso. Sta qui e non a database perché è un dato
+// solo, che cambia se cambia l'azienda: quando servirà davvero cambiarlo, si cambia questa riga.
+const SOCIETA = {
+  nome: 'BFM S.R.L.',
+  indirizzo: 'Via Molise 9',
+  luogo: 'San Giuliano Milanese 20098 MI',
+  cfPiva: '14418440963',
+  citta: 'Milano', // il luogo in calce, accanto alla data del documento
+};
+
+// La data con cui il periodo risulta consuntivato: quella scelta elaborando il rimborso, o in
+// mancanza il giorno in cui la riga è nata.
+const dataConsuntivoDi = (p) => p.data_consuntivo || (p.creato_il || '').slice(0, 10);
 
 const arrotonda2 = (n) => Math.round((+n || 0) * 100) / 100;
 const euro = (v) => `€${(+v || 0).toFixed(2)}`;
@@ -133,6 +147,7 @@ function Compensi({ user }) {
   const [voci, setVoci] = useState([]);
   const [periodi, setPeriodi] = useState([]);
   const [campi, setCampi] = useState([]);
+  const [anagrafiche, setAnagrafiche] = useState([]);
   const [caricamentoPartite, setCaricamentoPartite] = useState(false);
   const [operatoreEspanso, setOperatoreEspanso] = useState(null);
   const [inCorso, setInCorso] = useState(null); // chiave dell'azione in corso, per disabilitare il pulsante giusto
@@ -151,7 +166,7 @@ function Compensi({ user }) {
   const fetchPartite = async () => {
     setCaricamentoPartite(true);
     // Solo partite confermate: una FORSE non giocata non genera compenso.
-    const [pr, vc, pe, ca] = await Promise.all([
+    const [pr, vc, pe, ca, ut] = await Promise.all([
       supabase.from('prenotazioni')
         .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoId, campoNome, pacchettoNome, locationIndirizzo, locationCitta, locationProvincia, pacchettoNome, operatori')
         .eq('stato', 'CONF').lte('data', oggiIso()).order('data', { ascending: false }),
@@ -160,13 +175,20 @@ function Compensi({ user }) {
       // Serve per l'indirizzo delle giornate sul documento: la prenotazione porta solo il nome
       // breve del campo, l'indirizzo per esteso sta in anagrafica.
       supabase.from('pren_campi').select('id, nome, indirizzo, cap, citta, provincia'),
+      // Residenza e codice fiscale del bubbler, che vanno in testa al documento: si compilano in
+      // Disponibilità > Configuratore. op_periodi.operatore è proprio lo username di utenti.
+      supabase.from('utenti').select('username, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true),
     ]);
     setCaricamentoPartite(false);
     if (pr.error || vc.error || pe.error || ca.error) { console.error(pr.error || vc.error || pe.error || ca.error); return; }
+    // L'anagrafica no: se manca, il modulo deve continuare a funzionare e il documento lo dice
+    // da sé che i dati fiscali non ci sono.
+    if (ut.error) console.error('Compensi — anagrafica bubbler non caricata:', ut.error);
     setPartite((pr.data || []).filter(p => (p.operatori || []).length > 0));
     setVoci(vc.data || []);
     setPeriodi(pe.data || []);
     setCampi(ca.data || []);
+    setAnagrafiche(ut.data || []);
   };
 
   // Anche gli indicatori leggono i periodi, quindi devono far scattare lo scarico: senza,
@@ -214,7 +236,7 @@ function Compensi({ user }) {
   const COLONNE_CONSUNTIVATI = [
     { chiave: 'operatore', label: 'Operatore', valore: (p) => p.operatore || '' },
     { chiave: 'periodo', label: 'Periodo', valore: (p) => p.dal || '' },
-    { chiave: 'consuntivato', label: 'Consuntivato il', valore: (p) => p.creato_il || '' },
+    { chiave: 'consuntivato', label: 'Consuntivato il', valore: (p) => dataConsuntivoDi(p) },
     // Sugli evasi il costo mostrato è il totale congelato sul documento: l'ordinamento segue quello.
     { chiave: 'costo', label: 'Costo', stile: { textAlign: 'right' }, valore: (p) => parseFloat(p.rimborso?.totale ?? p.costo_azienda) || 0 },
     // La ritenuta nasce elaborando il rimborso, quindi la colonna esiste solo fra gli evasi.
@@ -446,6 +468,15 @@ function Compensi({ user }) {
   // nel documento — le giornate e il rimborso trasferta — e si calcolano gli importi.
   const [elaborazione, setElaborazione] = useState(null);
 
+  // I soli campi che finiscono sul documento: quello che si congela è quello che si stampa.
+  const anagraficaDi = (username) => {
+    const u = anagrafiche.find(a => a.username === username) || {};
+    return {
+      indirizzo: u.indirizzo || '', cap: u.cap || '', citta: u.citta || '',
+      provincia: u.provincia || '', codice_fiscale: u.codice_fiscale || '',
+    };
+  };
+
   const apriElaborazione = (p) => {
     // Le giornate si propongono dalle partite del periodo: una riga per data e luogo, come le
     // scriverebbe a mano il manager. Da lì si correggono o si tolgono.
@@ -460,6 +491,13 @@ function Compensi({ user }) {
     setElaborazione({
       periodo: p,
       giornate: (salvate?.length ? salvate : daPartite).map(g => ({ ...g, trasferta: String(g.trasferta ?? '') })),
+      // La data del documento parte da quella con cui il periodo è stato consuntivato e si può
+      // spostare: il documento vale dal giorno in cui il compenso è stato pattuito, non da quello
+      // in cui lo si stampa. Su un documento già emesso si ripresenta quella con cui è uscito.
+      dataDocumento: p.rimborso?.data || dataConsuntivoDi(p) || oggiIso(),
+      // L'anagrafica si congela col documento: se il bubbler cambia casa, la ricevuta di ieri
+      // deve continuare a riportare l'indirizzo di ieri.
+      anagrafica: p.rimborso?.anagrafica || anagraficaDi(p.operatore),
     });
   };
 
@@ -508,9 +546,14 @@ function Compensi({ user }) {
     setInCorso('rimborso');
     const { error } = await supabase.from('op_periodi').update({
       evaso_il: new Date().toISOString(),
+      // La data scritta sul documento è a tutti gli effetti la data di consuntivazione del periodo:
+      // è quella che si vede in elenco e quella che il bubbler ha in mano.
+      data_consuntivo: e.dataDocumento,
       // Il contenuto del documento si congela: serve a ristamparlo identico, non a rifarci i conti.
       rimborso: {
         giornate: e.giornate,
+        data: e.dataDocumento,
+        anagrafica: e.anagrafica,
         // Una riga per trasferta col suo comune, come compaiono sul documento, più il totale.
         trasferte: { righe: i.righeTrasferta, totale: i.trasferte },
         spese: i.elencoSpese.map(v => ({ descrizione: v.descrizione, importo: v.importo, data: v.data })),
@@ -802,7 +845,7 @@ function Compensi({ user }) {
                       {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
                     </td>
                     <td style={{ padding: '8px 10px', color: '#64748b', whiteSpace: 'nowrap' }}>
-                      {dataBreve((p.creato_il || '').slice(0, 10))}
+                      {dataBreve(dataConsuntivoDi(p))}
                     </td>
                     <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>
                       {evasi ? euro(p.rimborso?.totale) : euro(p.costo_azienda)}
@@ -878,9 +921,26 @@ function Compensi({ user }) {
 
   // Il documento di rimborso. È lo stesso nodo che html2pdf cattura, quindi l'anteprima a video
   // e il PDF non possono divergere: quello che si vede è quello che si stampa.
-  const documentoRimborso = (periodo, giornate, i) => (
+  const documentoRimborso = (e, i) => {
+    const periodo = e.periodo;
+    const giornate = e.giornate;
+    const a = e.anagrafica || {};
+    return (
     <div className="documento-preventivo" id="documento-rimborso" style={{ background: '#fff', padding: '34px 40px', maxWidth: '820px', color: '#000', fontSize: '0.9rem', lineHeight: 1.6 }}>
-      <div style={{ marginBottom: '30px', fontWeight: 'bold' }}>{periodo.operatore}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '40px', marginBottom: '34px' }}>
+        <div>
+          <div style={{ fontWeight: 'bold' }}>{periodo.operatore}</div>
+          {righeResidenza(a).map((r, k) => <div key={k}>{r}</div>)}
+          {a.codice_fiscale && <div>{a.codice_fiscale}</div>}
+        </div>
+        <div>
+          <div>SPETTABILE SOCIETÀ</div>
+          <div style={{ fontWeight: 'bold' }}>{SOCIETA.nome}</div>
+          <div>{SOCIETA.indirizzo}</div>
+          <div>{SOCIETA.luogo}</div>
+          <div style={{ marginTop: '14px' }}>C.F./P.I. {SOCIETA.cfPiva}</div>
+        </div>
+      </div>
 
       <div style={{ marginBottom: '26px' }}>
         Per Animazione svolta nei giorni:
@@ -928,9 +988,10 @@ function Compensi({ user }) {
         </tbody>
       </table>
 
-      <div style={{ marginTop: '34px' }}>Milano, {dataBreve(oggiIso())}</div>
+      <div style={{ marginTop: '34px' }}>{SOCIETA.citta}, {dataBreve(e.dataDocumento)}</div>
     </div>
-  );
+    );
+  };
 
   return (
     <>
@@ -1351,6 +1412,32 @@ function Compensi({ user }) {
             </p>
 
           <div>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '18px', paddingBottom: '16px', borderBottom: '1px solid #eee' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>Data del documento</label>
+                <input
+                  type="date" value={elaborazione.dataDocumento}
+                  onChange={(ev) => setElaborazione(s => ({ ...s, dataDocumento: ev.target.value }))}
+                  style={{ ...stileInput, width: '170px' }}
+                />
+              </div>
+              <p style={{ margin: 0, paddingBottom: '9px', fontSize: '0.78rem', color: '#777', flex: '1 1 300px' }}>
+                Va in calce al documento e diventa la data di consuntivazione del periodo.
+              </p>
+            </div>
+
+            {/* Senza residenza e codice fiscale il documento non è consegnabile: meglio dirlo qui,
+                prima di generarlo, che scoprirlo guardando il PDF. */}
+            {righeResidenza(elaborazione.anagrafica).length === 0 || !elaborazione.anagrafica?.codice_fiscale ? (
+              <p style={{ margin: '0 0 16px 0', fontSize: '0.8rem', color: '#c62828' }}>
+                Di {elaborazione.periodo.operatore} manca{' '}
+                {righeResidenza(elaborazione.anagrafica).length === 0 && !elaborazione.anagrafica?.codice_fiscale
+                  ? 'la residenza e il codice fiscale'
+                  : righeResidenza(elaborazione.anagrafica).length === 0 ? 'la residenza' : 'il codice fiscale'}:
+                si compila in Disponibilità &gt; Configuratore, poi riapri questa schermata.
+              </p>
+            ) : null}
+
             <h3 style={{ margin: '0 0 4px 0', fontSize: '1rem' }}>Giornate e trasferte</h3>
             <p style={{ margin: '0 0 12px 0', fontSize: '0.8rem', color: '#777', maxWidth: '70ch' }}>
               Una riga per giornata, con il rimborso trasferta che le compete: si va in un posto diverso ogni
@@ -1409,7 +1496,7 @@ function Compensi({ user }) {
               Anteprima del documento
             </h4>
             <div style={{ border: '1px solid #e0e0e0', borderRadius: '6px', overflow: 'auto', maxHeight: '420px' }}>
-              {documentoRimborso(elaborazione.periodo, elaborazione.giornate, importiElaborazione)}
+              {documentoRimborso(elaborazione, importiElaborazione)}
             </div>
 
             <div style={{ display: 'flex', gap: '8px', marginTop: '18px', paddingTop: '16px', borderTop: '1px solid #eee' }}>

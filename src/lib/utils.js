@@ -119,3 +119,11 @@ export const formattaIndirizzoPulito = (luogo) => {
   prov = prov.replace("Provincia di ", "").replace("Città Metropolitana di ", "");
   return `${via}${civico}${cap}, ${citta}${prov ? ` (${prov})` : ""}`.trim().replace(/^,/, '').trim();
 };
+
+// Residenza di una persona nelle due righe con cui compare in testa a un documento: via e civico,
+// poi CAP, comune e provincia. Vive qui perché la usano sia il configuratore dei bubbler in
+// Disponibilità sia il documento di rimborso in Compensi. Le righe vuote non escono.
+export const righeResidenza = ({ indirizzo, cap, citta, provincia } = {}) => [
+  (indirizzo || '').trim(),
+  [[cap, citta].filter(Boolean).join(', '), provincia ? `(${provincia})` : ''].filter(Boolean).join(' '),
+].filter(Boolean);

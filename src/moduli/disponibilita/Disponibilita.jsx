@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
+import RicercaIndirizzo from '../../components/RicercaIndirizzo'
+import { righeResidenza } from '../../lib/utils'
 
 const MESI = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
 const GIORNI_LABEL = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
@@ -62,7 +64,7 @@ function Disponibilita({ user }) {
   const fetchTutto = async () => {
     const [fasceRes, bubblersRes, campiRes, dCalRes, dConfRes] = await Promise.all([
       supabase.from('disp_fasce').select('*').order('ordine'),
-      supabase.from('utenti').select('username, nome_breve, telefono, email, bubbler').eq('bubbler', true).order('username'),
+      supabase.from('utenti').select('username, nome_breve, telefono, email, bubbler, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true).order('username'),
       supabase.from('pren_campi').select('id, nome, citta, provincia').order('nome'),
       supabase.from('disp_calendario').select('*'),
       supabase.from('disp_conferme').select('*'),
@@ -122,8 +124,12 @@ function Disponibilita({ user }) {
 
   // ====================== CONFIGURATORE: BUBBLER ======================
   const [idBubblerInline, setIdBubblerInline] = useState(null);
-  const [datiBubblerInline, setDatiBubblerInline] = useState({ nome_breve: '', telefono: '', email: '' });
-  const iniziaInlineBubbler = (b) => { setIdBubblerInline(b.username); setDatiBubblerInline({ nome_breve: b.nome_breve || '', telefono: b.telefono || '', email: b.email || '' }); };
+  const BUBBLER_VUOTO = { nome_breve: '', telefono: '', email: '', indirizzo: '', cap: '', citta: '', provincia: '', codice_fiscale: '' };
+  const [datiBubblerInline, setDatiBubblerInline] = useState(BUBBLER_VUOTO);
+  const iniziaInlineBubbler = (b) => {
+    setIdBubblerInline(b.username);
+    setDatiBubblerInline(Object.fromEntries(Object.keys(BUBBLER_VUOTO).map(k => [k, b[k] || ''])));
+  };
   const salvaInlineBubbler = async () => {
     const { error } = await supabase.from('utenti').update(datiBubblerInline).eq('username', idBubblerInline);
     if (error) { return segnalaErrore('Errore salvataggio bubbler', error); }
@@ -419,15 +425,17 @@ function Disponibilita({ user }) {
           </div>
 
           <h2 style={{ marginTop: '30px' }}>Bubbler</h2>
-          <p className="descrizione-pagina">Nome breve, telefono ed email dei bubbler (l'account e il ruolo si gestiscono in Impostazioni &gt; Utenti). Questo elenco è la fonte degli operatori selezionabili in Prenotazioni.</p>
+          <p className="descrizione-pagina">Recapiti e dati fiscali dei bubbler (l&apos;account e il ruolo si gestiscono in Impostazioni &gt; Utenti). Questo elenco è la fonte degli operatori selezionabili in Prenotazioni; residenza e codice fiscale finiscono in testa al documento di rimborso, in Compensi.</p>
           <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible', overflowX: 'auto' }}>
-            <table style={{ width: '100%', minWidth: '650px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+            <table style={{ width: '100%', minWidth: '980px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                   <th style={{ padding: '10px 12px' }}>Username</th>
                   <th style={{ padding: '10px 12px' }}>Nome breve</th>
                   <th style={{ padding: '10px 12px' }}>Telefono</th>
                   <th style={{ padding: '10px 12px' }}>Email</th>
+                  <th style={{ padding: '10px 12px' }}>Residenza</th>
+                  <th style={{ padding: '10px 12px' }}>Codice fiscale</th>
                   <th style={{ padding: '10px 12px', textAlign: 'center', width: '130px' }}>Azioni</th>
                 </tr>
               </thead>
@@ -440,6 +448,21 @@ function Disponibilita({ user }) {
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiBubblerInline.nome_breve} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, nome_breve: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiBubblerInline.telefono} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, telefono: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}><input type="email" className="table-input" value={datiBubblerInline.email} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, email: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
+                        {/* La ricerca compila i quattro campi in un colpo, come per le location; restano
+                            comunque modificabili a mano, perché una residenza può non stare su Nominatim. */}
+                        <td style={{ padding: '10px 12px', minWidth: '280px' }}>
+                          <RicercaIndirizzo
+                            placeholder="Cerca la residenza..."
+                            onSelect={(a) => setDatiBubblerInline(d => ({ ...d, ...a }))}
+                          />
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px', gap: '5px', marginTop: '5px' }}>
+                            <input type="text" className="table-input" placeholder="Via e civico" value={datiBubblerInline.indirizzo} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, indirizzo: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                            <input type="text" className="table-input" placeholder="CAP" value={datiBubblerInline.cap} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, cap: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                            <input type="text" className="table-input" placeholder="Comune" value={datiBubblerInline.citta} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, citta: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                            <input type="text" className="table-input" placeholder="Prov." value={datiBubblerInline.provincia} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, provincia: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                          </div>
+                        </td>
+                        <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiBubblerInline.codice_fiscale} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, codice_fiscale: e.target.value.toUpperCase() })} style={{ width: '100%', height: '30px', textTransform: 'uppercase' }} /></td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                             <button className="btn-accent-inline" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaInlineBubbler}><Icona nome="salva" size={14} style={{ marginRight: '4px' }} />Salva</button>
@@ -453,6 +476,8 @@ function Disponibilita({ user }) {
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.nome_breve || '—'}</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.telefono || '—'}</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.email || '—'}</td>
+                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{righeResidenza(b).join(' — ') || '—'}</td>
+                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.codice_fiscale || '—'}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => iniziaInlineBubbler(b)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
                         </td>
@@ -460,7 +485,7 @@ function Disponibilita({ user }) {
                     )}
                   </tr>
                 ))}
-                {bubblers.length === 0 && <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun utente bubbler. Attiva il flag "Bubbler" in Impostazioni &gt; Utenti.</td></tr>}
+                {bubblers.length === 0 && <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun utente bubbler. Attiva il flag "Bubbler" in Impostazioni &gt; Utenti.</td></tr>}
               </tbody>
             </table>
           </div>
