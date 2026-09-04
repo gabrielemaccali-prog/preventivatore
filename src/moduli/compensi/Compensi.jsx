@@ -209,7 +209,10 @@ function Compensi({ user }) {
     { chiave: 'operatore', label: 'Operatore', valore: (p) => p.operatore || '' },
     { chiave: 'periodo', label: 'Periodo', valore: (p) => p.dal || '' },
     { chiave: 'consuntivato', label: 'Consuntivato il', valore: (p) => p.creato_il || '' },
-    { chiave: 'costo', label: 'Costo', stile: { textAlign: 'right' }, valore: (p) => parseFloat(p.costo_azienda) || 0 },
+    // Sugli evasi il costo mostrato è il totale congelato sul documento: l'ordinamento segue quello.
+    { chiave: 'costo', label: 'Costo', stile: { textAlign: 'right' }, valore: (p) => parseFloat(p.rimborso?.totale ?? p.costo_azienda) || 0 },
+    // La ritenuta nasce elaborando il rimborso, quindi la colonna esiste solo fra gli evasi.
+    { chiave: 'ritenuta', label: 'Ritenuta', soloEvasi: true, stile: { textAlign: 'right' }, valore: (p) => parseFloat(p.rimborso?.ritenuta) || 0 },
   ];
   const { ordina: ordinaConsuntivati, propsTestata: testataConsuntivati, frecciaOrdinamento: frecciaConsuntivati } =
     useOrdinamentoTabella(Object.fromEntries(COLONNE_CONSUNTIVATI.map(c => [c.chiave, c.valore])));
@@ -728,7 +731,7 @@ function Compensi({ user }) {
         <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-              {COLONNE_CONSUNTIVATI.map(c => {
+              {COLONNE_CONSUNTIVATI.filter(c => evasi || !c.soloEvasi).map(c => {
                 const { style: stileOrdinabile, ...propsOrdinabile } = testataConsuntivati(c.chiave);
                 return (
                   <th key={c.chiave} {...propsOrdinabile} style={{ padding: '10px', ...c.stile, ...stileOrdinabile }}>
@@ -761,6 +764,11 @@ function Compensi({ user }) {
                     <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>
                       {evasi ? euro(p.rimborso?.totale) : euro(p.costo_azienda)}
                     </td>
+                    {evasi && (
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>
+                        {euro(p.rimborso?.ritenuta)}
+                      </td>
+                    )}
                     <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {/* Come nelle righe da consuntivare: prima il ritorno indietro in outline,
                           poi in blu l'azione che porta avanti il periodo. */}
@@ -805,7 +813,7 @@ function Compensi({ user }) {
                   </tr>
                   {espansa && (
                     <tr className="riga-espandibile-dettaglio">
-                      <td colSpan={5} onClick={(e) => e.stopPropagation()} style={{ padding: 0 }}>
+                      <td colSpan={evasi ? 6 : 5} onClick={(e) => e.stopPropagation()} style={{ padding: 0 }}>
                         {p.dettaglio
                           ? tabellaDettaglio(p.dettaglio, true)
                           : (
