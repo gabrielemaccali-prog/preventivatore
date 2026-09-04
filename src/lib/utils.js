@@ -123,7 +123,12 @@ export const formattaIndirizzoPulito = (luogo) => {
 // Residenza di una persona nelle due righe con cui compare in testa a un documento: via e civico,
 // poi CAP, comune e provincia. Vive qui perché la usano sia il configuratore dei bubbler in
 // Disponibilità sia il documento di rimborso in Compensi. Le righe vuote non escono.
-export const righeResidenza = ({ indirizzo, cap, citta, provincia } = {}) => [
-  (indirizzo || '').trim(),
-  [[cap, citta].filter(Boolean).join(', '), provincia ? `(${provincia})` : ''].filter(Boolean).join(' '),
-].filter(Boolean);
+// La provincia sparisce quando ripete il comune: "Milano (Milano)" si legge come un errore.
+export const righeResidenza = ({ indirizzo, cap, citta, provincia } = {}) => {
+  const uguali = (a, b) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
+  const prov = provincia && !uguali(provincia, citta) ? `(${provincia})` : '';
+  return [
+    (indirizzo || '').trim(),
+    [[cap, citta].filter(Boolean).join(', '), prov].filter(Boolean).join(' '),
+  ].filter(Boolean);
+};

@@ -491,13 +491,12 @@ function Compensi({ user }) {
     setElaborazione({
       periodo: p,
       giornate: (salvate?.length ? salvate : daPartite).map(g => ({ ...g, trasferta: String(g.trasferta ?? '') })),
-      // La data del documento parte da quella con cui il periodo è stato consuntivato e si può
-      // spostare: il documento vale dal giorno in cui il compenso è stato pattuito, non da quello
-      // in cui lo si stampa. Su un documento già emesso si ripresenta quella con cui è uscito.
-      dataDocumento: p.rimborso?.data || dataConsuntivoDi(p) || oggiIso(),
-      // L'anagrafica si congela col documento: se il bubbler cambia casa, la ricevuta di ieri
-      // deve continuare a riportare l'indirizzo di ieri.
-      anagrafica: p.rimborso?.anagrafica || anagraficaDi(p.operatore),
+      // Data e anagrafica si congelano solo quando il documento è stato emesso: una ristampa deve
+      // restare identica all'originale anche se nel frattempo il bubbler ha cambiato casa. Finché
+      // il rimborso è da elaborare si rilegge invece sempre l'anagrafica di adesso, altrimenti un
+      // periodo riaperto si porterebbe dietro i dati di quando non erano ancora stati compilati.
+      dataDocumento: (p.evaso_il && p.rimborso?.data) || dataConsuntivoDi(p) || oggiIso(),
+      anagrafica: (p.evaso_il && p.rimborso?.anagrafica) || anagraficaDi(p.operatore),
     });
   };
 
