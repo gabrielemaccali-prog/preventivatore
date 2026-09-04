@@ -544,8 +544,6 @@ function Compensi({ user }) {
             // Voci registrate sulla giornata e non su una partita: non se ne creano più, ma se ne
             // esistono vanno mostrate — nei totali continuano a contare.
             const vociGiornata = g.voci.filter(v => !v.riferimento);
-            const totaleGiornata = g.compenso + g.aggiunte + g.spese;
-            const piuRighe = righePartite.length + vociGiornata.length > 1;
 
             return (
               <Fragment key={g.data}>
@@ -565,6 +563,13 @@ function Compensi({ user }) {
                     <tr key={x.partita.id}>
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
                         {righePartite[0] === x && <strong>{dataBreve(g.data)}</strong>}
+                        {/* Il tetto giornaliero taglia il compenso della giornata, non di una partita:
+                            va detto qui, sotto la data, perché le cifre in riga sono già quelle ridotte. */}
+                        {righePartite[0] === x && g.tettoApplicato && (
+                          <><br /><span style={{ fontSize: '0.72rem', color: '#c62828' }}>
+                            ridotto dal tetto ({euro(g.primaDelTetto)} → {euro(g.compenso)})
+                          </span></>
+                        )}
                       </td>
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
                         {intervalloPartita(x.partita)}
@@ -681,22 +686,6 @@ function Compensi({ user }) {
                   </tr>
                 )}
 
-                {/* Totale di giornata: solo quando c'è più di una riga, altrimenti ripete quella sopra. */}
-                {piuRighe && (
-                  <tr style={{ background: '#fafafa' }}>
-                    <td></td>
-                    <td colSpan="5" style={{ padding: '5px 10px', color: '#888', fontSize: '0.76rem' }}>
-                      totale {dataBreve(g.data)}
-                      {g.tettoApplicato && (
-                        <span style={{ color: '#c62828' }}> · ridotto dal tetto ({euro(g.primaDelTetto)} → {euro(g.compenso)})</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '5px 10px', textAlign: 'right', color: '#888' }}>{ore(g.ore)}</td>
-                    <td style={{ padding: '5px 10px', textAlign: 'right', color: '#888' }}>{euro(g.compenso)}</td>
-                    <td colSpan="3"></td>
-                    <td style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(totaleGiornata)}</td>
-                  </tr>
-                )}
               </Fragment>
             );
           })}
