@@ -86,7 +86,9 @@ export const SCHEDE_REGISTRY = {
 // Per gli altri ruoli si legge user.permessi (jsonb caricato al login dalla tabella "ruoli").
 export function puoVedere(user, moduloId, schedaId, sottoschedaId) {
   if (!user) return false;
-  if (user.ruolo === 'admin') return true;
+  // Chi sia l'amministratore lo dice il flag ruoli.is_admin, non il nome del ruolo: confrontare
+  // la stringa 'admin' faceva del nome una chiave, e bastava rinominarlo per chiudere fuori tutti.
+  if (user.isAdmin) return true;
 
   const permessiModulo = user.permessi?.[moduloId];
   if (!permessiModulo) return false;

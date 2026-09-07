@@ -331,14 +331,21 @@ function Preventivatore({ user }) {
     gonf.forEach(g => {
       const costoBase = parseFloat(g.costoNoleggio) || 0;
       const costoKm = parseFloat(g.costoLogistica) || 0;
-      const sedeSalvata = sedi.find(s => s.nome === g.sedePartenza);
+      // Sede e istanza si ritrovano per id. Il nome resta solo come ripiego per i preventivi
+      // salvati prima che l'id ci fosse — ed è un ripiego che sbaglia appena una sede viene
+      // rinominata: è così che 68 righe si erano ritrovate senza sede, e senza il flag di
+      // proprietà che azzera il costo di noleggio.
+      const sedeSalvata = (g.sedeId && sedi.find(s => s.id === g.sedeId))
+        || sedi.find(s => s.nome === g.sedePartenza);
       soluzioni[g.nome] = {
         // L'istanza va ripresa dalla sede salvata: è quella di cui il PDF riporta la scheda tecnica
-        prodotto: gonfiabili.find(x => x.nome === g.nome && x.locationId === sedeSalvata?.id)
+        prodotto: (g.gonfiabileId && gonfiabili.find(x => x.id === g.gonfiabileId))
+          || gonfiabili.find(x => x.nome === g.nome && x.locationId === sedeSalvata?.id)
           || gonfiabili.find(x => x.nome === g.nome)
           || { prezzo: 0 },
         // Il flag "di proprietà" va riletto dall'anagrafica sedi: nel preventivo si salva solo il nome
-        partenza: { nome: g.sedePartenza || "—", bfm: !!sedeSalvata?.bfm },
+        // L'id va riportato dentro, altrimenti il primo risalvataggio lo perderebbe.
+        partenza: { id: sedeSalvata?.id || g.sedeId || null, nome: g.sedePartenza || "—", bfm: !!sedeSalvata?.bfm },
         kmAndata: parseFloat(g.kmCalcolati) || 0,
         costoKmTotale: costoKm,
         costoBaseMoltiplicato: costoBase,
@@ -375,11 +382,13 @@ function Preventivatore({ user }) {
       const go = p.giocoOfferta;
       // I preventivi salvati prima dell'introduzione del flag non hanno la sede nello snapshot:
       // in quel caso si risale alla sede dall'anagrafica del gonfiabile.
-      const sedeGO = sedi.find(s => s.nome === go.sedePartenza)
+      const sedeGO = (go.sedeId && sedi.find(s => s.id === go.sedeId))
+        || sedi.find(s => s.nome === go.sedePartenza)
         || sedi.find(s => s.id === gonfiabili.find(g => g.nome === go.nome)?.locationId);
       soluzioneGO = {
-        prodotto: gonfiabili.find(g => g.nome === go.nome) || { prezzo: 0 },
-        partenza: { nome: sedeGO?.nome || go.sedePartenza || "—", bfm: !!sedeGO?.bfm },
+        prodotto: (go.gonfiabileId && gonfiabili.find(g => g.id === go.gonfiabileId))
+          || gonfiabili.find(g => g.nome === go.nome) || { prezzo: 0 },
+        partenza: { id: sedeGO?.id || go.sedeId || null, nome: sedeGO?.nome || go.sedePartenza || "—", bfm: !!sedeGO?.bfm },
         kmAndata: go.kmAndata || 0,
         costoKmTotale: go.costoLogistica || 0,
         costoBaseMoltiplicato: go.costoBase || 0,
@@ -814,7 +823,12 @@ function Preventivatore({ user }) {
       return {
         nome,
         quantita: quantitaGonfiabili[nome] || 1,
+        // Il nome della sede resta: è quello che il preventivo dice al cliente, e va letto come
+        // era il giorno dell'emissione. Accanto si salvano gli id, che sono ciò con cui il
+        // preventivo riaperto ritrova l'anagrafica.
         sedePartenza: sol?.partenza?.nome || "",
+        sedeId: sol?.partenza?.id || null,
+        gonfiabileId: sol?.prodotto?.id || null,
         // Il costo concordato è pattuito col fornitore: si salva com'è, anche da sede di proprietà.
         // Sedi di proprietà quotate dal sistema: il noleggio non è un costo, resta a zero.
         costoNoleggio: sol?.concordata ? (sol.costoBaseMoltiplicato || 0) : (isPartenzaBFM(sol?.partenza) ? 0 : (sol?.costoBaseMoltiplicato || 0)),
@@ -855,6 +869,8 @@ function Preventivatore({ user }) {
       giocoOffertaSnap = {
         nome: giocoOffertaSelezionato,
         sedePartenza: soluzioneGiocoOfferta.partenza?.nome || "",
+        sedeId: soluzioneGiocoOfferta.partenza?.id || null,
+        gonfiabileId: soluzioneGiocoOfferta.prodotto?.id || null,
         // Sedi di proprietà: il noleggio non è un costo, resta a zero
         costoBase: isPartenzaBFM(soluzioneGiocoOfferta.partenza) ? 0 : (soluzioneGiocoOfferta.costoBaseMoltiplicato || 0),
         costoLogistica: soluzioneGiocoOfferta.costoKmTotale || 0,
@@ -1827,7 +1843,7 @@ function Preventivatore({ user }) {
                     <button type="button" className="btn-icon-action" title="Riporta a Registrato" onClick={() => cambiaStatoPreventivo(codice, "Registrato")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => onApri(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
-                  {user.ruolo === "admin" && (
+                  {user.isAdmin && (
                     <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => eliminaPreventivo(codice)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                 </div>

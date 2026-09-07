@@ -616,7 +616,7 @@ function Prenotazioni({ user }) {
   // è l'incasso a rendere certa la partita. L'amministratore può però confermarla lo stesso
   // (cortesie, pagamenti concordati fuori dal sistema): gli viene chiesta conferma esplicita.
   const senzaIncasso = (p) => !p.statoPagamento || p.statoPagamento === 'in attesa';
-  const puoConfermareSenzaIncasso = user.ruolo === 'admin';
+  const puoConfermareSenzaIncasso = user.isAdmin;
 
   const cambiaStatoPren = async (p, nuovoStato) => {
     if (nuovoStato === 'CONF' && senzaIncasso(p)) {
@@ -737,7 +737,7 @@ function Prenotazioni({ user }) {
                   {!p.googleCalendarSync && (
                     <button type="button" className="btn-icon-action" title="Aggiungi a Google Calendar" onClick={() => apriGoogleCalendar(p)}><Icona nome="calendario" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {user.ruolo === "admin" && (
+                  {user.isAdmin && (
                     <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => eliminaPrenotazione(p.id)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                 </div>
@@ -2249,7 +2249,7 @@ function Prenotazioni({ user }) {
                     {prenSelezionata.stato === 'FORSE' && <button className="btn-conferma" disabled={senzaIncasso(prenSelezionata) && !puoConfermareSenzaIncasso} title={senzaIncasso(prenSelezionata) ? (puoConfermareSenzaIncasso ? "Conferma senza incasso (da amministratore)" : "Serve almeno un acconto per confermare") : "Conferma (prepara mail al cliente)"} style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'CONF'); setPrenSelezionata(null); }}>✔️</button>}
                     {prenSelezionata.stato === 'CONF' && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'FORSE'); setPrenSelezionata(null); }}>↩️</button>}
                     <button className="btn-modifica-inline" title={prenSelezionata.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '8px 12px' }} onClick={() => apriGoogleCalendar(prenSelezionata)}>📅</button>
-                    {user.ruolo === 'admin' && <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { eliminaPrenotazione(prenSelezionata.id); setPrenSelezionata(null); }}>🗑️</button>}
+                    {user.isAdmin && <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { eliminaPrenotazione(prenSelezionata.id); setPrenSelezionata(null); }}>🗑️</button>}
                   </div>
                 </div>
               </div>

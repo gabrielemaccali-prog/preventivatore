@@ -23,15 +23,18 @@ const primoModuloVisibile = (u) => MODULI_REGISTRY.find(m => moduloVisibile(u, m
 // Quello che dell'utente serve in giro per l'applicazione: l'id con cui i suoi dati sono
 // agganciati, come si chiama e cosa può fare. L'username non è più una chiave, resta solo
 // come vecchia credenziale di accesso.
-const datiSessione = (u, permessi) => ({
+const datiSessione = (u, ruolo) => ({
   id: u.id,
   username: u.username,
   email: u.email || '',
   nome: u.nome || '',
   cognome: u.cognome || '',
   nomeCompleto: [u.nome, u.cognome].filter(Boolean).join(' ') || u.username,
-  ruolo: u.ruolo,
-  permessi,
+  // Il ruolo si porta dietro il suo id, che è il riferimento vero. Il nome resta per mostrarlo.
+  ruoloId: u.ruolo_id,
+  ruolo: ruolo.nome || u.ruolo,
+  isAdmin: ruolo.isAdmin,
+  permessi: ruolo.permessi,
   bubbler: !!u.bubbler,
 });
 
@@ -77,16 +80,33 @@ function App() {
     setModuliConfig(mappa);
   }, []);
 
-  const fetchPermessiRuolo = useCallback(async (ruolo) => {
-    const { data } = await supabase.from('ruoli').select('*').eq('nome', ruolo).maybeSingle();
-    return data?.permessi || {};
+  // Il ruolo si cerca per id, non per nome. Il nome di un ruolo è un'etichetta che ha senso poter
+  // cambiare — "adminlow" un giorno diventerà "responsabile" — e finché era lui la chiave,
+  // rinominarlo lasciava i suoi utenti senza permessi: dentro l'applicazione, ma senza più niente
+  // da vedere e senza nessun errore che lo dicesse. Per lo stesso motivo l'amministratore si
+  // riconosce dal flag is_admin e non dal confronto con la stringa 'admin'.
+  //
+  // La ricerca per nome resta come ripiego per il caso in cui sql/ruolo_id.sql non sia ancora
+  // stato eseguito: senza, questo codice messo in produzione per primo chiuderebbe fuori tutti,
+  // amministratore compreso, e non ci sarebbe più modo di rientrare per rimediare.
+  const fetchRuolo = useCallback(async (ruoloId, nomeRuolo) => {
+    const query = supabase.from('ruoli').select('*');
+    const { data } = await (ruoloId != null && ruoloId !== ''
+      ? query.eq('id', ruoloId)
+      : query.eq('nome', nomeRuolo)).maybeSingle();
+    return {
+      permessi: data?.permessi || {},
+      // is_admin non esiste finché la migrazione non è passata: lì vale ancora il nome.
+      isAdmin: data ? (data.is_admin ?? data.nome === 'admin') : false,
+      nome: data?.nome || '',
+    };
   }, []);
 
   const refreshPermessiUtenteCorrente = useCallback(async () => {
     if (!user) return;
-    const permessi = await fetchPermessiRuolo(user.ruolo);
-    setUser(u => u ? { ...u, permessi } : u);
-  }, [user, fetchPermessiRuolo]);
+    const ruolo = await fetchRuolo(user.ruoloId, user.ruolo);
+    setUser(u => u ? { ...u, permessi: ruolo.permessi, isAdmin: ruolo.isAdmin, ruolo: ruolo.nome || u.ruolo } : u);
+  }, [user, fetchRuolo]);
 
   // Una scheda rimasta aperta attraverso un aggiornamento dell'applicazione tiene in memoria un
   // utente nato col codice di prima, senza id — e senza id le sue disponibilità non si trovano e
@@ -98,7 +118,8 @@ function App() {
     (async () => {
       const { data } = await supabase.from('utenti').select('*').eq('username', user.username).maybeSingle();
       if (annullato) return;
-      if (data) { setUser(u => (u && !u.id ? { ...u, ...datiSessione(data, u.permessi) } : u)); return; }
+      // I permessi già in sessione restano quelli: qui si sta riparando l'identità, non il ruolo.
+      if (data) { setUser(u => (u && !u.id ? { ...u, ...datiSessione(data, { permessi: u.permessi, isAdmin: u.isAdmin, nome: u.ruolo }) } : u)); return; }
       // L'utente non esiste più: meglio la schermata di accesso di una sessione fantasma.
       sessionStorage.removeItem(CHIAVE_SESSIONE);
       setUser(null);
@@ -121,11 +142,11 @@ function App() {
         const { data } = await (id ? query.eq('id', id) : query.eq('username', username)).maybeSingle();
         if (annullato) return;
         if (data) {
-          const permessi = await fetchPermessiRuolo(data.ruolo);
+          const ruolo = await fetchRuolo(data.ruolo_id, data.ruolo);
           if (annullato) return;
-          const ripristinato = datiSessione(data, permessi);
+          const ripristinato = datiSessione(data, ruolo);
           const moduloAncoraVisibile = modulo === 'impostazioni'
-            ? data.ruolo === 'admin'
+            ? ripristinato.isAdmin
             : moduloVisibile(ripristinato, modulo);
           setUser(ripristinato);
           setCurrentModule(moduloAncoraVisibile ? modulo : primoModuloVisibile(ripristinato));
@@ -139,7 +160,7 @@ function App() {
       if (!annullato) setRipristinoInCorso(false);
     })();
     return () => { annullato = true; };
-  }, [ripristinoInCorso, fetchPermessiRuolo, fetchModuliConfig]);
+  }, [ripristinoInCorso, fetchRuolo, fetchModuliConfig]);
 
   // Tiene allineata la sessione salvata: bastano l'id e il modulo a video per riaprire la
   // pagina dov'era, senza conservare nulla di riservato.
@@ -164,8 +185,7 @@ function App() {
       }
 
       if (data) {
-        const permessi = await fetchPermessiRuolo(data.ruolo);
-        const nuovoUser = datiSessione(data, permessi);
+        const nuovoUser = datiSessione(data, await fetchRuolo(data.ruolo_id, data.ruolo));
         setUser(nuovoUser);
         setCurrentModule(primoModuloVisibile(nuovoUser));
         fetchModuliConfig();
@@ -179,8 +199,7 @@ function App() {
   };
 
   const handleQuickLogin = async (u) => {
-    const permessi = await fetchPermessiRuolo(u.ruolo);
-    const nuovoUser = datiSessione(u, permessi);
+    const nuovoUser = datiSessione(u, await fetchRuolo(u.ruolo_id, u.ruolo));
     setUser(nuovoUser);
     setCurrentModule(primoModuloVisibile(nuovoUser));
     fetchModuliConfig();
@@ -233,7 +252,7 @@ function App() {
   }
 
   const moduliVisibili = MODULI_REGISTRY.filter(m => moduloVisibile(user, m.id));
-  const isAdmin = user.ruolo === "admin";
+  const isAdmin = user.isAdmin;
   const IMPOSTAZIONI_VOCE = { id: 'impostazioni', label: 'Impostazioni', icon: 'impostazioni' };
   const moduloCorrente = currentModule === 'impostazioni'
     ? IMPOSTAZIONI_VOCE

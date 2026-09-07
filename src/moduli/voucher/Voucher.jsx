@@ -466,7 +466,7 @@ function Voucher({ user }) {
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => caricaVoucherInForm(v)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
-                  {user.ruolo === "admin" && (
+                  {user.isAdmin && (
                     <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => eliminaVoucher(v.codice)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                 </div>

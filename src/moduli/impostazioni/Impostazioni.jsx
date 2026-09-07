@@ -10,7 +10,7 @@ const permessiVuoti = () => {
 };
 
 const RUOLO_VUOTO = { nome: "", permessi: permessiVuoti() };
-const UTENTE_VUOTO = { username: "", email: "", password: "", ruolo: "", bubbler: false };
+const UTENTE_VUOTO = { username: "", email: "", password: "", ruolo_id: "", bubbler: false };
 
 function MatricePermessi({ permessi, onToggleScheda, onToggleSottoscheda }) {
   return (
@@ -90,13 +90,20 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
   // ====================== UTENTI ======================
   // Un account ha bisogno di un'email — è con quella che si entra — di una password e di un ruolo.
   // Nome e cognome della persona si compilano in Disponibilità, insieme al resto dell'anagrafica.
-  const utenteIncompleto = (u) => !u.email || !u.password || !u.ruolo;
+  const utenteIncompleto = (u) => !u.email || !u.password || !u.ruolo_id;
+
+  // Il ruolo si scrive per id. Finché la colonna testuale "ruolo" esiste le si tiene dietro il
+  // nome corrispondente: così una versione dell'app rimasta aperta in un'altra scheda continua a
+  // leggere quello che si aspetta, invece di trovare la colonna ferma a un ruolo vecchio.
+  const ruoloDaId = (id) => ruoli.find(r => String(r.id) === String(id));
+  const campiRuolo = (ruoloId) => ({ ruolo_id: ruoloId, ruolo: ruoloDaId(ruoloId)?.nome || null });
 
   const addUtente = async (e) => {
     e.preventDefault();
     if (utenteIncompleto(nuovoUtente)) return alert("Compila email, password e ruolo");
+    const { ruolo_id, ...resto } = nuovoUtente;
     const { error } = await supabase.from('utenti')
-      .insert([{ ...nuovoUtente, username: nuovoUtente.username || nuovoUtente.email }]);
+      .insert([{ ...resto, username: nuovoUtente.username || nuovoUtente.email, ...campiRuolo(ruolo_id) }]);
     if (!error) { setNuovoUtente(UTENTE_VUOTO); setShowFormUtente(false); fetchUtenti(); }
     else { console.error(error); alert("Errore salvataggio utente: email già usata da un altro account?"); }
   };
@@ -106,7 +113,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
     const { error } = await supabase.from('utenti').update({
       email: datiUtenteInModifica.email,
       password: datiUtenteInModifica.password,
-      ruolo: datiUtenteInModifica.ruolo,
+      ...campiRuolo(datiUtenteInModifica.ruolo_id),
       bubbler: datiUtenteInModifica.bubbler
     }).eq('id', idUtenteInModifica);
     if (!error) { setIdUtenteInModifica(null); fetchUtenti(); }
@@ -171,8 +178,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
   };
 
   const rimuoviRuolo = async (r) => {
-    if (r.nome === 'admin') return alert("Il ruolo \"admin\" non può essere eliminato.");
-    const { count } = await supabase.from('utenti').select('id', { count: 'exact', head: true }).eq('ruolo', r.nome);
+    if (r.is_admin ?? r.nome === 'admin') return alert("Il ruolo amministratore non può essere eliminato.");
+    const { count } = await supabase.from('utenti').select('id', { count: 'exact', head: true }).eq('ruolo_id', r.id);
     if (count > 0) return alert(`Non puoi eliminare questo ruolo: è assegnato a ${count} utente/i.`);
     if (!window.confirm(`Eliminare il ruolo ${r.nome}?`)) return;
     await supabase.from('ruoli').delete().eq('id', r.id);
@@ -213,9 +220,9 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                 <form onSubmit={addUtente} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <input type="email" placeholder="Email" value={nuovoUtente.email} onChange={(e) => setNuovoUtente({ ...nuovoUtente, email: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
                   <input type="text" placeholder="Password" value={nuovoUtente.password} onChange={(e) => setNuovoUtente({ ...nuovoUtente, password: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                  <select value={nuovoUtente.ruolo} onChange={(e) => setNuovoUtente({ ...nuovoUtente, ruolo: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                  <select value={nuovoUtente.ruolo_id} onChange={(e) => setNuovoUtente({ ...nuovoUtente, ruolo_id: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}>
                     <option value="">Seleziona ruolo...</option>
-                    {ruoli.map(r => <option key={r.id} value={r.nome}>{r.nome}</option>)}
+                    {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
                   </select>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
                     <input type="checkbox" checked={!!nuovoUtente.bubbler} onChange={(e) => setNuovoUtente({ ...nuovoUtente, bubbler: e.target.checked })} /> Bubbler
@@ -245,8 +252,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                         <td style={{ padding: '10px 12px' }}><input type="email" className="table-input" value={datiUtenteInModifica.email} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, email: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiUtenteInModifica.password} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, password: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}>
-                          <select className="table-input" value={datiUtenteInModifica.ruolo} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, ruolo: e.target.value })} style={{ width: '100%', height: '30px' }}>
-                            {ruoli.map(r => <option key={r.id} value={r.nome}>{r.nome}</option>)}
+                          <select className="table-input" value={datiUtenteInModifica.ruolo_id} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, ruolo_id: e.target.value })} style={{ width: '100%', height: '30px' }}>
+                            {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
                           </select>
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
@@ -266,13 +273,13 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                           <div style={{ fontSize: '0.78rem', color: '#888' }}>{u.email || 'nessuna email: entra ancora con l\'username'}</div>
                         </td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#888' }}>••••••••</td>
-                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{u.ruolo}</td>
+                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{ruoloDaId(u.ruolo_id)?.nome || u.ruolo || "—"}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <input type="checkbox" checked={!!u.bubbler} onChange={() => toggleBubbler(u)} />
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                            <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, email: u.email || "", password: u.password, ruolo: u.ruolo, bubbler: !!u.bubbler }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                            <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, email: u.email || "", password: u.password, ruolo_id: u.ruolo_id ?? "", bubbler: !!u.bubbler }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
                             <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviUtente(u)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                           </div>
                         </td>
