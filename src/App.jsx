@@ -17,6 +17,10 @@ import Icona from './components/Icona';
 // È in sessionStorage e non in localStorage: vale per la scheda del browser e si chiude con essa.
 const CHIAVE_SESSIONE = 'bfm_sessione';
 
+// Lunghezza minima della password che l'utente si sceglie da sé. Non è una politica di sicurezza,
+// è il minimo perché il cambio abbia senso: una password di due caratteri non protegge da niente.
+const LUNGHEZZA_MINIMA_PASSWORD = 6;
+
 // Primo modulo visibile per un utente (evita di atterrare su un modulo senza permessi)
 const primoModuloVisibile = (u) => MODULI_REGISTRY.find(m => moduloVisibile(u, m.id))?.id || "preventivatore";
 
@@ -43,6 +47,13 @@ function App() {
   const [user, setUser] = useState(null);
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
+  // Utente riconosciuto ma non ancora dentro: l'amministratore gli ha chiesto di cambiare la
+  // password, e finché non lo fa la sessione non nasce. Tenerlo fuori da `user` significa che
+  // nessun modulo lo vede e che un F5 lo riporta all'accesso, senza stati a metà da governare.
+  const [utenteDaAggiornare, setUtenteDaAggiornare] = useState(null);
+  const [nuovaPassword, setNuovaPassword] = useState("");
+  const [confermaPassword, setConfermaPassword] = useState("");
+  const [salvataggioPassword, setSalvataggioPassword] = useState(false);
   // Al primo montaggio si tenta il ripristino: finché è in corso non si mostra nulla, altrimenti
   // a ogni F5 comparirebbe un lampo della schermata di accesso.
   const [ripristinoInCorso, setRipristinoInCorso] = useState(() => !!sessionStorage.getItem(CHIAVE_SESSIONE));
@@ -58,7 +69,7 @@ function App() {
   const [utentiDev, setUtentiDev] = useState([]);
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    supabase.from('utenti').select('id, username, email, nome, cognome, ruolo, bubbler').order('username').then(({ data }) => { if (data) setUtentiDev(data); });
+    supabase.from('utenti').select('*').order('username').then(({ data }) => { if (data) setUtentiDev(data); });
   }, []);
 
   // Evita che la rotella del mouse modifichi per sbaglio un campo numerico (prezzi, costi, sconti):
@@ -141,7 +152,12 @@ function App() {
         const query = supabase.from('utenti').select('*');
         const { data } = await (id ? query.eq('id', id) : query.eq('username', username)).maybeSingle();
         if (annullato) return;
-        if (data) {
+        if (data?.cambio_password) {
+          // Il cambio password chiesto mentre la scheda era aperta vale dal ricaricamento
+          // successivo: la sessione si chiude e si riparte dalla scelta della password.
+          sessionStorage.removeItem(CHIAVE_SESSIONE);
+          setUtenteDaAggiornare(data);
+        } else if (data) {
           const ruolo = await fetchRuolo(data.ruolo_id, data.ruolo);
           if (annullato) return;
           const ripristinato = datiSessione(data, ruolo);
@@ -168,6 +184,16 @@ function App() {
     if (user) sessionStorage.setItem(CHIAVE_SESSIONE, JSON.stringify({ id: user.id, modulo: currentModule }));
   }, [user, currentModule]);
 
+  // Porta dentro l'utente riconosciuto: ruolo, modulo di atterraggio e configurazione moduli.
+  // Ci passano tutte le strade d'ingresso — accesso normale, accesso rapido e cambio password —
+  // così non possono divergere.
+  const entra = async (u) => {
+    const nuovoUser = datiSessione(u, await fetchRuolo(u.ruolo_id, u.ruolo));
+    setUser(nuovoUser);
+    setCurrentModule(primoModuloVisibile(nuovoUser));
+    fetchModuliConfig();
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
@@ -184,11 +210,13 @@ function App() {
           .eq('username', credenziale).eq('password', loginPass).maybeSingle());
       }
 
-      if (data) {
-        const nuovoUser = datiSessione(data, await fetchRuolo(data.ruolo_id, data.ruolo));
-        setUser(nuovoUser);
-        setCurrentModule(primoModuloVisibile(nuovoUser));
-        fetchModuliConfig();
+      if (data?.cambio_password) {
+        // Le credenziali sono giuste, ma la password è ancora quella scritta dall'amministratore:
+        // prima di entrare l'utente se ne sceglie una sua.
+        setLoginPass("");
+        setUtenteDaAggiornare(data);
+      } else if (data) {
+        await entra(data);
       } else {
         alert("Credenziali errate o utente non trovato!");
       }
@@ -198,11 +226,42 @@ function App() {
     }
   };
 
+  // L'accesso rapido salta la password, non il cambio password: serve anche a provarlo.
   const handleQuickLogin = async (u) => {
-    const nuovoUser = datiSessione(u, await fetchRuolo(u.ruolo_id, u.ruolo));
-    setUser(nuovoUser);
-    setCurrentModule(primoModuloVisibile(nuovoUser));
-    fetchModuliConfig();
+    if (u.cambio_password) return setUtenteDaAggiornare(u);
+    await entra(u);
+  };
+
+  const annullaCambioPassword = () => {
+    setUtenteDaAggiornare(null);
+    setNuovaPassword("");
+    setConfermaPassword("");
+    setLoginPass("");
+  };
+
+  // La password nuova la sceglie l'utente e la conosce solo lui: appena è salvata la richiesta
+  // dell'amministratore si spegne da sola, e l'accesso prosegue senza doverlo rifare.
+  const salvaNuovaPassword = async (e) => {
+    e.preventDefault();
+    const nuova = nuovaPassword.trim();
+    if (nuova.length < LUNGHEZZA_MINIMA_PASSWORD) return alert(`La nuova password deve avere almeno ${LUNGHEZZA_MINIMA_PASSWORD} caratteri.`);
+    if (nuova !== confermaPassword.trim()) return alert("Le due password non coincidono.");
+    if (nuova === utenteDaAggiornare.password) return alert("La nuova password deve essere diversa da quella che ti è stata assegnata.");
+
+    setSalvataggioPassword(true);
+    const { error } = await supabase.from('utenti')
+      .update({ password: nuova, cambio_password: false })
+      .eq('id', utenteDaAggiornare.id);
+    setSalvataggioPassword(false);
+    if (error) {
+      console.error(error);
+      return alert("Non è stato possibile salvare la nuova password. Riprova.");
+    }
+
+    const aggiornato = { ...utenteDaAggiornare, password: nuova, cambio_password: false };
+    annullaCambioPassword();
+    setLoginUser("");
+    await entra(aggiornato);
   };
 
   const handleLogout = () => {
@@ -221,6 +280,35 @@ function App() {
 
   // Ripristino in corso: schermata vuota per un istante, invece del lampo della pagina di accesso
   if (ripristinoInCorso) return null;
+
+  // Credenziali riconosciute, ma con il cambio password ancora da fare: si passa di qui e basta,
+  // non c'è modo di saltare il passaggio perché la sessione non è ancora nata.
+  if (utenteDaAggiornare) {
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <img src="/logo.png" alt="Logo Azienda" style={{ maxWidth: '140px', display: 'block', margin: '0 auto 15px auto' }} />
+          <h2>Scegli la tua password</h2>
+          <p style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 18px 0', lineHeight: 1.45 }}>
+            Ciao <strong>{[utenteDaAggiornare.nome, utenteDaAggiornare.cognome].filter(Boolean).join(' ') || utenteDaAggiornare.username}</strong>,
+            la password con cui sei entrato te l&apos;ha assegnata un amministratore. Scegline una tua per continuare:
+            almeno {LUNGHEZZA_MINIMA_PASSWORD} caratteri.
+          </p>
+          <form onSubmit={salvaNuovaPassword}>
+            <input type="password" placeholder="Nuova password" autoFocus value={nuovaPassword} onChange={(e) => setNuovaPassword(e.target.value)} />
+            <input type="password" placeholder="Ripeti la nuova password" value={confermaPassword} onChange={(e) => setConfermaPassword(e.target.value)} />
+            <button type="submit" disabled={salvataggioPassword}>{salvataggioPassword ? 'Salvataggio…' : 'Salva ed entra'}</button>
+          </form>
+          <button
+            type="button" onClick={annullaCambioPassword}
+            style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', color: '#64748b', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem' }}
+          >
+            Torna all&apos;accesso
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return (

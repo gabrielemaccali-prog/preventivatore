@@ -64,7 +64,9 @@ function Disponibilita({ user }) {
   const fetchTutto = async () => {
     const [fasceRes, bubblersRes, campiRes, dCalRes, dConfRes] = await Promise.all([
       supabase.from('disp_fasce').select('*').order('ordine'),
-      supabase.from('utenti').select('id, username, nome, cognome, nome_breve, telefono, email, bubbler, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true).order('username'),
+      // In ordine di cognome, che è quello che l'elenco mostra: ordinare per username voleva dire
+      // ordinare per una colonna che a schermo non compare più.
+      supabase.from('utenti').select('id, username, nome, cognome, nome_breve, telefono, email, bubbler, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true).order('cognome'),
       supabase.from('pren_campi').select('id, nome, citta, provincia').order('nome'),
       supabase.from('disp_calendario').select('*'),
       supabase.from('disp_conferme').select('*'),
@@ -138,7 +140,11 @@ function Disponibilita({ user }) {
 
   // ====================== CONFIGURATORE: BUBBLER ======================
   const [idBubblerInline, setIdBubblerInline] = useState(null);
-  const BUBBLER_VUOTO = { nome: '', cognome: '', nome_breve: '', telefono: '', email: '', indirizzo: '', cap: '', citta: '', provincia: '', codice_fiscale: '' };
+  // Nome, cognome ed email non sono in elenco: si scrivono in Impostazioni > Utenti, perché sono
+  // l'identità dell'utente — e l'email è pure la credenziale con cui entra — non dati del bubbler.
+  // Qui si leggono e basta: `salvaInlineBubbler` manda a database solo queste chiavi, quindi non
+  // può sovrascriverli, e l'email non rischia di scontrarsi da qui col vincolo di unicità.
+  const BUBBLER_VUOTO = { nome_breve: '', telefono: '', indirizzo: '', cap: '', citta: '', provincia: '', codice_fiscale: '' };
   const [datiBubblerInline, setDatiBubblerInline] = useState(BUBBLER_VUOTO);
   const iniziaInlineBubbler = (b) => {
     setIdBubblerInline(b.id);
@@ -447,7 +453,7 @@ function Disponibilita({ user }) {
           </div>
 
           <h2 style={{ marginTop: '30px' }}>Bubbler</h2>
-          <p className="descrizione-pagina">Recapiti e dati fiscali dei bubbler (l&apos;account e il ruolo si gestiscono in Impostazioni &gt; Utenti). Questo elenco è la fonte degli operatori selezionabili in Prenotazioni; residenza e codice fiscale finiscono in testa al documento di rimborso, in Compensi.</p>
+          <p className="descrizione-pagina">Telefono, residenza e dati fiscali dei bubbler (nome, cognome, email e ruolo si gestiscono in Impostazioni &gt; Utenti). Questo elenco è la fonte degli operatori selezionabili in Prenotazioni; residenza e codice fiscale finiscono in testa al documento di rimborso, in Compensi.</p>
           <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible', overflowX: 'auto' }}>
             <table style={{ width: '100%', minWidth: '980px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead>
@@ -466,15 +472,15 @@ function Disponibilita({ user }) {
                   <tr key={b.id} style={{ borderBottom: '1px solid #eee' }}>
                     {idBubblerInline === b.id ? (
                       <>
-                        <td style={{ padding: '10px 12px', minWidth: '190px' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
-                            <input type="text" className="table-input" placeholder="Nome" value={datiBubblerInline.nome} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, nome: e.target.value })} style={{ width: '100%', height: '30px' }} />
-                            <input type="text" className="table-input" placeholder="Cognome" value={datiBubblerInline.cognome} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, cognome: e.target.value })} style={{ width: '100%', height: '30px' }} />
-                          </div>
+                        {/* Il nome resta a vista anche in modifica, così si sa su chi si sta lavorando:
+                            si cambia in Impostazioni > Utenti, non da qui. */}
+                        <td style={{ padding: '10px 12px', minWidth: '190px', verticalAlign: 'middle' }}>
+                          <strong>{[b.nome, b.cognome].filter(Boolean).join(' ') || b.username}</strong>
+                          <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>nome, cognome ed email si modificano in Impostazioni &gt; Utenti</div>
                         </td>
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiBubblerInline.nome_breve} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, nome_breve: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiBubblerInline.telefono} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, telefono: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
-                        <td style={{ padding: '10px 12px' }}><input type="email" className="table-input" value={datiBubblerInline.email} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, email: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
+                        <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#64748b' }} title="L'email è la credenziale di accesso: si modifica in Impostazioni > Utenti">{b.email || '—'}</td>
                         {/* La ricerca compila i quattro campi in un colpo, come per le location; restano
                             comunque modificabili a mano, perché una residenza può non stare su Nominatim. */}
                         <td style={{ padding: '10px 12px', minWidth: '280px' }}>
