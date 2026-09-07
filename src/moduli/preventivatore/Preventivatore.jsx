@@ -436,12 +436,7 @@ function Preventivatore({ user }) {
     return codice;
   };
 
-  const modificaPreventivo = (p) => {
-    caricaPreventivo(p);
-    setCurrentView("sales");
-  };
-
-  // Apre un preventivo esistente nel form overlay (dalle righe di Gestione)
+  // Apre un preventivo esistente nel form overlay (dalle righe di Gestione e dello Storico)
   const apriPreventivoOverlay = (p) => {
     caricaPreventivo(p);
     setShowFormPreventivo(true);
@@ -2371,7 +2366,10 @@ function Preventivatore({ user }) {
             </div>
           </div>
 
-          {tabellaPreventivi(preventiviFiltrati, "Nessun preventivo trovato con i filtri attuali.", modificaPreventivo)}
+          {/* Stessa apertura di Gestione: l'overlay. Prima si passava alla scheda "Vendita", che
+              da quando SCHEDE_LEGACY_VISIBILI è false non viene più renderizzata — la vista
+              cambiava e non compariva niente, una schermata vuota senza nessun errore. */}
+          {tabellaPreventivi(preventiviFiltrati, "Nessun preventivo trovato con i filtri attuali.", apriPreventivoOverlay)}
         </div>
       )}
 
