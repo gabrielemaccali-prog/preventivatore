@@ -405,7 +405,11 @@ function Preventivatore({ user }) {
       soluzioneGO = {
         prodotto: (go.gonfiabileId && gonfiabili.find(g => g.id === go.gonfiabileId))
           || gonfiabili.find(g => g.nome === go.nome) || { prezzo: 0 },
-        partenza: { id: sedeGO?.id || go.sedeId || null, nome: sedeGO?.nome || go.sedePartenza || "—", bfm: !!sedeGO?.bfm },
+        // Il nome è quello salvato, come nelle righe dei gonfiabili qui sopra: è ciò che il
+        // preventivo diceva al cliente il giorno in cui è stato emesso, e ristampandolo deve
+        // dire ancora quello. Il nome di adesso serve solo ai preventivi vecchi, salvati prima
+        // che la sede del gioco in offerta finisse nello snapshot.
+        partenza: { id: sedeGO?.id || go.sedeId || null, nome: go.sedePartenza || sedeGO?.nome || "—", bfm: !!sedeGO?.bfm },
         kmAndata: go.kmAndata || 0,
         costoKmTotale: go.costoLogistica || 0,
         costoBaseMoltiplicato: go.costoBase || 0,
