@@ -1,4 +1,31 @@
-import { MOLTIPLICATORE_TARGET } from './costanti.js';
+import { MOLTIPLICATORE_TARGET, SIGLE_PROVINCE } from './costanti.js';
+
+// Confronto "morbido" fra nomi di provincia: senza accenti, spazi, trattini e apostrofi, così
+// "Forlì-Cesena", "forli cesena" e "FORLI-CESENA" finiscono tutti sulla stessa chiave.
+const chiaveProvincia = (v) => (v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+const SIGLE_PER_CHIAVE = Object.fromEntries(Object.entries(SIGLE_PROVINCE).map(([nome, sigla]) => [chiaveProvincia(nome), sigla]));
+
+const SIGLE_VALIDE = new Set(Object.values(SIGLE_PROVINCE));
+
+// Provincia in sigla, come la vogliono fattura elettronica e gestionale: "Pavia" -> "PV".
+// Quello che non si riconosce (province estere, refusi) torna indietro in maiuscolo così com'è,
+// senza essere buttato via: meglio un dato strano visibile che un campo svuotato di nascosto.
+// Una provincia va bene se è una delle 107 sigle italiane, oppure "EE" (clienti esteri). Il campo
+// vuoto è ammesso: la provincia non serve per salvare una prenotazione, solo per completarla.
+export const provinciaValida = (valore) => {
+  const sigla = siglaProvincia(valore);
+  return sigla === '' || sigla === 'EE' || SIGLE_VALIDE.has(sigla);
+};
+
+export const siglaProvincia = (valore) => {
+  const testo = (valore || '').trim();
+  if (!testo) return '';
+  // "Provincia di Pavia" e "Città Metropolitana di Milano" arrivano così da alcune fonti.
+  const chiave = chiaveProvincia(testo).replace(/^(provinciadi|cittametropolitanadi|liberoconsorziocomunaledi)/, '');
+  if (SIGLE_PER_CHIAVE[chiave]) return SIGLE_PER_CHIAVE[chiave];
+  if (/^[a-z]{2}$/.test(chiave)) return chiave.toUpperCase();
+  return testo.toUpperCase();
+};
 
 // Formatta una data in formato italiano (gg/mm/aaaa)
 export const formattaDataIT = (dataStr) => {
@@ -77,21 +104,37 @@ export const validaCF = (cfRaw) => {
 export const campiFatturazioneMancanti = (p) => (p.fattTipo === 'azienda'
   ? [[p.ragioneSociale, 'Ragione sociale'], [p.aziIndirizzo, 'Indirizzo'], [p.aziCap, 'CAP'], [p.aziCitta, 'Città'],
      [p.aziProvincia, 'Provincia'], [p.pIva, 'P. IVA']]
-  : [[p.fattNome, 'Nome'], [p.fattCognome, 'Cognome'], [p.fattIndirizzo, 'Indirizzo'], [p.fattCap, 'CAP'],
-     [p.fattCitta, 'Città'], [p.fattProvincia, 'Provincia'],
-     [validaCF(p.fattCF), p.fattCF ? 'Codice Fiscale (non valido)' : 'Codice Fiscale']]
+  : p.fattStraniero
+    // Cliente straniero: CAP e provincia non si chiedono (valgono sempre 00000 e EE, scritti al
+    // salvataggio) e il codice fiscale italiano non si applica; serve invece lo stato di appartenenza.
+    ? [[p.fattNome, 'Nome'], [p.fattCognome, 'Cognome'], [p.fattIndirizzo, 'Indirizzo'], [p.fattCitta, 'Città'],
+       [p.fattStato, 'Stato']]
+    : [[p.fattNome, 'Nome'], [p.fattCognome, 'Cognome'], [p.fattIndirizzo, 'Indirizzo'], [p.fattCap, 'CAP'],
+       [p.fattCitta, 'Città'], [p.fattProvincia, 'Provincia'],
+       [validaCF(p.fattCF), p.fattCF ? 'Codice Fiscale (non valido)' : 'Codice Fiscale']]
 ).filter(([valore]) => !valore).map(([, etichetta]) => etichetta);
 
-// Verifica se i dati di fatturazione sono completi (privato con CF valido, oppure azienda con P.IVA): in entrambi i casi
-// serve l'indirizzo per intero, CAP e provincia compresi.
+// Verifica se i dati di fatturazione sono completi: privato italiano con CF valido, privato straniero con
+// lo stato di appartenenza, azienda con P.IVA. Serve sempre anche l'indirizzo per intero (CAP e provincia
+// compresi, tranne per lo straniero, a cui l'app li impone).
 export const fatturazioneCompletaDi = (p) => campiFatturazioneMancanti(p).length === 0;
+
+// Giorni coperti da una prenotazione, in ordine. Possono essere più di uno e non consecutivi
+// (es. un evento il sabato e il sabato dopo): "data" resta il primo giorno, "giorni" li elenca tutti
+// ed è nulla sulle prenotazioni di un giorno solo.
+export const giorniEventoDi = (p) => (Array.isArray(p.giorni) && p.giorni.length > 0
+  ? p.giorni
+  : [p.data].filter(Boolean));
+
+// Ultimo giorno dell'evento: è quello che dice se la prenotazione è ormai passata.
+export const fineEventoDi = (p) => giorniEventoDi(p).slice(-1)[0] || p.data;
 
 // Prenotazione conclusa: confermata, evento ormai passato, saldata e con i dati di fatturazione a posto.
 // Non è uno stato salvato: si ricava ogni volta dai dati della prenotazione e dalla data odierna
 // (passata da fuori, così la funzione resta pura e testabile). Vive qui perché la usano sia il modulo
 // prenotazioni sia costi/ricavi: una definizione sola, altrimenti le due schede si contraddicono.
 export const prenotazioneCompletata = (p, oggiIso) =>
-  p.stato === 'CONF' && p.data < oggiIso && p.statoPagamento === 'saldato' && fatturazioneCompletaDi(p);
+  p.stato === 'CONF' && fineEventoDi(p) < oggiIso && p.statoPagamento === 'saldato' && fatturazioneCompletaDi(p);
 
 // Scompone un risultato Nominatim nei singoli campi indirizzo
 export const parseIndirizzo = (luogo) => {

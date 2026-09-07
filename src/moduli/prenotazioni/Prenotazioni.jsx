@@ -1,8 +1,9 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
-import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata, toMinutes, oreDaOrari } from '../../lib/utils'
+import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida } from '../../lib/utils'
 import { puoVedere } from '../../lib/permessi'
+import { STATI_ESTERI, STATO_ITALIA } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
@@ -19,19 +20,23 @@ const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta:
 const fracIva = (v) => (v != null && v !== '' ? parseFloat(v) : 22) / 100;
 
 const PREN_VUOTA = {
-  data: "", pacchettoId: "", oraInizio: "", oraFine: "",
+  data: "", altriGiorni: [], piuGiorni: false, senzaOrario: false, pacchettoId: "", oraInizio: "", oraFine: "",
   nominativo: "", email: "", telefono: "",
   campoId: "", campoPrenotato: false, locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
-  operatoriIds: [], sconto: "0", prezzoManuale: "",
+  operatoriIds: [], senzaOperatori: false, sconto: "0", prezzoManuale: "",
   tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "",
   preventivoCollegato: "", ereditaCosti: false, costoEreditato: "",
   fattTipo: "privato",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
+  fattStraniero: false, fattStato: "",
   ragioneSociale: "", aziIndirizzo: "", aziCap: "", aziCitta: "", aziProvincia: "", pIva: "", cfAzienda: "", sdi: "",
   stato: "FORSE"
 };
 
 const ivaLabel = (incl) => incl ? 'IVA inclusa' : 'IVA esclusa';
+
+// Campo mostrato ma non modificabile: il valore lo impone una regola (CAP e provincia degli stranieri).
+const STILE_CAMPO_IMPOSTO = { backgroundColor: '#f1f5f9', color: '#64748b' };
 
 // Minuti dalla mezzanotte (anche oltre le 24h, es. un turno che sconfina nel giorno dopo) -> "HH:MM"
 const minutiAHHMM = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(Math.round(min % 60)).padStart(2, '0')}`;
@@ -127,9 +132,18 @@ const dettagliGoogleCalendar = (p) => {
 // operatoriAnagrafica serve a risolvere l'email corrente degli operatori assegnati (nello snapshot della prenotazione c'è solo id/nome).
 // campiAnagrafica serve a risolvere l'indirizzo corrente del campo (nello snapshot della prenotazione c'è solo id/nome).
 const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica) => {
+  // Google riceve un evento solo: se i giorni sono consecutivi lo si estende fino all'ultimo,
+  // altrimenti (giorni sparsi) copre il primo giorno e gli altri vanno aggiunti a mano.
+  // Senza orario serve un evento "tutto il giorno": due date senza ora, con la fine esclusa.
+  const giorni = giorniEventoDi(p);
+  const consecutivi = giorni.every((g, i) => i === 0 || toISODate(addGiorni(dataOraLocale(giorni[i - 1]), 1)) === g);
+  const ultimoGiorno = consecutivi ? giorni[giorni.length - 1] : p.data;
   const inizio = dataOraLocale(p.data, p.oraInizio);
   const durataOre = p.oraFine ? oreDaOrari(p.oraInizio, p.oraFine) : (parseFloat(p.durataOre) || 1);
-  const fine = new Date(inizio.getTime() + Math.max(durataOre, 0.25) * 3600000);
+  const fine = p.oraFine && ultimoGiorno !== p.data
+    ? dataOraLocale(ultimoGiorno, p.oraFine)
+    : new Date(dataOraLocale(ultimoGiorno, p.oraInizio).getTime() + Math.max(durataOre, 0.25) * 3600000);
+  const soloDate = `${toISODate(dataOraLocale(p.data)).replace(/-/g, '')}/${toISODate(addGiorni(dataOraLocale(ultimoGiorno), 1)).replace(/-/g, '')}`;
   // Sui campi registrati il luogo è l'indirizzo del campo (il nome del campo è già nel titolo dell'evento)
   const campoInfo = p.campoId ? (campiAnagrafica || []).find(c => c.id === p.campoId) : null;
   const indirizzoCampo = campoInfo ? [campoInfo.indirizzo, campoInfo.citta].filter(Boolean).join(', ') : '';
@@ -141,7 +155,7 @@ const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica) => {
   const params = new URLSearchParams({
     action: 'TEMPLATE',
     text: titolo,
-    dates: `${dataOraGoogle(inizio)}/${dataOraGoogle(fine)}`,
+    dates: p.senzaOrario ? soloDate : `${dataOraGoogle(inizio)}/${dataOraGoogle(fine)}`,
     details: dettagliGoogleCalendar(p),
     location: luogo,
     src: GOOGLE_CALENDAR_ID,
@@ -186,11 +200,11 @@ const statoPagamentoDi = (pagamenti, prezzoVendita, valoreVoucher = 0) => {
 // "Pagato / Totale" ordina sul totale, cioè sul valore della prenotazione.
 const COLONNE_PREN = [
   { chiave: 'createdAt', label: 'Inserito il', valore: (p) => p.createdAt || '' },
-  { chiave: 'data', label: 'Data evento', valore: (p) => `${p.data || ''}T${p.oraInizio || ''}` },
+  { chiave: 'data', label: 'Data evento', valore: (p) => `${p.data || ''}T${p.oraInizio || ''}` }, // eventi senza orario: prima degli altri dello stesso giorno
   { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
   { chiave: 'pacchetto', label: 'Pacchetto', valore: (p) => p.pacchettoNome || '' },
   { chiave: 'location', label: 'Location', valore: (p) => p.campoNome || p.locationCitta || '' },
-  { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') },
+  { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') || (p.senzaOperatori ? 'non richiesti' : '') },
   { chiave: 'importo', label: 'Pagato / Totale', valore: (p) => parseFloat(p.prezzoVendita) || 0 },
 ];
 const VALORI_ORDINAMENTO_PREN = Object.fromEntries(COLONNE_PREN.map(c => [c.chiave, c.valore]));
@@ -238,12 +252,12 @@ const CampoFormFields = ({ formCampo, setFormCampo }) => (
       <Campo label="Nome campo"><input type="text" value={formCampo.nome} onChange={(e) => setFormCampo({ ...formCampo, nome: e.target.value })} style={inputStyle} /></Campo>
       <Campo label="Nome completo campo"><input type="text" value={formCampo.nomeCompleto} onChange={(e) => setFormCampo({ ...formCampo, nomeCompleto: e.target.value })} style={inputStyle} placeholder="Es. Padel Arena Quintosole" /></Campo>
     </div>
-    <Campo label="Cerca indirizzo"><RicercaIndirizzo onSelect={(a) => setFormCampo(prev => ({ ...prev, indirizzo: a.indirizzo, cap: a.cap, citta: a.citta, provincia: a.provincia }))} /></Campo>
+    <Campo label="Cerca indirizzo"><RicercaIndirizzo onSelect={(a) => setFormCampo(prev => ({ ...prev, indirizzo: a.indirizzo, cap: a.cap, citta: a.citta, provincia: siglaProvincia(a.provincia) }))} /></Campo>
     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 0.8fr', gap: '8px' }}>
       <Campo label="Indirizzo"><input type="text" value={formCampo.indirizzo} onChange={(e) => setFormCampo({ ...formCampo, indirizzo: e.target.value })} style={inputStyle} /></Campo>
       <Campo label="CAP"><input type="text" value={formCampo.cap} onChange={(e) => setFormCampo({ ...formCampo, cap: e.target.value })} style={inputStyle} /></Campo>
       <Campo label="Città"><input type="text" value={formCampo.citta} onChange={(e) => setFormCampo({ ...formCampo, citta: e.target.value })} style={inputStyle} /></Campo>
-      <Campo label="Prov"><input type="text" value={formCampo.provincia} onChange={(e) => setFormCampo({ ...formCampo, provincia: e.target.value })} style={inputStyle} /></Campo>
+      <Campo label="Prov"><input type="text" value={formCampo.provincia} onChange={(e) => setFormCampo({ ...formCampo, provincia: e.target.value })} onBlur={() => setFormCampo(prev => ({ ...prev, provincia: siglaProvincia(prev.provincia) }))} style={inputStyle} /></Campo>
     </div>
     <Campo label="Centro di costo"><input type="text" value={formCampo.centroCosto} onChange={(e) => setFormCampo({ ...formCampo, centroCosto: e.target.value })} style={inputStyle} /></Campo>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
@@ -270,7 +284,7 @@ function Prenotazioni({ user }) {
   const [currentView, setCurrentView] = useState(primaSchedaPren); // config | gestione | calendario
   const primaSottoschedaConfigPren = ['pacchetti', 'campi'].find(s => puoVedere(user, 'prenotazioni', 'config', s)) || 'pacchetti';
   const [configTab, setConfigTab] = useState(primaSottoschedaConfigPren);  // pacchetti | campi
-  const [gestioneTab, setGestioneTab] = useState("inAttesaPagamento"); // inAttesaPagamento | daConfermare | partiteAttive | daCompletare
+  const [gestioneTab, setGestioneTab] = useState("inAttesaPagamento"); // inAttesaPagamento | daConfermare | partiteAttive | daCompletare | daSaldare
   const [showFormGestione, setShowFormGestione] = useState(false); // form Nuova/Modifica prenotazione come overlay, richiamato da Gestione
   const [mostraErroriValidazione, setMostraErroriValidazione] = useState(false); // evidenzia di rosso i campi obbligatori mancanti, solo dopo un tentativo di salvataggio
 
@@ -293,7 +307,7 @@ function Prenotazioni({ user }) {
   const gruppiCampiPerProvincia = (() => {
     const gruppi = {};
     campi.forEach(c => {
-      const prov = c.provincia || 'Senza provincia';
+      const prov = siglaProvincia(c.provincia) || 'Senza provincia';
       if (!gruppi[prov]) gruppi[prov] = [];
       gruppi[prov].push(c);
     });
@@ -323,7 +337,9 @@ function Prenotazioni({ user }) {
   const [codicePrenInModifica, setCodicePrenInModifica] = useState(null);
   const [salvataggioPren, setSalvataggioPren] = useState(false);
   const [nuovoPagamento, setNuovoPagamento] = useState({ importo: "", data: "", nominativo: "" });
+  const [nuovoGiornoPren, setNuovoGiornoPren] = useState(""); // data in corso di aggiunta all'elenco dei giorni dell'evento
   const [filtroPrenData, setFiltroPrenData] = useState("");
+  const [filtroPrenSettimana, setFiltroPrenSettimana] = useState(""); // lunedì (ISO) della settimana mostrata, "" = nessun filtro
   const [filtroPrenStato, setFiltroPrenStato] = useState("");
   const [filtroPrenNome, setFiltroPrenNome] = useState("");
   const [calView, setCalView] = useState("mese");
@@ -458,18 +474,20 @@ function Prenotazioni({ user }) {
     const prezzoManuale = hasPrezzo ? "" : (scontoN < 100 ? String(Math.round((nettoVend / (1 - scontoN / 100)) * 100) / 100) : String(nettoVend));
     setCodicePrenInModifica(p.id);
     const caricato = {
-      data: p.data || "", pacchettoId: p.pacchettoId || "",
+      data: p.data || "", altriGiorni: giorniEventoDi(p).filter(g => g !== p.data),
+      piuGiorni: giorniEventoDi(p).length > 1, senzaOrario: !!p.senzaOrario, pacchettoId: p.pacchettoId || "",
       oraInizio: p.oraInizio || "", oraFine: p.oraFine || "",
       nominativo: p.nominativo || "", email: p.email || "", telefono: p.telefono || "",
       campoId: p.campoId || "", campoPrenotato: !!p.campoPrenotato,
       locationIndirizzo: p.locationIndirizzo || "", locationCap: p.locationCap || "", locationCitta: p.locationCitta || "", locationProvincia: p.locationProvincia || "",
-      operatoriIds: (p.operatori || []).map(o => o.id),
+      operatoriIds: (p.operatori || []).map(o => o.id), senzaOperatori: !!p.senzaOperatori,
       sconto: String(p.sconto ?? "0"), prezzoManuale,
       tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
       pagamenti: p.pagamenti || [], voucherCodice: p.voucherCodice || "",
       preventivoCollegato: p.preventivoCollegato || "", ereditaCosti: !!p.ereditaCosti, costoEreditato: p.costoEreditato ?? "",
       fattTipo: p.fattTipo || "privato",
       fattNome: p.fattNome || "", fattCognome: p.fattCognome || "", fattIndirizzo: p.fattIndirizzo || "", fattCap: p.fattCap || "", fattCitta: p.fattCitta || "", fattProvincia: p.fattProvincia || "", fattCF: p.fattCF || "",
+      fattStraniero: !!p.fattStraniero, fattStato: p.fattStato || "",
       ragioneSociale: p.ragioneSociale || "", aziIndirizzo: p.aziIndirizzo || "", aziCap: p.aziCap || "", aziCitta: p.aziCitta || "", aziProvincia: p.aziProvincia || "", pIva: p.pIva || "", cfAzienda: p.cfAzienda || "", sdi: p.sdi || "",
       stato: p.stato || "FORSE"
     };
@@ -594,9 +612,16 @@ function Prenotazioni({ user }) {
     return { testo, html };
   };
 
+  // Su una prenotazione senza nemmeno un acconto la conferma resta preclusa, perché di norma
+  // è l'incasso a rendere certa la partita. L'amministratore può però confermarla lo stesso
+  // (cortesie, pagamenti concordati fuori dal sistema): gli viene chiesta conferma esplicita.
+  const senzaIncasso = (p) => !p.statoPagamento || p.statoPagamento === 'in attesa';
+  const puoConfermareSenzaIncasso = user.ruolo === 'admin';
+
   const cambiaStatoPren = async (p, nuovoStato) => {
-    if (nuovoStato === 'CONF' && (!p.statoPagamento || p.statoPagamento === 'in attesa')) {
-      return alert("Non è possibile confermare: serve almeno un acconto o il saldo.");
+    if (nuovoStato === 'CONF' && senzaIncasso(p)) {
+      if (!puoConfermareSenzaIncasso) return alert("Non è possibile confermare: serve almeno un acconto o il saldo.");
+      if (!window.confirm("Su questa prenotazione non risulta alcun incasso. Confermarla comunque?")) return;
     }
     await supabase.from('prenotazioni').update({ stato: nuovoStato }).eq('id', p.id);
     fetchTutto();
@@ -658,7 +683,13 @@ function Prenotazioni({ user }) {
             {formattaDataGGMMAA(p.createdAt) || '—'}
           </td>
           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
-            {formattaDataGGMMAA(p.data)}{p.oraInizio ? ` ${p.oraInizio}` : ''}{p.oraFine ? `–${p.oraFine}` : ''}
+            {formattaDataGGMMAA(p.data)}
+            {giorniEventoDi(p).length > 1 && (
+              <span style={{ color: '#0288d1', fontSize: '0.78rem' }} title={`Giorni dell'evento: ${giorniEventoDi(p).map(formattaDataGGMMAA).join(', ')}`}> +{giorniEventoDi(p).length - 1}g</span>
+            )}
+            {p.senzaOrario
+              ? <span style={{ color: '#64748b' }}> tutto il giorno</span>
+              : <>{p.oraInizio ? ` ${p.oraInizio}` : ''}{p.oraFine ? `–${p.oraFine}` : ''}</>}
           </td>
           <td style={{ padding: '8px 10px' }}>
             <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar (clic per correggere a mano)' : 'Non sincronizzato con Google Calendar (clic per correggere a mano)'} style={{ cursor: 'pointer', color: p.googleCalendarSync ? '#16a34a' : '#dc2626', fontWeight: 'bold' }} onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(p); }}>{p.googleCalendarSync ? '✓' : '⚠'}</span> <strong>{p.nominativo}</strong>
@@ -671,7 +702,9 @@ function Prenotazioni({ user }) {
             {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'Campo prenotato' : 'Campo da prenotare'} style={{ marginLeft: '6px', verticalAlign: 'middle' }} />}
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#0288d1' }}>
-            {p.operatori && p.operatori.length > 0 ? p.operatori.map(o => o.nome).join(', ') : <span style={{ color: '#94a3b8' }}>—</span>}
+            {p.operatori && p.operatori.length > 0
+              ? p.operatori.map(o => o.nome).join(', ')
+              : <span style={{ color: '#94a3b8' }} title={p.senzaOperatori ? 'Dichiarata senza operatori' : 'Operatori non ancora assegnati'}>{p.senzaOperatori ? 'non richiesti' : '—'}</span>}
           </td>
           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
             <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
@@ -694,8 +727,8 @@ function Prenotazioni({ user }) {
                   {p.note && <div><span style={{ color: '#94a3b8' }}>Note </span><em>{p.note}</em></div>}
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                  {p.stato === "FORSE" && p.statoPagamento && p.statoPagamento !== 'in attesa' && (
-                    <button type="button" className="btn-icon-action success" title="Conferma (prepara mail al cliente)" onClick={() => cambiaStatoPren(p, "CONF")}><Icona nome="salva" size={16} style={{ marginRight: 0 }} /></button>
+                  {p.stato === "FORSE" && (!senzaIncasso(p) || puoConfermareSenzaIncasso) && (
+                    <button type="button" className="btn-icon-action success" title={senzaIncasso(p) ? "Conferma senza incasso (da amministratore)" : "Conferma (prepara mail al cliente)"} onClick={() => cambiaStatoPren(p, "CONF")}><Icona nome="salva" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   {p.stato === "CONF" && (
                     <button type="button" className="btn-icon-action" title="Riporta a FORSE" onClick={() => cambiaStatoPren(p, "FORSE")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
@@ -760,11 +793,77 @@ function Prenotazioni({ user }) {
     XLSX.writeFile(wb, "Storico_Prenotazioni.xlsx");
   };
 
+  // Intervallo lunedì-domenica della settimana mostrata, calcolato una volta sola e non a ogni riga.
+  const settimanaFiltrata = filtroPrenSettimana
+    ? { da: filtroPrenSettimana, a: toISODate(addGiorni(dataOraLocale(filtroPrenSettimana), 6)) }
+    : null;
+
+  // Frecce di scorrimento: dalla settimana mostrata, o da quella di oggi se il filtro è spento.
+  const spostaSettimana = (delta) => {
+    const partenza = filtroPrenSettimana ? dataOraLocale(filtroPrenSettimana) : new Date();
+    setFiltroPrenSettimana(toISODate(addGiorni(inizioSettimana(partenza), delta * 7)));
+  };
+
+  // Export "lista clienti" nel formato del gestionale di fatturazione: intestazioni identiche a
+  // quelle del file di riferimento, nello stesso ordine. Le colonne che lì risultano sempre vuote
+  // (Codice interno, Note, PEC, IBAN, FAX...) non vengono esportate, e nemmeno Referente; quelle sempre uguali restano
+  // costanti. A differenza dello storico qui la riga è il cliente, non la prenotazione.
+  const COSTANTI_CLIENTE = { 'Termini di pagamento': '0 giorni', 'Sconto predefinito': 0, "Lettera d'intento abilitata": 'No' };
+
+  const clienteDaPrenotazione = (p) => {
+    const azienda = p.fattTipo === 'azienda';
+    const mai = (v) => (v || '').trim().toUpperCase(); // il gestionale tiene l'anagrafica in maiuscolo
+    return {
+      'Denominazione': azienda
+        ? (mai(p.ragioneSociale) || mai(p.nominativo))
+        : (mai([p.fattCognome, p.fattNome].filter(Boolean).join(' ')) || mai(p.nominativo)),
+      'Indirizzo': mai(azienda ? p.aziIndirizzo : p.fattIndirizzo),
+      'Comune': mai(azienda ? p.aziCitta : p.fattCitta),
+      'CAP': (azienda ? p.aziCap : p.fattCap) || '',
+      'Provincia': siglaProvincia(azienda ? p.aziProvincia : p.fattProvincia),
+      'Paese': azienda ? STATO_ITALIA : (p.fattStato || STATO_ITALIA),
+      'Indirizzo e-mail': (p.email || '').trim(),
+      'Telefono': (p.telefono || '').trim(),
+      'P.IVA/TAX ID': azienda ? (p.pIva || '') : '',
+      'Codice Fiscale': mai(azienda ? p.cfAzienda : p.fattCF),
+      // Sui privati la colonna resta vuota anche se sulla prenotazione l'SDI è salvato come
+      // "0000000": importando i sette zeri il gestionale li riduce a uno solo, mentre col campo
+      // vuoto assegna da sé il codice giusto.
+      'Codice SDI': azienda ? (p.sdi || '') : '',
+      ...COSTANTI_CLIENTE,
+    };
+  };
+
+  const esportaClientiPren = () => {
+    if (prenotazioniFiltrate.length === 0) return alert("Nessuna prenotazione da esportare.");
+    // Chi ha prenotato più volte esce una riga sola: si tiene la versione più completa
+    // dell'anagrafica (a parità, la prenotazione più recente), così l'export non perde dati.
+    const compilati = (riga) => Object.values(riga).filter(v => v !== '' && v != null).length;
+    const perCliente = new Map();
+    [...prenotazioniFiltrate]
+      .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
+      .forEach(p => {
+        const riga = clienteDaPrenotazione(p);
+        const chiave = (riga['P.IVA/TAX ID'] || riga['Codice Fiscale'] || riga['Denominazione'] || '').toUpperCase();
+        if (!chiave) return; // prenotazione senza nemmeno un nominativo: non è un cliente
+        const gia = perCliente.get(chiave);
+        if (!gia || compilati(riga) > compilati(gia)) perCliente.set(chiave, riga);
+      });
+    const righe = [...perCliente.values()].sort((a, b) => a['Denominazione'].localeCompare(b['Denominazione'], 'it'));
+    const ws = XLSX.utils.json_to_sheet(righe);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Export");
+    XLSX.writeFile(wb, `Clienti_${toISODate(new Date())}.xlsx`);
+  };
+
   const prenotazioniFiltrate = prenotazioni.filter(p => {
-    const mData = !filtroPrenData || p.data === filtroPrenData;
+    // Valgono tutti i giorni dell'evento, non solo il primo.
+    const giorniEvento = giorniEventoDi(p);
+    const mData = !filtroPrenData || giorniEvento.includes(filtroPrenData);
+    const mSettimana = !settimanaFiltrata || giorniEvento.some(g => g >= settimanaFiltrata.da && g <= settimanaFiltrata.a);
     const mStato = !filtroPrenStato || p.stato === filtroPrenStato;
     const mNome = (p.nominativo || "").toLowerCase().includes(filtroPrenNome.toLowerCase());
-    return mData && mStato && mNome;
+    return mData && mSettimana && mStato && mNome;
   });
 
   const selezionaPacchettoPren = (id) => {
@@ -777,6 +876,17 @@ function Prenotazioni({ user }) {
       oraFine: (p && p.durataOre != null && p.durataOre !== "") ? "" : prev.oraFine,
       tipoRinfresco: p?.prevedeRinfresco ? prev.tipoRinfresco : ""
     }));
+  };
+
+  // I giorni in più si aggiungono uno alla volta: possono essere sparsi (es. due sabati di fila),
+  // quindi non basta un intervallo da-a. Il primo giorno resta quello del campo "Data".
+  const aggiungiGiornoPren = () => {
+    const giorno = nuovoGiornoPren;
+    if (!giorno) return;
+    setFormPren(prev => (giorno === prev.data || prev.altriGiorni.includes(giorno))
+      ? prev
+      : { ...prev, altriGiorni: [...prev.altriGiorni, giorno].sort() });
+    setNuovoGiornoPren("");
   };
 
   const toggleOperatorePren = (id) => {
@@ -835,19 +945,32 @@ function Prenotazioni({ user }) {
     const durataFissa = pac && pac.durataOre != null && pac.durataOre !== "";
     // Gli orari si possono digitare anche senza minuti ("16"): qui vengono normalizzati a "HH:MM"
     // prima dei calcoli e del salvataggio, così tutte le prenotazioni hanno lo stesso formato.
-    const oraInizio = normalizzaOra24(f.oraInizio);
-    const oraFine = durataFissa ? "" : normalizzaOra24(f.oraFine);
+    // Prenotazione "senza orario": copre l'intera giornata, quindi non ha orari da normalizzare.
+    // Giorni dell'evento: la data del form più gli altri giorni scelti, in ordine e senza doppioni.
+    // Restano nulli quando la prenotazione dura un giorno solo, così "data" basta a descriverla.
+    const senzaOrario = !!f.senzaOrario;
+    const giorniEvento = Array.from(new Set([f.data, ...(f.piuGiorni ? f.altriGiorni : [])].filter(Boolean))).sort();
+    const giorni = giorniEvento.length > 1 ? giorniEvento : null;
+    const oraInizio = senzaOrario ? null : normalizzaOra24(f.oraInizio);
+    const oraFine = (senzaOrario || durataFissa) ? "" : normalizzaOra24(f.oraFine);
     // Tutti i campi obbligatori vengono controllati insieme (non uno alla volta) così l'utente
     // li vede evidenziati di rosso tutti insieme invece di scoprirli uno a uno a ogni tentativo.
-    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim() || !f.oraInizio
-      || (!durataFissa && !f.oraFine) || (!!pac?.prevedeRinfresco && !f.tipoRinfresco);
+    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim()
+      || (!senzaOrario && !f.oraInizio) || (!senzaOrario && !durataFissa && !f.oraFine)
+      || (!!pac?.prevedeRinfresco && !f.tipoRinfresco);
     if (mancaCampoObbligatorio) {
       setMostraErroriValidazione(true);
       return alert("Compila i campi obbligatori evidenziati in rosso.");
     }
-    if (oraInizio === null || oraFine === null) return alert("Orario non valido: usa il formato 24h, es. 19:00 (i minuti si possono omettere: 19 diventa 19:00).");
+    if (!senzaOrario && (oraInizio === null || oraFine === null)) return alert("Orario non valido: usa il formato 24h, es. 19:00 (i minuti si possono omettere: 19 diventa 19:00).");
     if (pac.prevedeRinfresco && campi.find(c => c.id === f.campoId)?.noRinfresco) return alert("Questo campo non consente pacchetti con rinfresco: cambia campo o pacchetto.");
-    if (f.fattTipo === 'privato' && f.fattCF && !validaCF(f.fattCF)) return alert("Codice Fiscale non valido.");
+    if (f.fattTipo === 'privato' && !f.fattStraniero && f.fattCF && !validaCF(f.fattCF)) return alert("Codice Fiscale non valido.");
+    // La provincia va scritta in sigla: si accetta anche il nome (viene convertito), ma non una
+    // sigla inesistente, che finirebbe tale e quale in fattura.
+    const provinceDaControllare = [f.locationProvincia, f.aziProvincia, ...(f.fattStraniero ? [] : [f.fattProvincia])];
+    if (provinceDaControllare.some(prov => !provinciaValida(prov))) {
+      return alert("Provincia non valida: usa la sigla di due lettere (es. MI) oppure il nome della provincia, che viene convertito da solo.");
+    }
     setMostraErroriValidazione(false);
 
     const IVA = 0.22;
@@ -875,16 +998,25 @@ function Prenotazioni({ user }) {
     }
     const costoRinfrescoLordo = campoIvaInclRinfresco ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + ivaRinfrescoFrac);
     const costoRinfrescoNetto = campoIvaInclRinfresco ? costoRinfrescoRaw / (1 + ivaRinfrescoFrac) : costoRinfrescoRaw;
-    const operatoriSnap = operatori.filter(o => f.operatoriIds.includes(o.id)).map(o => ({ id: o.id, nome: o.nome }));
+    // "Non servono operatori" e una scelta dichiarata, diversa da "non ancora assegnati": si salva
+    // come tale e azzera l'elenco, cosi le due cose non si confondono a distanza di tempo.
+    const senzaOperatori = !!f.senzaOperatori;
+    const operatoriSnap = senzaOperatori ? [] : operatori.filter(o => f.operatoriIds.includes(o.id)).map(o => ({ id: o.id, nome: o.nome }));
+
+    // Fatturazione: a un cliente privato corrisponde sempre il codice SDI "0000000" (non si chiede
+    // a schermo) e lo stato "Italia", salvo il flag "straniero", che impone CAP 00000, provincia EE
+    // e lo stato scelto dall'elenco.
+    const privatoFatt = f.fattTipo !== 'azienda';
+    const stranieroFatt = privatoFatt && !!f.fattStraniero;
 
     const rec = {
-      data: f.data, pacchettoId: f.pacchettoId, pacchettoNome: pac.nome || "",
-      durataOre, oraInizio, oraFine: durataFissa ? null : oraFine,
+      data: giorniEvento[0] || f.data, giorni, senzaOrario, pacchettoId: f.pacchettoId, pacchettoNome: pac.nome || "",
+      durataOre, oraInizio, oraFine: (senzaOrario || durataFissa) ? null : oraFine,
       nominativo: f.nominativo, email: f.email, telefono: f.telefono,
       campoId: campo ? campo.id : null, campoNome: campo ? campo.nome : null, campoPrenotato: f.campoPrenotato,
       locationIndirizzo: campo ? null : f.locationIndirizzo, locationCap: campo ? null : f.locationCap,
-      locationCitta: campo ? null : f.locationCitta, locationProvincia: campo ? null : f.locationProvincia,
-      operatori: operatoriSnap, sconto,
+      locationCitta: campo ? null : f.locationCitta, locationProvincia: campo ? null : siglaProvincia(f.locationProvincia),
+      operatori: operatoriSnap, senzaOperatori, sconto,
       costoCampo: costoCampoLordo, costoCampoNetto, costoCampoLordo,
       prezzoVendita: prezzoVenditaLordo, prezzoVenditaNetto, prezzoVenditaLordo,
       tipoRinfresco: pac.prevedeRinfresco ? f.tipoRinfresco : null, numeroPartecipanti: numPart,
@@ -895,8 +1027,12 @@ function Prenotazioni({ user }) {
       statoPagamento: statoPagamentoDi(f.pagamenti, prezzoVenditaLordo, valoreVoucherDi(f.voucherCodice)),
       stato: f.stato || "FORSE",
       fattTipo: f.fattTipo,
-      fattNome: f.fattNome, fattCognome: f.fattCognome, fattIndirizzo: f.fattIndirizzo, fattCap: f.fattCap, fattCitta: f.fattCitta, fattProvincia: f.fattProvincia, fattCF: (f.fattCF || "").toUpperCase(),
-      ragioneSociale: f.ragioneSociale, aziIndirizzo: f.aziIndirizzo, aziCap: f.aziCap, aziCitta: f.aziCitta, aziProvincia: f.aziProvincia, pIva: f.pIva, cfAzienda: f.cfAzienda, sdi: f.sdi
+      fattNome: f.fattNome, fattCognome: f.fattCognome, fattIndirizzo: f.fattIndirizzo,
+      fattCap: stranieroFatt ? '00000' : f.fattCap, fattCitta: f.fattCitta,
+      fattProvincia: stranieroFatt ? 'EE' : siglaProvincia(f.fattProvincia), fattCF: stranieroFatt ? "" : (f.fattCF || "").toUpperCase(),
+      fattStraniero: stranieroFatt, fattStato: privatoFatt ? (stranieroFatt ? (f.fattStato || null) : STATO_ITALIA) : null,
+      ragioneSociale: f.ragioneSociale, aziIndirizzo: f.aziIndirizzo, aziCap: f.aziCap, aziCitta: f.aziCitta, aziProvincia: siglaProvincia(f.aziProvincia), pIva: f.pIva, cfAzienda: f.cfAzienda,
+      sdi: privatoFatt ? '0000000' : f.sdi
     };
 
     setSalvataggioPren(true);
@@ -978,6 +1114,7 @@ function Prenotazioni({ user }) {
   const salvaCampo = async (e) => {
     e.preventDefault();
     if (!formCampo.nome) return alert("Inserisci il nome del campo");
+    if (!provinciaValida(formCampo.provincia)) return alert("Provincia non valida: usa la sigla di due lettere (es. MI) oppure il nome della provincia.");
     const rec = {
       nome: formCampo.nome, nomeCompleto: formCampo.nomeCompleto, indirizzo: formCampo.indirizzo, cap: formCampo.cap, citta: formCampo.citta, provincia: formCampo.provincia,
       centroCosto: formCampo.centroCosto, costoFlat: numOrNull(formCampo.costoFlat),
@@ -1055,7 +1192,11 @@ function Prenotazioni({ user }) {
         const costoRinfrescoRaw = (pac?.prevedeRinfresco && formPren.tipoRinfresco && numPart) ? perPersonaRinf * numPart : 0;
         const ivaRinfrescoFrac = campoSel ? fracIva(campoSel.ivaRinfresco) : IVA;
         const costoRinfrescoLordo = campoIvaInclRinfresco ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + ivaRinfrescoFrac);
-        const errCF = formPren.fattTipo === 'privato' && formPren.fattCF && !validaCF(formPren.fattCF);
+        const errCF = formPren.fattTipo === 'privato' && !formPren.fattStraniero && formPren.fattCF && !validaCF(formPren.fattCF);
+        // Bordo rosso sulle province non riconosciute, senza aspettare il tentativo di salvataggio.
+        const stileProvincia = (chiave) => (formPren[chiave] && !provinciaValida(formPren[chiave]))
+          ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' }
+          : evidenzia(chiave);
         const emailNonValida = formPren.email && !validaEmail(formPren.email);
         const voucherUsato = voucher.find(v => String(v.codice) === String(formPren.voucherCodice));
         const valoreVoucher = voucherUsato ? (parseFloat(voucherUsato.importo) || 0) : 0;
@@ -1089,8 +1230,8 @@ function Prenotazioni({ user }) {
         const dataMancante = !formPren.data;
         const pacchettoMancante = !pac;
         const nominativoMancante = !formPren.nominativo.trim();
-        const oraInizioMancante = !formPren.oraInizio;
-        const oraFineMancante = !durataFissa && !formPren.oraFine;
+        const oraInizioMancante = !formPren.senzaOrario && !formPren.oraInizio;
+        const oraFineMancante = !formPren.senzaOrario && !durataFissa && !formPren.oraFine;
         const tipoRinfrescoMancante = !!pac?.prevedeRinfresco && !formPren.tipoRinfresco;
 
         // Selezionando un preventivo si eredita subito costo e prezzo di vendita (restano poi modificabili a mano)
@@ -1113,27 +1254,57 @@ function Prenotazioni({ user }) {
           <div className="sezione">
             <h2>Evento</h2>
             <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-              <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Data
-                <input type="date" value={formPren.data} onChange={(e) => setF({ data: e.target.value })} {...campoRosso('data', dataMancante)} />
-              </label>
-              <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Pacchetto
+              <label style={{ flex: '1 1 260px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Pacchetto
                 <select className={`dropdown-gonfiabili ${campoRosso('pacchettoId', pacchettoMancante).className}`} value={formPren.pacchettoId} onChange={(e) => selezionaPacchettoPren(e.target.value)} style={campoRosso('pacchettoId', pacchettoMancante).style}>
                   <option value="">-- Seleziona pacchetto --</option>
                   {pacchetti.map(p => <option key={p.id} value={p.id}>{p.nome}{p.durataOre ? ` (${p.durataOre}h)` : ' (durata libera)'}</option>)}
                 </select>
               </label>
             </div>
+            <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
+              <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>{formPren.piuGiorni ? 'Primo giorno' : 'Data'}
+                <input type="date" value={formPren.data} onChange={(e) => setF({ data: e.target.value })} {...campoRosso('data', dataMancante)} />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 'normal', whiteSpace: 'nowrap', color: '#475569', alignSelf: 'flex-end', paddingBottom: '8px' }}>
+                <input type="checkbox" checked={!!formPren.piuGiorni} onChange={(e) => setF({ piuGiorni: e.target.checked, altriGiorni: e.target.checked ? formPren.altriGiorni : [] })} />
+                Più giorni
+              </label>
+            </div>
+            {formPren.piuGiorni && (
+              <div style={{ marginTop: '10px' }}>
+                <div style={{ fontWeight: 600, fontSize: '0.82rem', marginBottom: '6px' }}>Altri giorni dell'evento</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                  {formPren.altriGiorni.length === 0 && <span style={{ color: '#94a3b8', fontSize: '0.82rem' }}>Nessuno: per ora vale solo il {formPren.data ? formattaDataGGMMAA(formPren.data) : 'primo giorno'}.</span>}
+                  {formPren.altriGiorni.map(g => (
+                    <span key={g} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#e1f5fe', color: '#01579b', borderRadius: '12px', padding: '3px 10px', fontSize: '0.8rem' }}>
+                      {formattaDataGGMMAA(g)}
+                      <button type="button" title="Togli questo giorno" onClick={() => setF({ altriGiorni: formPren.altriGiorni.filter(x => x !== g) })} style={{ background: 'none', border: 'none', color: '#01579b', cursor: 'pointer', padding: 0, fontSize: '0.85rem', lineHeight: 1 }}>✕</button>
+                    </span>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
+                  <input type="date" value={nuovoGiornoPren} onChange={(e) => setNuovoGiornoPren(e.target.value)} style={{ width: 'auto' }} />
+                  <button type="button" className="btn-accent-inline" style={{ padding: '8px 14px', fontSize: '0.85rem' }} onClick={aggiungiGiornoPren}>+ Giorno</button>
+                </div>
+              </div>
+            )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '12px', alignItems: 'flex-end' }}>
+              {!formPren.senzaOrario && (
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', width: '85px', flexShrink: 0 }}>Ora inizio
                 <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraInizio} onChange={(e) => setF({ oraInizio: formattaOraInput(e.target.value) })} onBlur={() => setF({ oraInizio: normalizzaOra24(formPren.oraInizio) ?? formPren.oraInizio })} {...campoRosso('oraInizio', oraInizioMancante)} />
               </label>
-              {!durataFissa && (
+              )}
+              {!formPren.senzaOrario && !durataFissa && (
                 <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', width: '85px', flexShrink: 0 }}>Ora fine
                   <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraFine} onChange={(e) => setF({ oraFine: formattaOraInput(e.target.value) })} onBlur={() => setF({ oraFine: normalizzaOra24(formPren.oraFine) ?? formPren.oraFine })} {...campoRosso('oraFine', oraFineMancante)} />
                 </label>
               )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 'normal', whiteSpace: 'nowrap', color: '#475569', paddingBottom: '8px' }}>
+                <input type="checkbox" checked={!!formPren.senzaOrario} onChange={(e) => setF({ senzaOrario: e.target.checked })} />
+                Senza orario
+              </label>
               <div style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', color: '#555' }}>Durata
-                <div className="valore">{durataOre != null ? `${durataOre} h` : '—'} {durataFissa && <span style={{ fontSize: '0.72rem', color: '#0288d1' }}>(fissa)</span>}</div>
+                <div className="valore">{formPren.senzaOrario ? 'tutto il giorno' : (durataOre != null ? `${durataOre} h` : '—')} {durataFissa && !formPren.senzaOrario && <span style={{ fontSize: '0.72rem', color: '#0288d1' }}>(fissa)</span>}</div>
               </div>
             </div>
 
@@ -1188,12 +1359,12 @@ function Prenotazioni({ user }) {
                 </>
               ) : (
                 <>
-                  <RicercaIndirizzo onSelect={(a) => setF({ locationIndirizzo: a.indirizzo, locationCap: a.cap, locationCitta: a.citta, locationProvincia: a.provincia })} />
+                  <RicercaIndirizzo onSelect={(a) => setF({ locationIndirizzo: a.indirizzo, locationCap: a.cap, locationCitta: a.citta, locationProvincia: siglaProvincia(a.provincia) })} />
                   <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '10px' }}>
                     <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.locationIndirizzo} onChange={(e) => setF({ locationIndirizzo: e.target.value })} style={evidenzia('locationIndirizzo')} /></label>
                     <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.locationCap} onChange={(e) => setF({ locationCap: e.target.value })} style={evidenzia('locationCap')} /></label>
                     <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.locationCitta} onChange={(e) => setF({ locationCitta: e.target.value })} style={evidenzia('locationCitta')} /></label>
-                    <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.locationProvincia} onChange={(e) => setF({ locationProvincia: e.target.value })} style={evidenzia('locationProvincia')} /></label>
+                    <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.locationProvincia} onChange={(e) => setF({ locationProvincia: e.target.value })} onBlur={() => setF({ locationProvincia: siglaProvincia(formPren.locationProvincia) })} style={stileProvincia('locationProvincia')} /></label>
                   </div>
                 </>
               )}
@@ -1201,7 +1372,16 @@ function Prenotazioni({ user }) {
 
             {/* Operatori */}
             <div className="sotto-sezione">
-              <h3>Operatori</h3>
+              <h3 style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                Operatori
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', fontWeight: 'normal', textTransform: 'none', letterSpacing: 0, color: '#475569' }}>
+                  <input type="checkbox" checked={!!formPren.senzaOperatori} onChange={(e) => setF({ senzaOperatori: e.target.checked, operatoriIds: e.target.checked ? [] : formPren.operatoriIds })} />
+                  Non servono operatori
+                </label>
+              </h3>
+              {formPren.senzaOperatori ? (
+                <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem' }}>Nessun operatore da assegnare su questa prenotazione.</p>
+              ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {operatori.map(o => {
                   const sel = formPren.operatoriIds.includes(o.id);
@@ -1216,6 +1396,7 @@ function Prenotazioni({ user }) {
                 })}
                 {operatori.length === 0 && <span style={{ color: '#999', fontSize: '0.85rem' }}>Nessun bubbler configurato: attivali in Disponibilità &gt; Configuratore.</span>}
               </div>
+              )}
             </div>
           </div>
 
@@ -1245,35 +1426,48 @@ function Prenotazioni({ user }) {
 
               {formPren.fattTipo === 'privato' ? (
                 <>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.85rem', marginBottom: '12px' }}>
+                    <input type="checkbox" checked={!!formPren.fattStraniero} onChange={(e) => setF({ fattStraniero: e.target.checked })} /> Cliente straniero
+                  </label>
                   <div className="date-grid" style={{ flexWrap: 'wrap' }}>
                     <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome<input type="text" value={formPren.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} style={evidenzia('fattNome')} /></label>
                     <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Cognome<input type="text" value={formPren.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} style={evidenzia('fattCognome')} /></label>
                   </div>
                   <div style={{ margin: '12px 0' }}>
-                    <RicercaIndirizzo onSelect={(a) => setF({ fattIndirizzo: a.indirizzo, fattCap: a.cap, fattCitta: a.citta, fattProvincia: a.provincia })} />
+                    <RicercaIndirizzo onSelect={(a) => setF({ fattIndirizzo: a.indirizzo, fattCap: a.cap, fattCitta: a.citta, fattProvincia: siglaProvincia(a.provincia) })} />
                   </div>
                   <div className="date-grid" style={{ flexWrap: 'wrap' }}>
                     <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.fattIndirizzo} onChange={(e) => setF({ fattIndirizzo: e.target.value })} style={evidenzia('fattIndirizzo')} /></label>
-                    <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.fattCap} onChange={(e) => setF({ fattCap: e.target.value })} style={evidenzia('fattCap')} /></label>
+                    <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.fattStraniero ? '00000' : formPren.fattCap} readOnly={!!formPren.fattStraniero} title={formPren.fattStraniero ? 'Per i clienti stranieri il CAP è sempre 00000' : undefined} onChange={(e) => setF({ fattCap: e.target.value })} style={formPren.fattStraniero ? STILE_CAMPO_IMPOSTO : evidenzia('fattCap')} /></label>
                     <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.fattCitta} onChange={(e) => setF({ fattCitta: e.target.value })} style={evidenzia('fattCitta')} /></label>
-                    <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.fattProvincia} onChange={(e) => setF({ fattProvincia: e.target.value })} style={evidenzia('fattProvincia')} /></label>
+                    <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.fattStraniero ? 'EE' : formPren.fattProvincia} readOnly={!!formPren.fattStraniero} title={formPren.fattStraniero ? 'Per i clienti stranieri la provincia è sempre EE' : undefined} onChange={(e) => setF({ fattProvincia: e.target.value })} onBlur={() => setF({ fattProvincia: siglaProvincia(formPren.fattProvincia) })} style={formPren.fattStraniero ? STILE_CAMPO_IMPOSTO : stileProvincia('fattProvincia')} /></label>
+                    {formPren.fattStraniero && (
+                      <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Stato
+                        <select value={formPren.fattStato} onChange={(e) => setF({ fattStato: e.target.value })} style={evidenzia('fattStato')}>
+                          <option value="">-- Seleziona --</option>
+                          {STATI_ESTERI.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </label>
+                    )}
                   </div>
-                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Codice Fiscale
-                    <input type="text" maxLength={16} value={formPren.fattCF} onChange={(e) => setF({ fattCF: e.target.value.toUpperCase() })} style={errCF ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('fattCF')} />
-                  </label>
+                  {!formPren.fattStraniero && (
+                    <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Codice Fiscale
+                      <input type="text" maxLength={16} value={formPren.fattCF} onChange={(e) => setF({ fattCF: e.target.value.toUpperCase() })} style={errCF ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('fattCF')} />
+                    </label>
+                  )}
                   {errCF && <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#c62828' }}>⚠️ Codice Fiscale non valido.</p>}
                 </>
               ) : (
                 <>
                   <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem' }}>Ragione sociale<input type="text" value={formPren.ragioneSociale} onChange={(e) => setF({ ragioneSociale: e.target.value })} style={evidenzia('ragioneSociale')} /></label>
                   <div style={{ margin: '12px 0' }}>
-                    <RicercaIndirizzo onSelect={(a) => setF({ aziIndirizzo: a.indirizzo, aziCap: a.cap, aziCitta: a.citta, aziProvincia: a.provincia })} />
+                    <RicercaIndirizzo onSelect={(a) => setF({ aziIndirizzo: a.indirizzo, aziCap: a.cap, aziCitta: a.citta, aziProvincia: siglaProvincia(a.provincia) })} />
                   </div>
                   <div className="date-grid" style={{ flexWrap: 'wrap' }}>
                     <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.aziIndirizzo} onChange={(e) => setF({ aziIndirizzo: e.target.value })} style={evidenzia('aziIndirizzo')} /></label>
                     <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.aziCap} onChange={(e) => setF({ aziCap: e.target.value })} style={evidenzia('aziCap')} /></label>
                     <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.aziCitta} onChange={(e) => setF({ aziCitta: e.target.value })} style={evidenzia('aziCitta')} /></label>
-                    <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.aziProvincia} onChange={(e) => setF({ aziProvincia: e.target.value })} style={evidenzia('aziProvincia')} /></label>
+                    <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.aziProvincia} onChange={(e) => setF({ aziProvincia: e.target.value })} onBlur={() => setF({ aziProvincia: siglaProvincia(formPren.aziProvincia) })} style={stileProvincia('aziProvincia')} /></label>
                   </div>
                   <div className="date-grid" style={{ marginTop: '12px' }}>
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Partita IVA<input type="text" value={formPren.pIva} onChange={(e) => setF({ pIva: e.target.value })} style={evidenzia('pIva')} /></label>
@@ -1650,7 +1844,10 @@ function Prenotazioni({ user }) {
         <div className="schermata-storico no-print">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <h2 style={{ margin: 0 }}>Storico Prenotazioni</h2>
-            <button onClick={esportaExcelPren} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button onClick={esportaExcelPren} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
+              <button onClick={esportaClientiPren} title="Anagrafica dei clienti delle prenotazioni filtrate, nel formato del gestionale di fatturazione" style={{ padding: '8px 16px', backgroundColor: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>👥 Esporta clienti</button>
+            </div>
           </div>
           <p className="descrizione-pagina">Consulta, apri, cambia stato o elimina le prenotazioni.</p>
 
@@ -1658,6 +1855,19 @@ function Prenotazioni({ user }) {
             <div className="filtro-group" style={{ flex: '1 1 160px' }}>
               <label>Data:</label>
               <input type="date" value={filtroPrenData} onChange={(e) => setFiltroPrenData(e.target.value)} />
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 250px' }}>
+              <label>Settimana:</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana precedente" onClick={() => spostaSettimana(-1)}>‹</button>
+                <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: settimanaFiltrata ? '#334155' : '#94a3b8' }}>
+                  {settimanaFiltrata ? `${formattaDataGGMMAA(settimanaFiltrata.da)} – ${formattaDataGGMMAA(settimanaFiltrata.a)}` : 'tutte'}
+                </span>
+                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana successiva" onClick={() => spostaSettimana(1)}>›</button>
+                {settimanaFiltrata
+                  ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per settimana" onClick={() => setFiltroPrenSettimana("")}>✕</button>
+                  : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana corrente" onClick={() => spostaSettimana(0)}>Oggi</button>}
+              </div>
             </div>
             <div className="filtro-group" style={{ flex: '1 1 160px' }}>
               <label>Stato:</label>
@@ -1679,14 +1889,20 @@ function Prenotazioni({ user }) {
       {currentView === "gestione" && puoVedere(user, 'prenotazioni', 'gestione') && (() => {
         const inAttesaPagamento = prenotazioni.filter(p => p.stato === 'FORSE' && (!p.statoPagamento || p.statoPagamento === 'in attesa'));
         const daConfermare = prenotazioni.filter(p => p.stato === 'FORSE' && p.statoPagamento && p.statoPagamento !== 'in attesa');
-        const partiteAttive = prenotazioni.filter(p => p.stato === 'CONF' && p.data >= oggiIso);
-        const daCompletare = prenotazioni.filter(p => p.stato === 'CONF' && p.data < oggiIso && !prenotazioneCompletata(p, oggiIso));
-        const liste = { inAttesaPagamento, daConfermare, partiteAttive, daCompletare };
+        const partiteAttive = prenotazioni.filter(p => p.stato === 'CONF' && fineEventoDi(p) >= oggiIso);
+        // Partite giocate ma non ancora chiuse, divise per il tipo di lavoro che resta da fare:
+        // se l'anagrafica di fatturazione è a posto manca solo l'incasso, altrimenti mancano dati.
+        // Le due liste sono complementari: ogni prenotazione non conclusa sta in una sola delle due.
+        const daChiudere = prenotazioni.filter(p => p.stato === 'CONF' && fineEventoDi(p) < oggiIso && !prenotazioneCompletata(p, oggiIso));
+        const daCompletare = daChiudere.filter(p => campiFatturazioneMancanti(p).length > 0);
+        const daSaldare = daChiudere.filter(p => campiFatturazioneMancanti(p).length === 0);
+        const liste = { inAttesaPagamento, daConfermare, partiteAttive, daCompletare, daSaldare };
         const messaggiVuoto = {
           inAttesaPagamento: "Nessun cliente in attesa di pagamento.",
           daConfermare: "Nessun cliente pagato in attesa di conferma.",
           partiteAttive: "Nessuna partita confermata in programma.",
-          daCompletare: "Nessuna prenotazione da completare.",
+          daCompletare: "Nessuna prenotazione con dati da completare.",
+          daSaldare: "Nessuna prenotazione in attesa del saldo.",
         };
         return (
           <div className="schermata-storico no-print">
@@ -1694,19 +1910,21 @@ function Prenotazioni({ user }) {
               <h2 style={{ margin: 0 }}>Gestione</h2>
               <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovaPrenotazioneOverlay}>➕ Nuovo</button>
             </div>
-            <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento o completamento dati.</p>
+            <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento o completamento dati. Una partita già giocata sta in "Da completare" se mancano dati di fatturazione, in "Da saldare" se resta solo da incassare.</p>
             <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
               <button className={`nav-btn ${gestioneTab === 'inAttesaPagamento' ? 'active' : ''}`} onClick={() => setGestioneTab('inAttesaPagamento')}><Icona nome="attesaPagamento" />In attesa di pagamento ({inAttesaPagamento.length})</button>
               <button className={`nav-btn ${gestioneTab === 'daConfermare' ? 'active' : ''}`} onClick={() => setGestioneTab('daConfermare')}><Icona nome="daConfermare" />Da confermare ({daConfermare.length})</button>
               <button className={`nav-btn ${gestioneTab === 'partiteAttive' ? 'active' : ''}`} onClick={() => setGestioneTab('partiteAttive')}><Icona nome="partiteAttive" />Partite attive ({partiteAttive.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'daCompletare' ? 'active' : ''}`} onClick={() => setGestioneTab('daCompletare')}><Icona nome="daCompletare" />Da completare ({daCompletare.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'daCompletare' ? 'active' : ''}`} onClick={() => setGestioneTab('daCompletare')} title="Mancano dati di fatturazione (e forse anche il saldo)"><Icona nome="daCompletare" />Da completare ({daCompletare.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'daSaldare' ? 'active' : ''}`} onClick={() => setGestioneTab('daSaldare')} title="Anagrafica di fatturazione completa: manca solo l'incasso"><Icona nome="attesaPagamento" />Da saldare ({daSaldare.length})</button>
             </nav>
             {tabellaPren(liste[gestioneTab], messaggiVuoto[gestioneTab])}
           </div>
         );
       })()}
       {currentView === "calendario" && puoVedere(user, 'prenotazioni', 'calendario') && (() => {
-        const prenDelGiorno = (iso) => prenotazioni.filter(p => p.data === iso).sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
+        // Una prenotazione su più giorni compare in ciascuno dei suoi giorni, anche se non consecutivi.
+        const prenDelGiorno = (iso) => prenotazioni.filter(p => giorniEventoDi(p).includes(iso)).sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
 
         // --- Griglia oraria (viste Settimana/Giorno): posiziona ogni prenotazione in base a orario e durata reali ---
         const ORE_GRIGLIA = Array.from({ length: 19 }, (_, i) => (6 + i) % 24); // 06:00 -> 00:00 (19 fasce da un'ora)
@@ -1723,6 +1941,8 @@ function Prenotazioni({ user }) {
         const calcolaLayoutEventi = (lista) => {
           const eventi = lista
             .map(p => {
+              // Senza orario: occupa tutta la colonna, altrimenti sparirebbe dalla griglia oraria.
+              if (p.senzaOrario) return { p, inizioMin: 0, durataMin: ORE_GRIGLIA.length * 60, fineMin: ORE_GRIGLIA.length * 60 };
               const inizioMin = minutiDaInizioGiornata(p.oraInizio);
               if (inizioMin == null) return null;
               const durataMin = Math.max(durataOreDi(p), 0.25) * 60;
@@ -1760,7 +1980,7 @@ function Prenotazioni({ user }) {
             <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${p.stato} · ${p.nominativo} · ${campoTxt} · ${p.pacchettoNome || ''} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4px' }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'}>{p.googleCalendarSync ? '✅' : '⚠️'}</span> {p.oraInizio ? <strong>{p.oraInizio}</strong> : ''} - {p.nominativo}
+                  <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'}>{p.googleCalendarSync ? '✅' : '⚠️'}</span> {p.senzaOrario ? <strong>tutto il giorno</strong> : (p.oraInizio ? <strong>{p.oraInizio}</strong> : '')} - {p.nominativo}
                 </span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                   {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'campo prenotato' : 'campo da prenotare'} style={{ margin: 0 }} />}
@@ -2026,7 +2246,7 @@ function Prenotazioni({ user }) {
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginTop: '18px', justifyContent: 'center' }}>
                     <button className="btn-modifica-inline" title="Apri" style={{ padding: '8px 12px' }} onClick={() => { caricaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>📂</button>
-                    {prenSelezionata.stato === 'FORSE' && <button className="btn-conferma" disabled={!prenSelezionata.statoPagamento || prenSelezionata.statoPagamento === 'in attesa'} title={!prenSelezionata.statoPagamento || prenSelezionata.statoPagamento === 'in attesa' ? "Serve almeno un acconto per confermare" : "Conferma (prepara mail al cliente)"} style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'CONF'); setPrenSelezionata(null); }}>✔️</button>}
+                    {prenSelezionata.stato === 'FORSE' && <button className="btn-conferma" disabled={senzaIncasso(prenSelezionata) && !puoConfermareSenzaIncasso} title={senzaIncasso(prenSelezionata) ? (puoConfermareSenzaIncasso ? "Conferma senza incasso (da amministratore)" : "Serve almeno un acconto per confermare") : "Conferma (prepara mail al cliente)"} style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'CONF'); setPrenSelezionata(null); }}>✔️</button>}
                     {prenSelezionata.stato === 'CONF' && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'FORSE'); setPrenSelezionata(null); }}>↩️</button>}
                     <button className="btn-modifica-inline" title={prenSelezionata.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '8px 12px' }} onClick={() => apriGoogleCalendar(prenSelezionata)}>📅</button>
                     {user.ruolo === 'admin' && <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { eliminaPrenotazione(prenSelezionata.id); setPrenSelezionata(null); }}>🗑️</button>}
