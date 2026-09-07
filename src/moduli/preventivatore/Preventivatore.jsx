@@ -251,13 +251,27 @@ function Preventivatore({ user }) {
   // Costi e chilometraggi sono ricalcolati da OSRM: variano da soli e non sono modifiche dell'utente,
   // quindi restano fuori dal confronto (ma dentro allo snapshot, per il ripristino).
   const CAMPI_DERIVATI = ['soluzioniMigliori', 'soluzioneGiocoOfferta'];
+
+  // Testo di confronto con le chiavi sempre nello stesso ordine, a ogni livello. Serve perché i
+  // due snapshot da confrontare nascono in punti diversi del codice — uno dallo stato a video,
+  // l'altro ricostruito all'apertura di un preventivo salvato — e le loro chiavi sono elencate
+  // in ordine diverso. JSON.stringify rispetta l'ordine di inserimento, quindi senza
+  // normalizzarlo due oggetti con gli stessi identici valori davano stringhe diverse: un
+  // preventivo appena aperto, senza toccare niente, risultava già modificato.
+  const testoStabile = (v) => {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
+    if (Array.isArray(v)) return '[' + v.map(testoStabile).join(',') + ']';
+    return '{' + Object.keys(v).sort()
+      .map(k => JSON.stringify(k) + ':' + testoStabile(v[k])).join(',') + '}';
+  };
+
   const impronta = (snap) => {
     if (!snap) return null;
     const datiUtente = Object.fromEntries(Object.entries(snap).filter(([k]) => !CAMPI_DERIVATI.includes(k)));
     // Della destinazione conta solo l'indirizzo scelto: le coordinate arrivano dalla geocodifica
     // fatta all'apertura di un preventivo salvato e non sono una modifica dell'utente.
     datiUtente.destinazione = snap.destinazione?.nome ?? null;
-    return JSON.stringify(datiUtente);
+    return testoStabile(datiUtente);
   };
 
   const ripristinaSnapshot = (snap) => {
