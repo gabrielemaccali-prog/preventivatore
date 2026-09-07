@@ -374,12 +374,15 @@ function Preventivatore({ user }) {
       vendita[g.nome] = { prezzo: String(g.prezzoVendita ?? ""), sconto: "0" };
     });
 
-    // Extra: rimappa per nome verso gli id correnti
+    // Extra: si ritrovano per id. Il nome resta come ripiego per i preventivi salvati prima che
+    // l'id ci fosse — ed è un ripiego che sbaglia appena un extra viene rinominato, con la
+    // conseguenza che l'extra sparisce dal preventivo riaperto senza dire niente.
     const idsExtra = [];
     const venditaEx = {};
     const costiLiberiEx = {};
     ex.forEach(e => {
-      const trovato = extras.find(x => x.nome === e.nome);
+      const trovato = (e.extraId && extras.find(x => x.id === e.extraId))
+        || extras.find(x => x.nome === e.nome);
       if (trovato) {
         idsExtra.push(trovato.id);
         venditaEx[trovato.id] = { prezzo: String(e.prezzoVendita ?? ""), sconto: "0" };
@@ -858,7 +861,11 @@ function Preventivatore({ user }) {
       const vSconto = parseFloat(venditaExtras[e.id]?.sconto) || 0;
 
       return {
+        // Il nome resta: è quello che il preventivo dice al cliente, e va letto come era il
+        // giorno dell'emissione. L'id accanto è ciò con cui il preventivo riaperto ritrova
+        // l'extra in anagrafica.
         nome: e.nome,
+        extraId: e.id,
         costo: costTotal,
         costoLibero: !!e.costoLibero,
         prezzoVendita: vPrezzo * (1 - vSconto / 100)
