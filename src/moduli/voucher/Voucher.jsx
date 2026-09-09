@@ -8,7 +8,8 @@ import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
 
 const FORM_VUOTO = {
   nominativo: "", dedica: "", pacchettoId: "", pacchettoNome: "",
-  importo: "", testoOfferta: "",
+  // Il valore del buono di norma non si stampa: è un regalo, non una ricevuta.
+  importo: "", nascondiImporto: true, testoOfferta: "",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
   pagamenti: [],
   stato: "incompleto", dataEmissione: ""
@@ -299,6 +300,7 @@ function Voucher({ user }) {
       dedica: form.dedica,
       pacchettoNome: form.pacchettoNome,
       importo: parseFloat(form.importo) || 0,
+      nascondi_importo: !!form.nascondiImporto,
       testoOfferta: form.testoOfferta,
       fattNome: form.fattNome,
       fattCognome: form.fattCognome,
@@ -352,6 +354,8 @@ function Voucher({ user }) {
       pacchettoId: pacchetti.find(p => p.nome === v.pacchettoNome)?.id || "",
       pacchettoNome: v.pacchettoNome || "",
       importo: v.importo ?? "",
+      // I voucher creati prima di questa scelta non hanno la colonna: valgono come nascosti.
+      nascondiImporto: v.nascondi_importo ?? true,
       testoOfferta: v.testoOfferta || "",
       fattNome: v.fattNome || "",
       fattCognome: v.fattCognome || "",
@@ -558,6 +562,19 @@ function Voucher({ user }) {
                 {pacchetti.map(p => <option key={p.id} value={p.id}>{p.nome} (€{parseFloat(p.importo).toFixed(2)})</option>)}
               </select>
             </label>
+            {/* Sta qui perché riguarda l'importo che il pacchetto qui sopra porta con sé. */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>
+              <input
+                type="checkbox"
+                checked={!!form.nascondiImporto}
+                onChange={(e) => setF({ nascondiImporto: e.target.checked })}
+                style={{ width: 'auto', margin: 0 }}
+              />
+              Nascondi il valore sul PDF
+            </label>
+            <p style={{ margin: '4px 0 0 26px', fontSize: '0.78rem', color: '#777' }}>
+              Chi riceve il buono non legge quanto è stato speso. Togli la spunta se il valore deve comparire.
+            </p>
           </div>
 
           {/* Dati di fatturazione dell'acquirente: senza questi il voucher resta incompleto */}
@@ -859,7 +876,7 @@ function Voucher({ user }) {
 
                 <div className="voucher-offerta-box">
                   {datiPDF.testoOfferta && <div className="voucher-testo-offerta">{datiPDF.testoOfferta}</div>}
-                  {importoPDF > 0 && <div className="voucher-importo">Valore: € {importoPDF.toFixed(2)}</div>}
+                  {!datiPDF.nascondiImporto && importoPDF > 0 && <div className="voucher-importo">Valore: € {importoPDF.toFixed(2)}</div>}
                 </div>
 
                 <div className="voucher-non-cumulabile">NON CUMULABILE CON ALTRE INIZIATIVE</div>
