@@ -2511,7 +2511,7 @@ function Preventivatore({ user }) {
                             return (
                               <tr key={e.id}>
                                 <td style={{ textAlign: 'left' }}>
-                                  <div><strong>{e.nome}</strong> (Servizio Accessorio Opzionale)</div>
+                                  <div><strong>{e.nome}</strong></div>
                                   {vSconto > 0 && (
                                     <div style={{ fontSize: '0.85rem', color: '#c62828', fontStyle: 'italic', marginTop: '3px' }}>
                                       Prezzo base: €{parseFloat(vPrezzo).toFixed(2)} - Sconto applicato: {vSconto}%
@@ -2585,7 +2585,7 @@ function Preventivatore({ user }) {
                     return (
                       <tr key={e.id}>
                         <td style={{ textAlign: 'left' }}>
-                          <div><strong>{e.nome}</strong> (Servizio Accessorio Opzionale)</div>
+                          <div><strong>{e.nome}</strong></div>
                           {vSconto > 0 && (
                             <div style={{ fontSize: '0.85rem', color: '#c62828', fontStyle: 'italic', marginTop: '3px' }}>
                               Prezzo base: €{parseFloat(vPrezzo).toFixed(2)} - Sconto applicato: {vSconto}%
