@@ -97,7 +97,7 @@ function CostiRicavi({ user }) {
   // Il centro di ricavo viene dal gioco, non più dal pacchetto. Da quando il pacchetto dice solo
   // la modalità -- Party Basic, Noleggio -- non ha più niente da dire su dove finisce il ricavo,
   // mentre il gioco sì: è l'unica cosa che si vende davvero, e il suo centro sta a catalogo.
-  const centroRicavoDi = useCallback((p) => giocoPerId[p.giocoId]?.centro_ricavo || 'Non assegnato', [giocoPerId]);
+  const centroRicavoDiRiga = useCallback((r) => (r.giocoId != null ? giocoPerId[r.giocoId]?.centro_ricavo : null) || 'Non assegnato', [giocoPerId]);
   const centroCostoDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.centroCosto || 'Non assegnato', [campi]);
   const campoNomeDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.nome || '—', [campi]);
 
@@ -231,41 +231,6 @@ function CostiRicavi({ user }) {
   const centriCostoDisponibili = useMemo(() => [...new Set(campi.map(c => c.centroCosto).filter(Boolean))].sort(), [campi]);
   const centriRicavoDisponibili = useMemo(() => [...new Set(giochi.map(g => g.centro_ricavo).filter(Boolean))].sort(), [giochi]);
 
-  const righeAndamento = useMemo(() => prenotazioni.filter(p => {
-    if (!p.data) return false;
-    if (annoSel && p.data.slice(0, 4) !== annoSel) return false;
-    if (annoSel && meseSel && parseInt(p.data.slice(5, 7), 10) !== parseInt(meseSel, 10)) return false;
-    if (centroCostoSel && centroCostoDi(p) !== centroCostoSel) return false;
-    if (centroRicavoSel && centroRicavoDi(p) !== centroRicavoSel) return false;
-    return true;
-  }), [prenotazioni, annoSel, meseSel, centroCostoSel, centroRicavoSel, centroCostoDi, centroRicavoDi]);
-
-  const datiBarre = useMemo(() => {
-    if (!annoSel) {
-      const per = {};
-      righeAndamento.forEach(p => {
-        const anno = p.data.slice(0, 4);
-        const r = nettoRicavo(p), c = costoTotaleNetto(p);
-        if (!per[anno]) per[anno] = { periodo: anno, ricavo: 0, costo: 0, margine: 0 };
-        per[anno].ricavo += r; per[anno].costo += c; per[anno].margine += (r - c);
-      });
-      return Object.values(per).sort((a, b) => a.periodo.localeCompare(b.periodo));
-    }
-    const per = MESI.map(label => ({ periodo: label, ricavo: 0, costo: 0, margine: 0 }));
-    righeAndamento.forEach(p => {
-      const mIdx = parseInt(p.data.slice(5, 7), 10) - 1;
-      if (mIdx < 0 || mIdx > 11) return;
-      const r = nettoRicavo(p), c = costoTotaleNetto(p);
-      per[mIdx].ricavo += r; per[mIdx].costo += c; per[mIdx].margine += (r - c);
-    });
-    return per;
-  }, [righeAndamento, annoSel]);
-
-  const mappaColoriRicavo = useMemo(() => mappaColoriCentri(giochi.map(g => g.centro_ricavo)), [giochi]);
-  const mappaColoriCosto = useMemo(() => mappaColoriCentri(campi.map(c => c.centroCosto)), [campi]);
-  const datiTortaRicavi = useMemo(() => raggruppaPerCentro(righeAndamento, centroRicavoDi, nettoRicavo), [righeAndamento, centroRicavoDi]);
-  const datiTortaCosti = useMemo(() => raggruppaPerCentro(righeAndamento, centroCostoDi, costoTotaleNetto), [righeAndamento, centroCostoDi]);
-
   // ====================== PER GIOCO ======================
   // Una prenotazione e' una vendita sola, ma le domande a cui questa scheda deve rispondere --
   // quanto rende l'Archery, quanto pesa una sede, come va la famiglia Gonfiabili -- si fanno sul
@@ -317,6 +282,42 @@ function CostiRicavi({ user }) {
     });
     return righe;
   }, [prenotazioni, annoSel, meseSel, sedeDiRipiego]);
+
+  // Anche i grafici guardano le righe, non le vendite intere. Un grafico intitolato "ricavi per
+  // centro di ricavo" che non sa mostrare i 600 euro di Archery Tag, perche' sono stati venduti
+  // dentro una partita di Bubble Football, sta rispondendo a una domanda diversa da quella che
+  // ha scritto in cima. Anno e mese sono gia' applicati a monte: qui restano i due centri.
+  const righeAndamento = useMemo(() => righePerGioco.filter(r => {
+    if (centroCostoSel && centroCostoDi(r.pren) !== centroCostoSel) return false;
+    if (centroRicavoSel && centroRicavoDiRiga(r) !== centroRicavoSel) return false;
+    return true;
+  }), [righePerGioco, centroCostoSel, centroRicavoSel, centroCostoDi, centroRicavoDiRiga]);
+
+  const datiBarre = useMemo(() => {
+    const somma = (dove, r) => { dove.ricavo += r.ricavo; dove.costo += r.costo; dove.margine += (r.ricavo - r.costo); };
+    if (!annoSel) {
+      const per = {};
+      righeAndamento.forEach(r => {
+        const anno = r.pren.data.slice(0, 4);
+        if (!per[anno]) per[anno] = { periodo: anno, ricavo: 0, costo: 0, margine: 0 };
+        somma(per[anno], r);
+      });
+      return Object.values(per).sort((a, b) => a.periodo.localeCompare(b.periodo));
+    }
+    const per = MESI.map(label => ({ periodo: label, ricavo: 0, costo: 0, margine: 0 }));
+    righeAndamento.forEach(r => {
+      const mIdx = parseInt(r.pren.data.slice(5, 7), 10) - 1;
+      if (mIdx < 0 || mIdx > 11) return;
+      somma(per[mIdx], r);
+    });
+    return per;
+  }, [righeAndamento, annoSel]);
+
+  const mappaColoriRicavo = useMemo(() => mappaColoriCentri(giochi.map(g => g.centro_ricavo)), [giochi]);
+  const mappaColoriCosto = useMemo(() => mappaColoriCentri(campi.map(c => c.centroCosto)), [campi]);
+  const datiTortaRicavi = useMemo(() => raggruppaPerCentro(righeAndamento, centroRicavoDiRiga, (r) => r.ricavo), [righeAndamento, centroRicavoDiRiga]);
+  const datiTortaCosti = useMemo(() => raggruppaPerCentro(righeAndamento, (r) => centroCostoDi(r.pren), (r) => r.costo), [righeAndamento, centroCostoDi]);
+
 
   // A che gruppo appartiene una riga, secondo la dimensione scelta. Il nome arriva dal catalogo
   // per id; un servizio accessorio, che gioco non e', tiene il suo nome quando si guarda per
