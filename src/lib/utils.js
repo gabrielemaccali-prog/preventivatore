@@ -138,18 +138,34 @@ export const nomiDistinti = (nomi) => [...new Set((nomi || []).filter(Boolean))]
 
 // L'etichetta dei giochi per gli spazi stretti: celle di calendario, colonne di tabella.
 //
-// I giochi nostri si vedono sempre, uno per uno. Sono quelli che dicono cosa esce dal magazzino e
-// chi deve caricarlo, quindi nasconderli dietro una parola generica toglie proprio l'informazione
-// per cui si guarda un calendario.
+// Giochi con lo stesso nome breve si contano invece di ripetersi: due Biliardino diversi sono
+// "2 Biliardino", che occupa meno di elencarli e dice una cosa in più — quanti sono. Uno solo si
+// chiama col suo nome, senza il "1" davanti, che non aggiungerebbe niente.
 //
-// Quelli di un fornitore, se sono più d'uno, diventano "Vari": in due centimetri non ci stanno, e
-// per sapere quali sono si apre la prenotazione — dove il dettaglio li elenca tutti con il loro
-// costo. Uno solo invece si chiama col suo nome, che ci sta e serve.
+// I giochi nostri si vedono sempre. Sono quelli che dicono cosa esce dal magazzino e chi deve
+// caricarlo, quindi nasconderli dietro una parola generica toglie proprio l'informazione per cui
+// si guarda un calendario.
+//
+// Quelli di un fornitore diventano "Vari" quando sono di più tipi: in due centimetri non ci
+// stanno, e per sapere quali sono si apre la prenotazione, dove il dettaglio li elenca tutti con
+// il loro costo. Di un tipo solo si scrivono, contatore compreso.
 export const etichettaGiochiBreve = (giochi) => {
-  const nostri = nomiDistinti((giochi || []).filter(g => g?.nostro).map(g => g?.nome));
-  const altri = nomiDistinti((giochi || []).filter(g => !g?.nostro).map(g => g?.nome))
-    .filter(n => !nostri.includes(n));
-  return [...nostri, ...(altri.length > 1 ? ['Vari'] : altri)].join(' + ');
+  const gruppi = new Map();
+  (giochi || []).forEach(g => {
+    if (!g?.nome) return;
+    const esistente = gruppi.get(g.nome);
+    if (esistente) {
+      esistente.quanti += 1;
+      esistente.nostro = esistente.nostro || !!g.nostro;
+    } else {
+      gruppi.set(g.nome, { nome: g.nome, quanti: 1, nostro: !!g.nostro });
+    }
+  });
+  const scritto = (v) => v.quanti > 1 ? `${v.quanti} ${v.nome}` : v.nome;
+  const tutti = [...gruppi.values()];
+  const nostri = tutti.filter(v => v.nostro);
+  const altri = tutti.filter(v => !v.nostro);
+  return [...nostri.map(scritto), ...(altri.length > 1 ? ['Vari'] : altri.map(scritto))].join(' + ');
 };
 
 // Giorni coperti da una prenotazione, in ordine. Possono essere più di uno e non consecutivi
