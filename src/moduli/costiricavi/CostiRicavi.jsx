@@ -160,6 +160,32 @@ function CostiRicavi({ user }) {
   const centroCostoDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.centroCosto || 'Non assegnato', [campi]);
   const campoNomeDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.nome || '—', [campi]);
 
+  // Quello che ci aspettiamo di pagare agli operatori, con i parametri di oggi, su tutte le
+  // partite: e' una previsione, quindi vale anche dove il periodo e' gia' stato chiuso.
+  const compensoPrevisto = useMemo(
+    () => parametriCompensi ? compensoPerPartita(prenotazioni, opVoci, parametriCompensi) : {},
+    [prenotazioni, opVoci, parametriCompensi]
+  );
+
+  // Quello che e' stato davvero pagato. Si ricostruisce un periodo per volta, e ogni periodo con
+  // i parametri congelati dentro di lui: ritoccare la tariffa domani non deve riscrivere un
+  // consuntivo gia' liquidato. Una partita che nessun periodo copre resta a zero, ed e' la
+  // verita' -- non e' ancora stata pagata, non e' gratis.
+  const compensoConsuntivato = useMemo(() => {
+    const totale = {};
+    opPeriodi.forEach(per => {
+      const par = per.parametri || parametriCompensi;
+      if (!par) return;
+      const sue = prenotazioni.filter(p => p.data >= per.dal && p.data <= per.al
+        && (p.operatori || []).some(o => String(o.id) === String(per.operatore_id)));
+      const sueVoci = opVoci.filter(v => String(v.operatore_id) === String(per.operatore_id)
+        && v.data >= per.dal && v.data <= per.al);
+      const quote = compensoPerPartita(sue, sueVoci, par, per.operatore_id);
+      Object.entries(quote).forEach(([id, q]) => { totale[id] = (totale[id] || 0) + q; });
+    });
+    return totale;
+  }, [opPeriodi, prenotazioni, opVoci, parametriCompensi]);
+
   // ====================== TABELLA (dettaglio partite, filtri e export) ======================
   const [filtroData, setFiltroData] = useState("");
   const [filtroStato, setFiltroStato] = useState("");
@@ -183,6 +209,10 @@ function CostiRicavi({ user }) {
         else if (v !== null && typeof v === 'object') r[k] = JSON.stringify(v);
         else r[k] = v;
       });
+      // Il compenso non e' una colonna della prenotazione: si calcola, e in un foglio Excel
+      // serve accanto agli altri costi, non da ricostruire a mano.
+      r['compensoPreventivo'] = +compensoPrevDi(p).toFixed(2);
+      r['compensoConsuntivo'] = +compensoConsDi(p).toFixed(2);
       return r;
     });
     const ws = XLSX.utils.json_to_sheet(righe);
@@ -194,6 +224,13 @@ function CostiRicavi({ user }) {
   // Colonne della tabella (schede "Tabella" e "Completate"): etichetta mostrata e valore su cui ordinare.
   // "Codice / Data" ordina sulla data della partita: è il dato con cui si ragiona qui, il codice identifica
   // soltanto la riga. Gli importi ordinano sui netti, gli stessi numeri che la colonna mostra.
+  // Il compenso di una prenotazione: il lordo, che e' l'uscita vera dell'azienda. Il preventivo
+  // c'e' su tutte le partite con operatori; il consuntivo solo dove il periodo e' stato chiuso, e
+  // dove non c'e' vale zero perche' non e' ancora stato pagato -- non perche' sia gratis.
+  const compensoPrevDi = useCallback((p) => compensoPrevisto[p.id] || 0, [compensoPrevisto]);
+  const compensoConsDi = useCallback((p) => compensoConsuntivato[p.id] || 0, [compensoConsuntivato]);
+  const costoConCompenso = (p) => costoTotaleNetto(p) + compensoPrevDi(p);
+
   const COLONNE_CR = [
     { chiave: 'data', label: 'Codice / Data', valore: (p) => p.data || '' },
     { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
@@ -203,7 +240,9 @@ function CostiRicavi({ user }) {
     { chiave: 'costoCampo', label: 'Costo campo', stile: { textAlign: 'right' }, valore: nettoCampo },
     { chiave: 'costoRinfresco', label: 'Costo rinfresco', stile: { textAlign: 'right' }, valore: nettoRinf },
     { chiave: 'costoEreditato', label: 'Costo ereditato', stile: { textAlign: 'right' }, valore: nettoEreditato },
-    { chiave: 'margine', label: 'Margine', stile: { textAlign: 'right' }, valore: (p) => nettoRicavo(p) - costoTotaleNetto(p) },
+    { chiave: 'compensoPrev', label: 'Compenso prev.', stile: { textAlign: 'right' }, valore: compensoPrevDi },
+    { chiave: 'compensoCons', label: 'Compenso cons.', stile: { textAlign: 'right' }, valore: compensoConsDi },
+    { chiave: 'margine', label: 'Margine', stile: { textAlign: 'right' }, valore: (p) => nettoRicavo(p) - costoConCompenso(p) },
   ];
   const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(
     Object.fromEntries(COLONNE_CR.map(c => [c.chiave, c.valore]))
@@ -211,7 +250,9 @@ function CostiRicavi({ user }) {
 
   // Riga e tabella (con totali) condivise da "Tabella" e "Completate"
   const rigaCR = (p) => {
-    const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), ce = nettoEreditato(p), m = r - cc - cr - ce;
+    const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), ce = nettoEreditato(p);
+    const kp = compensoPrevDi(p), kc = compensoConsDi(p);
+    const m = r - cc - cr - ce - kp;
     return (
       <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
         <td style={{ padding: '10px' }}><strong>{p.id}</strong><br /><span style={{ color: '#777', fontSize: '0.8rem' }}>{p.data}</span></td>
@@ -222,15 +263,20 @@ function CostiRicavi({ user }) {
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cc.toFixed(2)}</td>
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cr.toFixed(2)}</td>
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{p.ereditaCosti ? `€${ce.toFixed(2)}` : '—'}</td>
+        <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{kp > 0 ? `€${kp.toFixed(2)}` : '—'}</td>
+        <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{kc > 0 ? `€${kc.toFixed(2)}` : '—'}</td>
         <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: m >= 0 ? '#2e7d32' : '#c62828' }}>€{m.toFixed(2)}</td>
       </tr>
     );
   };
 
   const totaliCR = (righe) => righe.reduce((a, p) => {
-    const r = nettoRicavo(p), c = costoTotaleNetto(p);
-    return { ricavo: a.ricavo + r, costo: a.costo + c, margine: a.margine + (r - c) };
-  }, { ricavo: 0, costo: 0, margine: 0 });
+    const r = nettoRicavo(p), c = costoConCompenso(p);
+    return {
+      ricavo: a.ricavo + r, costo: a.costo + c, margine: a.margine + (r - c),
+      compensoPrev: a.compensoPrev + compensoPrevDi(p), compensoCons: a.compensoCons + compensoConsDi(p),
+    };
+  }, { ricavo: 0, costo: 0, margine: 0, compensoPrev: 0, compensoCons: 0 });
 
   const tabellaCR = (righe, messaggioVuoto) => {
     const tot = totaliCR(righe);
@@ -251,14 +297,16 @@ function CostiRicavi({ user }) {
           </thead>
           <tbody>
             {righe.length === 0
-              ? <tr><td colSpan="9" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+              ? <tr><td colSpan="11" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
               : ordina(righe).map(rigaCR)}
           </tbody>
           <tfoot>
             <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
               <td style={{ padding: '10px' }} colSpan="4">TOTALE ({righe.length})</td>
               <td style={{ padding: '10px', textAlign: 'right' }}>€{tot.ricavo.toFixed(2)}</td>
-              <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }} colSpan="3">€{tot.costo.toFixed(2)}</td>
+              <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }} colSpan="3">€{(tot.costo - tot.compensoPrev).toFixed(2)}</td>
+              <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{tot.compensoPrev.toFixed(2)}</td>
+              <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{tot.compensoCons.toFixed(2)}</td>
               <td style={{ padding: '10px', textAlign: 'right', color: tot.margine >= 0 ? '#2e7d32' : '#c62828' }}>€{tot.margine.toFixed(2)}</td>
             </tr>
           </tfoot>
@@ -355,32 +403,6 @@ function CostiRicavi({ user }) {
     return 'Non indicata';
   }, [sedePropria, sedeDelPreventivo, giochiNostri]);
   const nostra = useCallback((sede) => !!sedePropria && String(sede || '') === String(sedePropria), [sedePropria]);
-
-  // Quello che ci aspettiamo di pagare agli operatori, con i parametri di oggi, su tutte le
-  // partite: e' una previsione, quindi vale anche dove il periodo e' gia' stato chiuso.
-  const compensoPrevisto = useMemo(
-    () => parametriCompensi ? compensoPerPartita(prenotazioni, opVoci, parametriCompensi) : {},
-    [prenotazioni, opVoci, parametriCompensi]
-  );
-
-  // Quello che e' stato davvero pagato. Si ricostruisce un periodo per volta, e ogni periodo con
-  // i parametri congelati dentro di lui: ritoccare la tariffa domani non deve riscrivere un
-  // consuntivo gia' liquidato. Una partita che nessun periodo copre resta a zero, ed e' la
-  // verita' -- non e' ancora stata pagata, non e' gratis.
-  const compensoConsuntivato = useMemo(() => {
-    const totale = {};
-    opPeriodi.forEach(per => {
-      const par = per.parametri || parametriCompensi;
-      if (!par) return;
-      const sue = prenotazioni.filter(p => p.data >= per.dal && p.data <= per.al
-        && (p.operatori || []).some(o => String(o.id) === String(per.operatore_id)));
-      const sueVoci = opVoci.filter(v => String(v.operatore_id) === String(per.operatore_id)
-        && v.data >= per.dal && v.data <= per.al);
-      const quote = compensoPerPartita(sue, sueVoci, par, per.operatore_id);
-      Object.entries(quote).forEach(([id, q]) => { totale[id] = (totale[id] || 0) + q; });
-    });
-    return totale;
-  }, [opPeriodi, prenotazioni, opVoci, parametriCompensi]);
 
   const righePerGioco = useMemo(() => {
     const righe = [];
