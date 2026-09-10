@@ -115,11 +115,16 @@ function CostiRicavi({ user }) {
   const [parametriCompensi, setParametriCompensi] = useState(null);
   const [opVoci, setOpVoci] = useState([]);
   const [opPeriodi, setOpPeriodi] = useState([]);
+  // Il listino e i preventivi servono a rispondere a una domanda sola: da quale sede e' partito
+  // il gioco di una prenotazione che il dettaglio non ce l'ha. La risposta c'e' quasi sempre,
+  // basta seguire gli id invece di arrendersi al primo campo vuoto.
+  const [listino, setListino] = useState([]);
+  const [preventivi, setPreventivi] = useState([]);
 
   useEffect(() => { fetchTutto(); }, []);
 
   const fetchTutto = async () => {
-    const [pr, ca, pag, gi, se, cp, ov, op] = await Promise.all([
+    const [pr, ca, pag, gi, se, cp, ov, op, li, pv] = await Promise.all([
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
       supabase.from('pren_campi').select('*').order('nome'),
       supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data'),
@@ -128,6 +133,8 @@ function CostiRicavi({ user }) {
       supabase.from('compensi_parametri').select('*').eq('id', 1).maybeSingle(),
       supabase.from('op_voci').select('*'),
       supabase.from('op_periodi').select('*'),
+      supabase.from('gonfiabili').select('id, giocoId, locationId'),
+      supabase.from('preventivi').select('codice, gonfiabili'),
     ]);
     // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher), non più
     // nella colonna jsonb prenotazioni.pagamenti: vengono agganciati qui a ogni prenotazione.
@@ -141,6 +148,8 @@ function CostiRicavi({ user }) {
     if (cp.data) setParametriCompensi(cp.data);
     if (ov.data) setOpVoci(ov.data);
     if (op.data) setOpPeriodi(op.data);
+    if (li.data) setListino(li.data);
+    if (pv.data) setPreventivi(pv.data);
   };
 
   const giocoPerId = useMemo(() => Object.fromEntries(giochi.map(g => [g.id, g])), [giochi]);
@@ -304,7 +313,47 @@ function CostiRicavi({ user }) {
   // ma c'è un campo, la sede è la nostra. Senza campo resta non indicata, che è la verità.
   const sedePropria = useMemo(() => sedi.find(s => s.bfm)?.nome || '', [sedi]);
 
-  const sedeDiRipiego = useCallback((p) => (p.campoId && sedePropria) ? sedePropria : 'Non indicata', [sedePropria]);
+  // Da quale sede e' partito il gioco di una prenotazione che non ha il dettaglio. Non e' una
+  // resa: la risposta esiste quasi sempre, basta seguire gli id.
+  //
+  //   1. se la partita e' stata giocata su un nostro campo, il gioco e' partito da casa nostra:
+  //      i pacchetti da campo si vendono con la nostra attrezzatura, non con quella di un altro;
+  //   2. se c'e' un preventivo collegato, la sede sta nelle sue righe -- non scritta, ma
+  //      raggiungibile: riga di offerta -> riga di listino -> sede. Vale quando tutte le righe
+  //      partono dalla stessa, che e' il caso di un noleggio da un fornitore solo;
+  //   3. se il gioco esiste a listino presso la nostra sede, e' nostro. E' il caso dei noleggi
+  //      senza preventivo, che l'app permette solo sui giochi nostri proprio perche' non c'e'
+  //      nessun fornitore da pagare.
+  //
+  // Resta "Non indicata" solo cio' che davvero non si sa.
+  const sedeDelGonfiabile = useMemo(() => {
+    const nomeSede = Object.fromEntries(sedi.map(s => [s.id, s.nome]));
+    return Object.fromEntries(listino.map(g => [g.id, nomeSede[g.locationId]]).filter(([, n]) => !!n));
+  }, [listino, sedi]);
+
+  const sedeDelPreventivo = useMemo(() => {
+    const per = {};
+    preventivi.forEach(pv => {
+      const trovate = [...new Set((pv.gonfiabili || []).map(g => sedeDelGonfiabile[g.gonfiabileId]).filter(Boolean))];
+      if (trovate.length === 1) per[pv.codice] = trovate[0];
+    });
+    return per;
+  }, [preventivi, sedeDelGonfiabile]);
+
+  // I giochi che teniamo noi: non un flag da mantenere allineato, ma un fatto che sta gia' nel
+  // listino -- esiste una riga presso la nostra sede.
+  const giochiNostri = useMemo(() => {
+    const nostre = new Set(sedi.filter(s => s.bfm).map(s => s.id));
+    return new Set(listino.filter(g => nostre.has(g.locationId)).map(g => g.giocoId));
+  }, [listino, sedi]);
+
+  const sedeDiRipiego = useCallback((p) => {
+    if (p.campoId && sedePropria) return sedePropria;
+    const dalPreventivo = p.preventivoCollegato ? sedeDelPreventivo[p.preventivoCollegato] : null;
+    if (dalPreventivo) return dalPreventivo;
+    if (p.giocoId != null && giochiNostri.has(p.giocoId) && sedePropria) return sedePropria;
+    return 'Non indicata';
+  }, [sedePropria, sedeDelPreventivo, giochiNostri]);
   const nostra = useCallback((sede) => !!sedePropria && String(sede || '') === String(sedePropria), [sedePropria]);
 
   // Quello che ci aspettiamo di pagare agli operatori, con i parametri di oggi, su tutte le
