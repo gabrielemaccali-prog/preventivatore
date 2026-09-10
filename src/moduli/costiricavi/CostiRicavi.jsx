@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
-import { prenotazioneCompletata } from '../../lib/utils'
+import { fineEventoDi, fatturazioneCompletaDi, etichettaPartita } from '../../lib/utils'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { preventiviPerOperatore, lordizza } from '../compensi/calcolo'
@@ -159,6 +159,23 @@ function CostiRicavi({ user }) {
   const centroRicavoDiRiga = useCallback((r) => (r.giocoId != null ? giocoPerId[r.giocoId]?.centro_ricavo : null) || 'Non assegnato', [giocoPerId]);
   const centroCostoDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.centroCosto || 'Non assegnato', [campi]);
   const campoNomeDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.nome || '—', [campi]);
+  // Come si chiama una partita: il gioco e la modalità con cui è stata venduta. Il gioco arriva
+  // dal catalogo per id, il pacchetto è quello congelato sulla prenotazione.
+  // Che cosa manca a una partita gia' giocata perche' sia chiusa. Le due mancanze sono
+  // indipendenti -- si puo' essere pagati senza avere i dati per fatturare, e viceversa -- quindi
+  // si dicono tutte e due invece di sceglierne una.
+  const statoPratica = (p) => {
+    const manca = [];
+    if (p.statoPagamento !== 'saldato') manca.push('da saldare');
+    if (!fatturazioneCompletaDi(p)) manca.push('da completare');
+    if (manca.length === 0) return 'Completata';
+    return manca.join(' e ').replace(/^./, c => c.toUpperCase());
+  };
+
+  const etichettaDi = useCallback(
+    (p) => etichettaPartita(giocoPerId[p.giocoId]?.nome, p.pacchettoNome) || '—',
+    [giocoPerId]
+  );
 
   // Quello che ci aspettiamo di pagare agli operatori, con i parametri di oggi, su tutte le
   // partite: e' una previsione, quindi vale anche dove il periodo e' gia' stato chiuso.
@@ -234,6 +251,7 @@ function CostiRicavi({ user }) {
   const COLONNE_CR = [
     { chiave: 'data', label: 'Codice / Data', valore: (p) => p.data || '' },
     { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
+    { chiave: 'partita', label: 'Partita', valore: (p) => etichettaDi(p) },
     { chiave: 'campo', label: 'Campo', valore: (p) => campoNomeDi(p) },
     { chiave: 'stato', label: 'Stato', valore: (p) => p.stato || '' },
     { chiave: 'ricavo', label: 'Ricavo', stile: { textAlign: 'right' }, valore: nettoRicavo },
@@ -244,12 +262,16 @@ function CostiRicavi({ user }) {
     { chiave: 'compensoCons', label: 'Compenso cons.', stile: { textAlign: 'right' }, valore: compensoConsDi },
     { chiave: 'margine', label: 'Margine', stile: { textAlign: 'right' }, valore: (p) => nettoRicavo(p) - costoConCompenso(p) },
   ];
+  // "Pratica" compare solo dove si guarda indietro: su una partita che deve ancora essere
+  // giocata, "da saldare" non e' una mancanza, e' la normalita'.
+  const COLONNA_PRATICA = { chiave: 'pratica', label: 'Pratica', valore: (p) => statoPratica(p) };
+  const colonneDi = (conPratica) => conPratica ? [...COLONNE_CR, COLONNA_PRATICA] : COLONNE_CR;
   const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(
-    Object.fromEntries(COLONNE_CR.map(c => [c.chiave, c.valore]))
+    Object.fromEntries(colonneDi(true).map(c => [c.chiave, c.valore]))
   );
 
   // Riga e tabella (con totali) condivise da "Tabella" e "Completate"
-  const rigaCR = (p) => {
+  const rigaCR = (p, conPratica) => {
     const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), ce = nettoEreditato(p);
     const kp = compensoPrevDi(p), kc = compensoConsDi(p);
     const m = r - cc - cr - ce - kp;
@@ -257,6 +279,7 @@ function CostiRicavi({ user }) {
       <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
         <td style={{ padding: '10px' }}><strong>{p.id}</strong><br /><span style={{ color: '#777', fontSize: '0.8rem' }}>{p.data}</span></td>
         <td style={{ padding: '10px' }}>{p.nominativo}</td>
+        <td style={{ padding: '10px' }}>{etichettaDi(p)}</td>
         <td style={{ padding: '10px' }}>{campoNomeDi(p)}</td>
         <td style={{ padding: '10px' }}><span className={`badge-stato ${(p.stato || '').toLowerCase()}`}>{p.stato}</span></td>
         <td style={{ padding: '10px', textAlign: 'right' }}>€{r.toFixed(2)}</td>
@@ -266,6 +289,9 @@ function CostiRicavi({ user }) {
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{kp > 0 ? `€${kp.toFixed(2)}` : '—'}</td>
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{kc > 0 ? `€${kc.toFixed(2)}` : '—'}</td>
         <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: m >= 0 ? '#2e7d32' : '#c62828' }}>€{m.toFixed(2)}</td>
+        {conPratica && (() => { const sp = statoPratica(p); return (
+          <td style={{ padding: '10px', color: sp === 'Completata' ? '#2e7d32' : '#9a3412', fontWeight: sp === 'Completata' ? 'normal' : 'bold' }}>{sp}</td>
+        ); })()}
       </tr>
     );
   };
@@ -278,14 +304,15 @@ function CostiRicavi({ user }) {
     };
   }, { ricavo: 0, costo: 0, margine: 0, compensoPrev: 0, compensoCons: 0 });
 
-  const tabellaCR = (righe, messaggioVuoto) => {
+  const tabellaCR = (righe, messaggioVuoto, conPratica = false) => {
     const tot = totaliCR(righe);
+    const colonne = colonneDi(conPratica);
     return (
       <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
         <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-              {COLONNE_CR.map(c => {
+              {colonne.map(c => {
                 const { style: stileOrdinabile, ...propsOrdinabile } = propsTestata(c.chiave);
                 return (
                   <th key={c.chiave} {...propsOrdinabile} style={{ padding: '10px', ...c.stile, ...stileOrdinabile }}>
@@ -297,17 +324,18 @@ function CostiRicavi({ user }) {
           </thead>
           <tbody>
             {righe.length === 0
-              ? <tr><td colSpan="11" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
-              : ordina(righe).map(rigaCR)}
+              ? <tr><td colSpan={colonne.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+              : ordina(righe).map(p => rigaCR(p, conPratica))}
           </tbody>
           <tfoot>
             <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
-              <td style={{ padding: '10px' }} colSpan="4">TOTALE ({righe.length})</td>
+              <td style={{ padding: '10px' }} colSpan="5">TOTALE ({righe.length})</td>
               <td style={{ padding: '10px', textAlign: 'right' }}>€{tot.ricavo.toFixed(2)}</td>
               <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }} colSpan="3">€{(tot.costo - tot.compensoPrev).toFixed(2)}</td>
               <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{tot.compensoPrev.toFixed(2)}</td>
               <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{tot.compensoCons.toFixed(2)}</td>
               <td style={{ padding: '10px', textAlign: 'right', color: tot.margine >= 0 ? '#2e7d32' : '#c62828' }}>€{tot.margine.toFixed(2)}</td>
+              {conPratica && <td />}
             </tr>
           </tfoot>
         </table>
@@ -317,7 +345,10 @@ function CostiRicavi({ user }) {
 
   // ====================== COMPLETATE (partite CONF passate, saldate e con dati di fatturazione completi) ======================
   const oggiIsoCR = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
-  const righeCompletate = prenotazioni.filter(p => prenotazioneCompletata(p, oggiIsoCR));
+  // Non solo quelle chiuse: tutte le partite confermate che sono gia' state giocate. Una che
+  // aspetta il saldo o i dati di fatturazione e' proprio quella da cercare, e prima restava
+  // fuori dall'unico elenco che guardava indietro.
+  const righeCompletate = prenotazioni.filter(p => p.stato === 'CONF' && fineEventoDi(p) < oggiIsoCR);
 
   // ====================== ANDAMENTO (grafici) ======================
   const annoCorrente = String(new Date().getFullYear());
@@ -589,9 +620,9 @@ function CostiRicavi({ user }) {
       {/* ===================== COMPLETATE ===================== */}
       {currentView === "completate" && puoVedere(user, 'costiricavi', 'completate') && (
         <div className="schermata-storico no-print">
-          <h2 style={{ margin: 0 }}>Partite completate</h2>
-          <p className="descrizione-pagina">Partite confermate, già disputate, saldate e con dati di fatturazione completi.</p>
-          {tabellaCR(righeCompletate, "Nessuna partita completata.")}
+          <h2 style={{ margin: 0 }}>Partite giocate</h2>
+          <p className="descrizione-pagina">Partite confermate e già giocate: quelle chiuse e quelle che aspettano ancora il saldo o i dati per fatturare. La colonna Pratica dice cosa manca.</p>
+          {tabellaCR(righeCompletate, "Nessuna partita già giocata.", true)}
         </div>
       )}
 
