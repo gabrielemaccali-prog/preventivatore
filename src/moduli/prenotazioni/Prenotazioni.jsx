@@ -13,7 +13,9 @@ const GIORNI = [
   { n: 5, l: 'Ven' }, { n: 6, l: 'Sab' }, { n: 7, l: 'Dom' }
 ];
 
-const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", centroRicavo: "", prevedeRinfresco: false, numeroPartecipanti: "", giochi_richiesti: "1" };
+// Il centro di ricavo non sta piu' qui: viaggia sul gioco, a catalogo. Un pacchetto dice la
+// modalita' di vendita, e la modalita' non ha un centro di ricavo suo.
+const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", prevedeRinfresco: false, numeroPartecipanti: "", giochi_richiesti: "1" };
 const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusaCampo: false, ivaInclusaRinfresco: false, costoMerenda: "", costoAperitivo: "", ivaCampo: "22", ivaRinfresco: "22", noRinfresco: false };
 
 // Frazione IVA da applicare (percentuale campo, es. 22 -> 0.22); 22% di default se non specificata sul campo.
@@ -1286,7 +1288,6 @@ function Prenotazioni({ user }) {
       durataOre: numOrNull(formPacchetto.durataOre),
       locationTipo: formPacchetto.locationTipo,
       prezzo: numOrNull(formPacchetto.prezzo),
-      centroRicavo: formPacchetto.centroRicavo,
       prevedeRinfresco: formPacchetto.prevedeRinfresco,
       numeroPartecipanti: numOrNull(formPacchetto.numeroPartecipanti),
       // Quanti giochi chiede: uno di norma, due per "Due giochi", e non c'e' un tetto.
@@ -1303,7 +1304,7 @@ function Prenotazioni({ user }) {
     setEditPacchetto(p.id);
     setFormPacchetto({
       nome: p.nome || "", durataOre: p.durataOre ?? "", locationTipo: p.locationTipo || "libera",
-      prezzo: p.prezzo ?? "", centroRicavo: p.centroRicavo || "", prevedeRinfresco: !!p.prevedeRinfresco, numeroPartecipanti: p.numeroPartecipanti ?? "",
+      prezzo: p.prezzo ?? "", prevedeRinfresco: !!p.prevedeRinfresco, numeroPartecipanti: p.numeroPartecipanti ?? "",
       giochi_richiesti: String(p.giochi_richiesti ?? 1)
     });
     setShowFormPacchetto(true);
@@ -1319,14 +1320,16 @@ function Prenotazioni({ user }) {
     setIdPacchettoInline(p.id);
     setDatiPacchettoInline({
       nome: p.nome || "", durataOre: p.durataOre ?? "", locationTipo: p.locationTipo || "libera",
-      prezzo: p.prezzo ?? "", centroRicavo: p.centroRicavo || "", prevedeRinfresco: !!p.prevedeRinfresco, numeroPartecipanti: p.numeroPartecipanti ?? ""
+      prezzo: p.prezzo ?? "", prevedeRinfresco: !!p.prevedeRinfresco, numeroPartecipanti: p.numeroPartecipanti ?? "",
+      giochi_richiesti: String(p.giochi_richiesti ?? 1)
     });
   };
   const salvaInlinePacchetto = async () => {
     const d = datiPacchettoInline;
     const { error } = await supabase.from('pren_pacchetti').update({
       nome: d.nome, durataOre: numOrNull(d.durataOre), locationTipo: d.locationTipo,
-      prezzo: numOrNull(d.prezzo), centroRicavo: d.centroRicavo, prevedeRinfresco: d.prevedeRinfresco, numeroPartecipanti: numOrNull(d.numeroPartecipanti)
+      prezzo: numOrNull(d.prezzo), prevedeRinfresco: d.prevedeRinfresco, numeroPartecipanti: numOrNull(d.numeroPartecipanti),
+      giochi_richiesti: Math.max(1, parseInt(d.giochi_richiesti, 10) || 1)
     }).eq('id', idPacchettoInline);
     if (error) { console.error(error); return alert("Errore salvataggio pacchetto"); }
     setIdPacchettoInline(null); fetchTutto();
@@ -2111,7 +2114,6 @@ function Prenotazioni({ user }) {
                         <option value="campi">Dai campi</option>
                       </select></Campo>
                       <Campo label="Prezzo € (vuoto = manuale in prenotazione. Se fissato è IVA inclusa)"><input type="number" step="any" value={formPacchetto.prezzo} onChange={(e) => setFormPacchetto({ ...formPacchetto, prezzo: e.target.value })} style={inputStyle} /></Campo>
-                      <Campo label="Centro di ricavo"><input type="text" value={formPacchetto.centroRicavo} onChange={(e) => setFormPacchetto({ ...formPacchetto, centroRicavo: e.target.value })} style={inputStyle} /></Campo>
                       <Campo label="N° partecipanti (se stabilito in anticipo)"><input type="number" step="1" value={formPacchetto.numeroPartecipanti} onChange={(e) => setFormPacchetto({ ...formPacchetto, numeroPartecipanti: e.target.value })} style={inputStyle} /></Campo>
                       <Campo label="N° giochi che il pacchetto comprende"><input type="number" step="1" min="1" value={formPacchetto.giochi_richiesti} onChange={(e) => setFormPacchetto({ ...formPacchetto, giochi_richiesti: e.target.value })} style={inputStyle} /></Campo>
                       <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
@@ -2129,7 +2131,7 @@ function Prenotazioni({ user }) {
                 <div className="admin-table-box" style={boxTabella}>
                   <table style={{ width: '100%', minWidth: '850px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                     <thead><tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                      <th style={{ padding: '10px 12px' }}>Nome</th><th style={{ padding: '10px 12px' }}>Durata</th><th style={{ padding: '10px 12px' }}>Location</th><th style={{ padding: '10px 12px' }}>Prezzo</th><th style={{ padding: '10px 12px' }}>C. Ricavo</th><th style={{ padding: '10px 12px' }}>N° Part.</th><th style={{ padding: '10px 12px' }}>Rinfresco</th><th style={{ padding: '10px 12px', textAlign: 'center', width: '70px' }}>Attivo</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Azioni</th>
+                      <th style={{ padding: '10px 12px' }}>Nome</th><th style={{ padding: '10px 12px' }}>Durata</th><th style={{ padding: '10px 12px' }}>Location</th><th style={{ padding: '10px 12px' }}>Prezzo</th><th style={{ padding: '10px 12px' }}>Giochi</th><th style={{ padding: '10px 12px' }}>N° Part.</th><th style={{ padding: '10px 12px' }}>Rinfresco</th><th style={{ padding: '10px 12px', textAlign: 'center', width: '70px' }}>Attivo</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Azioni</th>
                     </tr></thead>
                     <tbody>
                       {pacchetti.map(p => idPacchettoInline === p.id ? (
@@ -2138,7 +2140,7 @@ function Prenotazioni({ user }) {
                           <td style={{ padding: '8px' }}><input className="table-input" type="number" step="any" placeholder="Libera" value={datiPacchettoInline.durataOre} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, durataOre: e.target.value })} style={{ width: '70px', height: '28px', fontSize: '0.8rem' }} /></td>
                           <td style={{ padding: '8px' }}><select className="table-input" value={datiPacchettoInline.locationTipo} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, locationTipo: e.target.value })} style={{ height: '30px', fontSize: '0.8rem' }}><option value="libera">Libera</option><option value="campi">Dai campi</option></select></td>
                           <td style={{ padding: '8px' }}><input className="table-input" type="number" step="any" placeholder="Manuale" value={datiPacchettoInline.prezzo} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, prezzo: e.target.value })} style={{ width: '80px', height: '28px', fontSize: '0.8rem' }} /></td>
-                          <td style={{ padding: '8px' }}><input className="table-input" value={datiPacchettoInline.centroRicavo} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, centroRicavo: e.target.value })} style={{ width: '100%', height: '28px', fontSize: '0.8rem' }} /></td>
+                          <td style={{ padding: '8px' }}><input className="table-input" type="number" step="1" min="1" value={datiPacchettoInline.giochi_richiesti} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, giochi_richiesti: e.target.value })} style={{ width: '60px', height: '28px', fontSize: '0.8rem' }} /></td>
                           <td style={{ padding: '8px' }}><input className="table-input" type="number" step="1" value={datiPacchettoInline.numeroPartecipanti} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, numeroPartecipanti: e.target.value })} style={{ width: '60px', height: '28px', fontSize: '0.8rem' }} /></td>
                           <td style={{ padding: '8px', textAlign: 'center' }}><input type="checkbox" checked={datiPacchettoInline.prevedeRinfresco} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, prevedeRinfresco: e.target.checked })} /></td>
                           <td style={{ padding: '8px', textAlign: 'center' }}>
@@ -2154,7 +2156,7 @@ function Prenotazioni({ user }) {
                           <td style={{ padding: '10px 12px' }}>{p.durataOre ? `${p.durataOre}h` : 'Libera'}</td>
                           <td style={{ padding: '10px 12px' }}>{p.locationTipo === 'campi' ? 'Dai campi' : 'Libera'}</td>
                           <td style={{ padding: '10px 12px' }}>{p.prezzo != null ? `€${parseFloat(p.prezzo).toFixed(2)} IVA incl.` : 'Manuale (+IVA)'}</td>
-                          <td style={{ padding: '10px 12px' }}>{p.centroRicavo || '—'}</td>
+                          <td style={{ padding: '10px 12px' }}>{p.giochi_richiesti > 1 ? <strong>{p.giochi_richiesti}</strong> : (p.giochi_richiesti ?? 1)}</td>
                           <td style={{ padding: '10px 12px' }}>{p.numeroPartecipanti || '—'}</td>
                           <td style={{ padding: '10px 12px' }}>{p.prevedeRinfresco ? 'Sì' : 'No'}</td>
                           {/* Un pacchetto non si cancella — le prenotazioni passate ci puntano —
