@@ -6,10 +6,19 @@ export const MODULI_REGISTRY = [
   { id: 'disponibilita', label: 'Disponibilità', icon: 'disponibilita' },
   { id: 'costiricavi', label: 'Costi/Ricavi', icon: 'costiricavi' },
   { id: 'compensi', label: 'Compensi', icon: 'compensi' },
+  // Il catalogo è la base da cui leggono listino e prenotazioni, ma non è lavoro quotidiano:
+  // sta in fondo perché l'ordine di questo registro decide anche su quale modulo si atterra
+  // dopo l'accesso, e chi entra deve trovarsi al lavoro, non in una pagina di configurazione.
+  { id: 'catalogo', label: 'Catalogo', icon: 'catalogo' },
 ];
 
 // --- REGISTRO SCHEDE/SOTTOSCHEDE PER MODULO (usato per costruire la matrice permessi in Impostazioni > Ruoli) ---
 export const SCHEDE_REGISTRY = {
+  catalogo: {
+    schede: [
+      { id: 'giochi', label: 'Giochi' },
+    ],
+  },
   preventivatore: {
     schede: [
       { id: 'calculator', label: 'Preventivatore' },
@@ -18,7 +27,9 @@ export const SCHEDE_REGISTRY = {
         label: 'Configurazione',
         sottoschede: [
           { id: 'sedi', label: 'Sedi' },
-          { id: 'gonfiabili', label: 'Gonfiabili' },
+          // L'id resta 'gonfiabili': è la chiave con cui i permessi dei ruoli sono già salvati a
+          // database, e cambiarlo toglierebbe l'accesso a chi ce l'ha senza dire niente.
+          { id: 'gonfiabili', label: 'Listino' },
           { id: 'extra', label: 'Extra' },
         ],
       },
