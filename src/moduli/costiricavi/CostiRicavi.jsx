@@ -5,6 +5,7 @@ import { puoVedere } from '../../lib/permessi'
 import { prenotazioneCompletata } from '../../lib/utils'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
+import { preventiviPerOperatore, lordizza } from '../compensi/calcolo'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell
@@ -58,6 +59,44 @@ const raggruppaPerCentro = (righe, getCentro, getValore) => {
 
 const formattaEuro = (v) => `€${(+v || 0).toFixed(2)}`;
 
+// Il compenso che una partita si porta dietro. La quota della singola partita la calcola gia' il
+// modulo compensi -- blocchi consecutivi, prima ora, ore successive, tetto giornaliero ripartito
+// fra le partite del giorno -- e rifarla qui vorrebbe dire farle dire due numeri diversi. Quindi
+// si riusa quella, e questo resta un lavoro di attribuzione.
+//
+// Il costo e' il LORDO: l'operatore incassa il netto, la ritenuta la versa l'azienda, e l'uscita
+// e' la somma dei due. Le spese sono rimborsi e si sommano sopra, senza ritenuta.
+//
+// `soloOperatore` serve al consuntivo, che si ricostruisce un periodo per volta e un periodo
+// appartiene a un operatore solo.
+const compensoPerPartita = (prenotazioni, voci, par, soloOperatore = null) => {
+  const perPartita = {};
+  const escludi = (opId) => soloOperatore != null && String(opId) !== String(soloOperatore);
+  preventiviPerOperatore(prenotazioni, voci, par, escludi).forEach(op => {
+    op.giornate.forEach(g => {
+      const partiteDelGiorno = g.blocchi.flatMap(b => b.partite);
+      if (partiteDelGiorno.length === 0) return; // una spesa in un giorno senza partite non e' attribuibile
+      const totaleQuote = partiteDelGiorno.reduce((s, x) => s + (x.compenso || 0), 0);
+      const somma = (elenco, esenti) => elenco
+        .filter(v => !!v.esente_ritenuta === esenti)
+        .reduce((s, v) => s + (parseFloat(v.importo) || 0), 0);
+      // Le voci che dicono a quale partita si riferiscono vanno li'. Quelle che non lo dicono si
+      // dividono in proporzione alle quote: sono costo di quella giornata, e la giornata e' fatta
+      // di queste partite.
+      const sparse = g.voci.filter(v => !v.riferimento);
+      partiteDelGiorno.forEach(x => {
+        const id = x.partita.id;
+        const proprie = g.voci.filter(v => String(v.riferimento || '') === String(id));
+        const quota = totaleQuote > 0 ? (x.compenso / totaleQuote) : (1 / partiteDelGiorno.length);
+        const netto = x.compenso + somma(proprie, false) + somma(sparse, false) * quota;
+        const spese = somma(proprie, true) + somma(sparse, true) * quota;
+        perPartita[id] = (perPartita[id] || 0) + lordizza(netto, par?.aliquota_ritenuta).lordo + spese;
+      });
+    });
+  });
+  return perPartita;
+};
+
 function CostiRicavi({ user }) {
   const primaSchedaCR = ['tabella', 'andamento', 'pergioco', 'completate'].find(s => puoVedere(user, 'costiricavi', s)) || 'tabella';
   const [currentView, setCurrentView] = useState(primaSchedaCR);
@@ -71,16 +110,24 @@ function CostiRicavi({ user }) {
   // Le sedi servono a una cosa sola: sapere come si chiama la nostra, per attribuirle le partite
   // giocate sui campi. Il nome non lo scrivo nel codice perché è un dato, e i dati si rinominano.
   const [sedi, setSedi] = useState([]);
+  // Il costo di un operatore non sta su nessuna colonna delle prenotazioni: si calcola dai
+  // parametri, dalle ore e da chi c'era. Serve tutto e tre.
+  const [parametriCompensi, setParametriCompensi] = useState(null);
+  const [opVoci, setOpVoci] = useState([]);
+  const [opPeriodi, setOpPeriodi] = useState([]);
 
   useEffect(() => { fetchTutto(); }, []);
 
   const fetchTutto = async () => {
-    const [pr, ca, pag, gi, se] = await Promise.all([
+    const [pr, ca, pag, gi, se, cp, ov, op] = await Promise.all([
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
       supabase.from('pren_campi').select('*').order('nome'),
       supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data'),
       supabase.from('giochi').select('*').order('nome'),
       supabase.from('sedi').select('*'),
+      supabase.from('compensi_parametri').select('*').eq('id', 1).maybeSingle(),
+      supabase.from('op_voci').select('*'),
+      supabase.from('op_periodi').select('*'),
     ]);
     // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher), non più
     // nella colonna jsonb prenotazioni.pagamenti: vengono agganciati qui a ogni prenotazione.
@@ -91,6 +138,9 @@ function CostiRicavi({ user }) {
     if (ca.data) setCampi(ca.data);
     if (gi.data) setGiochi(gi.data);
     if (se.data) setSedi(se.data);
+    if (cp.data) setParametriCompensi(cp.data);
+    if (ov.data) setOpVoci(ov.data);
+    if (op.data) setOpPeriodi(op.data);
   };
 
   const giocoPerId = useMemo(() => Object.fromEntries(giochi.map(g => [g.id, g])), [giochi]);
@@ -255,6 +305,33 @@ function CostiRicavi({ user }) {
   const sedePropria = useMemo(() => sedi.find(s => s.bfm)?.nome || '', [sedi]);
 
   const sedeDiRipiego = useCallback((p) => (p.campoId && sedePropria) ? sedePropria : 'Non indicata', [sedePropria]);
+  const nostra = useCallback((sede) => !!sedePropria && String(sede || '') === String(sedePropria), [sedePropria]);
+
+  // Quello che ci aspettiamo di pagare agli operatori, con i parametri di oggi, su tutte le
+  // partite: e' una previsione, quindi vale anche dove il periodo e' gia' stato chiuso.
+  const compensoPrevisto = useMemo(
+    () => parametriCompensi ? compensoPerPartita(prenotazioni, opVoci, parametriCompensi) : {},
+    [prenotazioni, opVoci, parametriCompensi]
+  );
+
+  // Quello che e' stato davvero pagato. Si ricostruisce un periodo per volta, e ogni periodo con
+  // i parametri congelati dentro di lui: ritoccare la tariffa domani non deve riscrivere un
+  // consuntivo gia' liquidato. Una partita che nessun periodo copre resta a zero, ed e' la
+  // verita' -- non e' ancora stata pagata, non e' gratis.
+  const compensoConsuntivato = useMemo(() => {
+    const totale = {};
+    opPeriodi.forEach(per => {
+      const par = per.parametri || parametriCompensi;
+      if (!par) return;
+      const sue = prenotazioni.filter(p => p.data >= per.dal && p.data <= per.al
+        && (p.operatori || []).some(o => String(o.id) === String(per.operatore_id)));
+      const sueVoci = opVoci.filter(v => String(v.operatore_id) === String(per.operatore_id)
+        && v.data >= per.dal && v.data <= per.al);
+      const quote = compensoPerPartita(sue, sueVoci, par, per.operatore_id);
+      Object.entries(quote).forEach(([id, q]) => { totale[id] = (totale[id] || 0) + q; });
+    });
+    return totale;
+  }, [opPeriodi, prenotazioni, opVoci, parametriCompensi]);
 
   const righePerGioco = useMemo(() => {
     const righe = [];
@@ -264,6 +341,11 @@ function CostiRicavi({ user }) {
       if (annoSel && meseSel && parseInt(p.data.slice(5, 7), 10) !== parseInt(meseSel, 10)) return;
       const voci = Array.isArray(p.voci) ? p.voci.filter(Boolean) : [];
       const costoStruttura = nettoCampo(p) + nettoRinf(p);
+      // Il compenso sta sulla prenotazione, non sul singolo gioco: va sul gioco che la identifica,
+      // come campo e rinfresco.
+      const compPrev = compensoPrevisto[p.id] || 0;
+      const compCons = compensoConsuntivato[p.id] || 0;
+      const base = (extra) => ({ pren: p, giocoId: p.giocoId ?? null, nome: '', sede: sedeDiRipiego(p), ricavo: 0, costo: 0, compPrev: 0, compCons: 0, ...extra });
       if (voci.length > 0) {
         const sommaVoci = voci.reduce((t, v) => t + (parseFloat(v.ricavo) || 0), 0);
         const proporzione = sommaVoci > 0 ? nettoRicavo(p) / sommaVoci : 0;
@@ -273,15 +355,20 @@ function CostiRicavi({ user }) {
           nome: v.nome || '',
           sede: v.sede || 'Non indicata',
           ricavo: (parseFloat(v.ricavo) || 0) * proporzione,
-          costo: parseFloat(v.costo) || 0,
+          // Un gioco che parte da una nostra sede non ci costa niente di suo: il prezzo a listino
+          // serve al preventivatore per calcolare la vendita, e il costo che il preventivo gli
+          // attribuisce e' la logistica -- cioe' il rimborso all'operatore, che qui arriva dal
+          // compenso. Lasciarlo qui vorrebbe dire pagarlo due volte.
+          costo: nostra(v.sede) ? 0 : (parseFloat(v.costo) || 0),
+          compPrev: 0, compCons: 0,
         }));
-        if (costoStruttura > 0) righe.push({ pren: p, giocoId: p.giocoId ?? null, nome: '', sede: sedeDiRipiego(p), ricavo: 0, costo: costoStruttura });
+        righe.push(base({ costo: costoStruttura, compPrev, compCons }));
       } else {
-        righe.push({ pren: p, giocoId: p.giocoId ?? null, nome: '', sede: sedeDiRipiego(p), ricavo: nettoRicavo(p), costo: nettoEreditato(p) + costoStruttura });
+        righe.push(base({ ricavo: nettoRicavo(p), costo: nettoEreditato(p) + costoStruttura, compPrev, compCons }));
       }
     });
     return righe;
-  }, [prenotazioni, annoSel, meseSel, sedeDiRipiego]);
+  }, [prenotazioni, annoSel, meseSel, sedeDiRipiego, nostra, compensoPrevisto, compensoConsuntivato]);
 
   // Anche i grafici guardano le righe, non le vendite intere. Un grafico intitolato "ricavi per
   // centro di ricavo" che non sa mostrare i 600 euro di Archery Tag, perche' sono stati venduti
@@ -294,7 +381,12 @@ function CostiRicavi({ user }) {
   }), [righePerGioco, centroCostoSel, centroRicavoSel, centroCostoDi, centroRicavoDiRiga]);
 
   const datiBarre = useMemo(() => {
-    const somma = (dove, r) => { dove.ricavo += r.ricavo; dove.costo += r.costo; dove.margine += (r.ricavo - r.costo); };
+    // Qui il costo e' quello preventivo: e' l'unico che esiste su tutte le partite, e un grafico
+    // di andamento che si svuota man mano che si indietreggia nel tempo non racconta niente.
+    const somma = (dove, r) => {
+      const costo = r.costo + r.compPrev;
+      dove.ricavo += r.ricavo; dove.costo += costo; dove.margine += (r.ricavo - costo);
+    };
     if (!annoSel) {
       const per = {};
       righeAndamento.forEach(r => {
@@ -316,7 +408,7 @@ function CostiRicavi({ user }) {
   const mappaColoriRicavo = useMemo(() => mappaColoriCentri(giochi.map(g => g.centro_ricavo)), [giochi]);
   const mappaColoriCosto = useMemo(() => mappaColoriCentri(campi.map(c => c.centroCosto)), [campi]);
   const datiTortaRicavi = useMemo(() => raggruppaPerCentro(righeAndamento, centroRicavoDiRiga, (r) => r.ricavo), [righeAndamento, centroRicavoDiRiga]);
-  const datiTortaCosti = useMemo(() => raggruppaPerCentro(righeAndamento, (r) => centroCostoDi(r.pren), (r) => r.costo), [righeAndamento, centroCostoDi]);
+  const datiTortaCosti = useMemo(() => raggruppaPerCentro(righeAndamento, (r) => centroCostoDi(r.pren), (r) => r.costo + r.compPrev), [righeAndamento, centroCostoDi]);
 
 
   // A che gruppo appartiene una riga, secondo la dimensione scelta. Il nome arriva dal catalogo
@@ -330,17 +422,30 @@ function CostiRicavi({ user }) {
     return g?.centro_ricavo || 'Non assegnato';
   }, [giocoPerId, raggruppaPer]);
 
+  // Ogni gruppo porta due costi e due margini: il preventivo dice quanto ci aspettiamo che costi,
+  // il consuntivo quanto e' costato davvero. Differiscono solo sul compenso degli operatori --
+  // fornitori, campo e rinfresco sono gli stessi -- e finche' un periodo non viene consuntivato
+  // il secondo resta piu' basso del primo, perche' quel compenso non e' ancora stato liquidato.
   const gruppiPerGioco = useMemo(() => {
     const per = {};
     righePerGioco.forEach(r => {
       const k = gruppoDi(r);
-      if (!per[k]) per[k] = { nome: k, ricavo: 0, costo: 0, partite: new Set() };
+      if (!per[k]) per[k] = { nome: k, ricavo: 0, costo: 0, compPrev: 0, compCons: 0, partite: new Set() };
       per[k].ricavo += r.ricavo;
       per[k].costo += r.costo;
+      per[k].compPrev += r.compPrev;
+      per[k].compCons += r.compCons;
       per[k].partite.add(r.pren.id);
     });
     return Object.values(per)
-      .map(v => ({ ...v, partite: v.partite.size, margine: v.ricavo - v.costo }))
+      .map(v => ({
+        ...v,
+        partite: v.partite.size,
+        costoPrev: v.costo + v.compPrev,
+        costoCons: v.costo + v.compCons,
+        marginePrev: v.ricavo - v.costo - v.compPrev,
+        margineCons: v.ricavo - v.costo - v.compCons,
+      }))
       .sort((a, b) => b.ricavo - a.ricavo);
   }, [righePerGioco, gruppoDi]);
 
@@ -348,8 +453,12 @@ function CostiRicavi({ user }) {
   // due giochi di centri diversi compare in due gruppi ed e' giusto cosi', ma resta una partita.
   const partiteTotali = useMemo(() => new Set(righePerGioco.map(r => r.pren.id)).size, [righePerGioco]);
   const totaliPerGioco = useMemo(() => gruppiPerGioco.reduce(
-    (a, v) => ({ ricavo: a.ricavo + v.ricavo, costo: a.costo + v.costo, margine: a.margine + v.margine }),
-    { ricavo: 0, costo: 0, margine: 0 }
+    (a, v) => ({
+      ricavo: a.ricavo + v.ricavo,
+      costoPrev: a.costoPrev + v.costoPrev, costoCons: a.costoCons + v.costoCons,
+      marginePrev: a.marginePrev + v.marginePrev, margineCons: a.margineCons + v.margineCons,
+    }),
+    { ricavo: 0, costoPrev: 0, costoCons: 0, marginePrev: 0, margineCons: 0 }
   ), [gruppiPerGioco]);
 
   const ETICHETTE_RAGGRUPPAMENTO = { centro: 'Centro di ricavo', famiglia: 'Famiglia', gioco: 'Gioco', sede: 'Sede' };
@@ -360,8 +469,10 @@ function CostiRicavi({ user }) {
       [ETICHETTE_RAGGRUPPAMENTO[raggruppaPer]]: v.nome,
       Partite: v.partite,
       Ricavo: +v.ricavo.toFixed(2),
-      Costo: +v.costo.toFixed(2),
-      Margine: +v.margine.toFixed(2),
+      'Costo preventivo': +v.costoPrev.toFixed(2),
+      'Costo consuntivo': +v.costoCons.toFixed(2),
+      'Margine preventivo': +v.marginePrev.toFixed(2),
+      'Margine consuntivo': +v.margineCons.toFixed(2),
     })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "PerGioco");
@@ -544,20 +655,24 @@ function CostiRicavi({ user }) {
                   <th style={{ padding: '10px' }}>{ETICHETTE_RAGGRUPPAMENTO[raggruppaPer]}</th>
                   <th style={{ padding: '10px', textAlign: 'right' }}>Partite</th>
                   <th style={{ padding: '10px', textAlign: 'right' }}>Ricavo</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>Costo</th>
-                  <th style={{ padding: '10px', textAlign: 'right' }}>Margine</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Costo prev.</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Costo cons.</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Margine prev.</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Margine cons.</th>
                 </tr>
               </thead>
               <tbody>
                 {gruppiPerGioco.length === 0
-                  ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessuna partita nel periodo selezionato.</td></tr>
+                  ? <tr><td colSpan="7" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessuna partita nel periodo selezionato.</td></tr>
                   : gruppiPerGioco.map(v => (
                     <tr key={v.nome} style={{ borderBottom: '1px solid #eee' }}>
                       <td style={{ padding: '10px' }}>{v.nome}</td>
                       <td style={{ padding: '10px', textAlign: 'right' }}>{v.partite}</td>
                       <td style={{ padding: '10px', textAlign: 'right' }}>{formattaEuro(v.ricavo)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{formattaEuro(v.costo)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: v.margine >= 0 ? '#2e7d32' : '#c62828' }}>{formattaEuro(v.margine)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{formattaEuro(v.costoPrev)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{formattaEuro(v.costoCons)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: v.marginePrev >= 0 ? '#2e7d32' : '#c62828' }}>{formattaEuro(v.marginePrev)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: v.margineCons >= 0 ? '#2e7d32' : '#c62828' }}>{formattaEuro(v.margineCons)}</td>
                     </tr>
                   ))}
               </tbody>
@@ -566,8 +681,10 @@ function CostiRicavi({ user }) {
                   <td style={{ padding: '10px' }}>TOTALE</td>
                   <td style={{ padding: '10px', textAlign: 'right' }}>{partiteTotali}</td>
                   <td style={{ padding: '10px', textAlign: 'right' }}>{formattaEuro(totaliPerGioco.ricavo)}</td>
-                  <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{formattaEuro(totaliPerGioco.costo)}</td>
-                  <td style={{ padding: '10px', textAlign: 'right', color: totaliPerGioco.margine >= 0 ? '#2e7d32' : '#c62828' }}>{formattaEuro(totaliPerGioco.margine)}</td>
+                  <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{formattaEuro(totaliPerGioco.costoPrev)}</td>
+                  <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{formattaEuro(totaliPerGioco.costoCons)}</td>
+                  <td style={{ padding: '10px', textAlign: 'right', color: totaliPerGioco.marginePrev >= 0 ? '#2e7d32' : '#c62828' }}>{formattaEuro(totaliPerGioco.marginePrev)}</td>
+                  <td style={{ padding: '10px', textAlign: 'right', color: totaliPerGioco.margineCons >= 0 ? '#2e7d32' : '#c62828' }}>{formattaEuro(totaliPerGioco.margineCons)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -584,8 +701,8 @@ function CostiRicavi({ user }) {
                   <Tooltip formatter={(value) => formattaEuro(value)} contentStyle={{ fontSize: '0.85rem' }} />
                   <Legend wrapperStyle={{ fontSize: '0.85rem' }} />
                   <Bar dataKey="ricavo" name="Ricavo" fill={COLORE_RICAVO} radius={[4, 4, 0, 0]} maxBarSize={24} />
-                  <Bar dataKey="costo" name="Costo" fill={COLORE_COSTO} radius={[4, 4, 0, 0]} maxBarSize={24} />
-                  <Bar dataKey="margine" name="Margine" fill={COLORE_MARGINE} radius={[4, 4, 0, 0]} maxBarSize={24} />
+                  <Bar dataKey="costoPrev" name="Costo preventivo" fill={COLORE_COSTO} radius={[4, 4, 0, 0]} maxBarSize={24} />
+                  <Bar dataKey="marginePrev" name="Margine preventivo" fill={COLORE_MARGINE} radius={[4, 4, 0, 0]} maxBarSize={24} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
