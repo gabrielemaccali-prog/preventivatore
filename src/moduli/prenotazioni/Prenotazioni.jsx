@@ -440,7 +440,9 @@ function Prenotazioni({ user }) {
   const giochiSelezionabili = (pacchetto, giocoIdCorrente) => giochi.filter(g => {
     if (!g.attivo && String(g.id) !== String(giocoIdCorrente)) return false;
     // Su un pacchetto da campo valgono i giochi che hai deciso di vendere così.
-    if (pacchetto?.locationTipo === 'campi') return g.per_pacchetti;
+    // Quello già scelto resta in elenco anche se nel frattempo gli hai tolto la spunta: toglierla
+    // decide cosa si vende da domani, non riscrive una partita già venduta.
+    if (pacchetto?.locationTipo === 'campi') return g.per_pacchetti || String(g.id) === String(giocoIdCorrente);
     // Su un noleggio si sceglie un gioco solo se è nostro: quello di un fornitore ha un costo
     // che sa solo il preventivo, e infatti l'alternativa al gioco è proprio il preventivo.
     return giochiPropri.has(g.id) || String(g.id) === String(giocoIdCorrente);
