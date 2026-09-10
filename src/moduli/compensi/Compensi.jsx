@@ -636,7 +636,7 @@ function Compensi({ user }) {
             <th style={{ padding: '8px 10px', width: '104px' }}>Orario</th>
             <th style={{ padding: '8px 10px', width: '124px' }}>Partita</th>
             <th style={{ padding: '8px 10px' }}>Nominativo</th>
-            <th style={{ padding: '8px 10px' }}>Gioco · Pacchetto</th>
+            <th style={{ padding: '8px 10px' }}>Pacchetto · Gioco</th>
             <th style={{ padding: '8px 10px' }}>Location</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '58px' }}>Ore</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '80px' }}>Compenso</th>

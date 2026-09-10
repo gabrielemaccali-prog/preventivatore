@@ -207,7 +207,7 @@ const COLONNE_PREN = [
   { chiave: 'data', label: 'Data evento', valore: (p) => `${p.data || ''}T${p.oraInizio || ''}` }, // eventi senza orario: prima degli altri dello stesso giorno
   { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
   // Il valore di ordinamento viene sostituito nel componente, dove il nome del gioco è risolvibile.
-  { chiave: 'pacchetto', label: 'Gioco · Pacchetto', valore: (p) => p.pacchettoNome || '' },
+  { chiave: 'pacchetto', label: 'Pacchetto · Gioco', valore: (p) => p.pacchettoNome || '' },
   { chiave: 'location', label: 'Location', valore: (p) => p.campoNome || p.locationCitta || '' },
   { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') || (p.senzaOperatori ? 'non richiesti' : '') },
   { chiave: 'importo', label: 'Pagato / Totale', valore: (p) => parseFloat(p.prezzoVendita) || 0 },
@@ -679,6 +679,18 @@ function Prenotazioni({ user }) {
 
   const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  // L'orario che segue un altro: la merenda comincia quando finisce il gioco e dura un'ora.
+  // Non si salva da nessuna parte perché non è un dato, è una conseguenza: cambiare l'orario di
+  // gioco deve spostare la merenda da solo, e un campo salvato lo dimenticherebbe.
+  const oraPiuOre = (ora, ore) => {
+    const min = toMinutes(ora);
+    if (min == null) return '';
+    const tot = (min + Math.round((parseFloat(ore) || 0) * 60)) % (24 * 60);
+    return `${String(Math.floor(tot / 60)).padStart(2, '0')}:${String(tot % 60).padStart(2, '0')}`;
+  };
+
+  const LINK_INVITO_FESTA = 'https://bubblefootballmi.it/doc/InvitoFestaBubbleFootball.zip';
+
   // Costruisce la mail di conferma (testo semplice + HTML con tabella, come nel formato usato oggi via Gmail)
   const costruisciConferma = (p) => {
     const campoInfo = p.campoId ? campi.find(c => c.id === p.campoId) : null;
@@ -695,28 +707,67 @@ function Prenotazioni({ user }) {
       ? 'SALDATO ✅'
       : `Con Bonifico — Importo da versare: €${residuo.toFixed(2)}${totalePagatoP > 0 ? ` (già versato €${totalePagatoP.toFixed(2)} su €${prezzoVendita.toFixed(2)})` : ''}`;
 
+    // --- LA PARTITA CON MERENDA O APERITIVO ---
+    // Ha un formato suo, che è quello che i clienti ricevono già oggi: il titolo dice il gioco e
+    // per quante persone, l'orario si sdoppia in gioco e rinfresco, e sotto compaiono le regole
+    // che valgono solo quando si mangia al centro sportivo.
+    const rinfresco = (p.tipoRinfresco || '').trim();
+    const conRinfresco = !!rinfresco;
+    const eMerenda = /merenda/i.test(rinfresco);
+    const nomiGiochi = giochiDi(p);
+    // "10 BOLLE" è il modo in cui il Bubble si conta: sono le bolle in campo. Per gli altri
+    // giochi le persone si contano e basta.
+    const soloBubble = nomiGiochi.length === 1 && /bubble/i.test(nomiGiochi[0] || '');
+    const quantita = p.numeroPartecipanti ? ` (${p.numeroPartecipanti} ${soloBubble ? 'BOLLE' : 'PERSONE'})` : '';
+    const titolo = conRinfresco
+      ? `${nomiGiochi.join(' + ').toUpperCase()}${quantita} + ${rinfresco.toUpperCase()}`
+      : (etichettaDi(p) || '');
+
+    const fineGioco = p.oraFine || (p.oraInizio && p.durataOre ? oraPiuOre(p.oraInizio, p.durataOre) : '');
+    const oraRinfresco = fineGioco ? `${fineGioco} - ${oraPiuOre(fineGioco, 1)}   (1 ora)` : '—';
+    // Quando c'e' il rinfresco l'orario di gioco si scrive per intero, dall'inizio alla fine:
+    // serve a far vedere che la merenda comincia dove il gioco finisce, e a non far pensare che
+    // si sovrappongano. Un pacchetto a durata fissa l'ora di fine non la salva, quindi si calcola.
+    const oraGiocoTxt = (conRinfresco && p.oraInizio && fineGioco)
+      ? `${p.oraInizio} - ${fineGioco}${p.durataOre ? `   (${p.durataOre} ${p.durataOre === 1 ? 'ora' : 'ore'})` : ''}`
+      : oraTxt;
+    const etichettaOrario = conRinfresco ? 'Orario gioco:' : 'Orario:';
+    const tariffaLabel = conRinfresco ? 'Tariffa:' : 'Tariffa di gioco:';
+    const tariffaValore = conRinfresco
+      ? `${p.pacchettoNome || ''} €${prezzoVendita.toFixed(2)}${p.numeroPartecipanti ? ` (fino a ${p.numeroPartecipanti} partecipanti)` : ''}`.trim()
+      : `${prezzoVendita.toFixed(2)}€`;
+
+    // Stoviglie e sorveglianza dei bambini riguardano la merenda, non l'aperitivo.
+    const disdetta = conRinfresco
+      ? "In caso di disdetta o qualsiasi altra modifica, ti chiedo gentilmente di comunicarlo entro 48 ore dalla data dell'evento."
+      : "In caso di disdetta ti chiedo gentilmente di comunicarlo entro 30 ore dalla data dell'evento.";
+    const notaTorta = 'Servizio Torta (stoviglie e bicchieri) NON INCLUSO.';
+    const notaBambini = 'I bambini dovranno rimanere all’interno dello spazio merenda loro assegnato; i genitori o accompagnatori restano responsabili della loro sorveglianza per tutta la durata della permanenza. Non è consentito circolare liberamente all’interno del centro sportivo senza supervisione: eventuali danni a cose o persone, o a sé stessi, in aree non autorizzate saranno sotto la responsabilità dei genitori o accompagnatori.';
+
     const testo = [
       `Ciao ${p.nominativo || ''},`,
       '',
       `di seguito puoi trovare l'avvenuta conferma della tua prenotazione:`,
       '',
       'PRENOTAZIONE',
-      etichettaDi(p) || '',
+      titolo,
       'Data:',
       formattaDataEstesaIT(p.data),
-      'Orario:',
-      oraTxt,
+      etichettaOrario,
+      oraGiocoTxt,
+      ...(conRinfresco ? [`Orario ${rinfresco}:`, oraRinfresco] : []),
       'Centro Sportivo:',
       locationTxt,
-      'Tariffa di gioco:',
-      `${prezzoVendita.toFixed(2)}€`,
+      tariffaLabel,
+      tariffaValore,
       '',
       rigaPagamentoLabel,
       rigaPagamentoValore,
       '',
       "Ricordiamo inoltre che E' VIETATO introdurre all'interno del Centro Sportivo cibi e bevande acquistati altrove.",
+      ...(eMerenda ? [notaTorta, '', notaBambini] : []),
       '',
-      "In caso di disdetta ti chiedo gentilmente di comunicarlo entro 30 ore dalla data dell'evento.",
+      disdetta,
       '',
       'Cosa fare adesso?',
       "- Compilare il modulo di registrazione all'evento che trovi al link https://forms.gle/mmVKZW81XEvkVU4A6",
@@ -725,8 +776,10 @@ function Prenotazioni({ user }) {
       '- Presentatevi al campo 20 minuti in anticipo per la verifica della documentazione.',
       '',
       '- Consigliamo di consultare la pagina FAQ https://www.bubblefootballmi.it/faq/ dove troverete ulteriori informazioni utili.',
+      ...(eMerenda ? ['', `- Scarica QUI ${LINK_INVITO_FESTA} l'invito alla festa personalizzabile ed invialo a tutti gli invitati.`] : []),
       '',
       "Si informa che, in caso di comportamenti scorretti o non conformi al regolamento, l'attività potrà essere sospesa definitivamente, con la conseguente perdita di qualsiasi diritto al rimborso.",
+      '',
       '',
       'Resto in attesa di conferma presa visione e in caso di eventuali errori ti prego di segnalarli rispondendo a questa email.',
       '',
@@ -751,23 +804,26 @@ function Prenotazioni({ user }) {
         <p>di seguito puoi trovare l'avvenuta conferma della tua prenotazione:</p>
         <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:12px 0;">
           <tbody>
-            ${rigaTabella('PRENOTAZIONE', etichettaDi(p) || '', true)}
+            ${rigaTabella('PRENOTAZIONE', titolo, true)}
             ${rigaTabella('Data:', formattaDataEstesaIT(p.data))}
-            ${rigaTabella('Orario:', oraTxt)}
+            ${rigaTabella(etichettaOrario, oraGiocoTxt)}
+            ${conRinfresco ? rigaTabella(`Orario ${rinfresco}:`, oraRinfresco) : ''}
             ${rigaTabella('Centro Sportivo:', locationTxt)}
-            ${rigaTabella('Tariffa di gioco:', `${prezzoVendita.toFixed(2)}€`)}
+            ${rigaTabella(tariffaLabel, tariffaValore)}
             ${rigaTabella(rigaPagamentoLabel, rigaPagamentoValore)}
           </tbody>
         </table>
         <p><b>Ricordiamo inoltre che E' VIETATO introdurre all'interno del Centro Sportivo cibi e bevande acquistati altrove.</b></p>
-        <p><b><u>In caso di disdetta ti chiedo gentilmente di comunicarlo entro 30 ore dalla data dell'evento.</u></b></p>
+        ${eMerenda ? `<p><b>${escapeHtml(notaTorta)}</b></p><p><b><i>${escapeHtml(notaBambini)}</i></b></p>` : ''}
+        <p><b><u>${escapeHtml(disdetta)}</u></b></p>
         <p>Cosa fare adesso?</p>
         <ul style="margin:0 0 12px;padding-left:20px;">
           <li style="margin-bottom:10px;"><b>Compilare il modulo di registrazione all'evento che trovi al link</b> <a href="https://forms.gle/mmVKZW81XEvkVU4A6">https://forms.gle/mmVKZW81XEvkVU4A6</a><br>
             <u>Tutti i giocatori dovranno compilare il modulo online, stampare o conservare sul telefono la mail di conferma e mostrarla al nostro staff PRIMA DI GIOCARE. Eventuali giocatori sprovvisti di tale conferma non potranno prendere parte all'attività.</u>
           </li>
           <li style="margin-bottom:10px;"><b>Presentatevi al campo 20 minuti in anticipo</b> per la verifica della documentazione.</li>
-          <li>Consigliamo di consultare la pagina FAQ <a href="https://www.bubblefootballmi.it/faq/">https://www.bubblefootballmi.it/faq/</a> dove troverete ulteriori informazioni utili.</li>
+          <li style="margin-bottom:10px;">Consigliamo di consultare la pagina FAQ <a href="https://www.bubblefootballmi.it/faq/">https://www.bubblefootballmi.it/faq/</a> dove troverete ulteriori informazioni utili.</li>
+          ${eMerenda ? `<li>Scarica <a href="${LINK_INVITO_FESTA}"><b>QUI</b></a> l'invito alla festa personalizzabile ed invialo a tutti gli invitati.</li>` : ''}
         </ul>
         <p style="background:#ff9900;padding:6px;display:inline-block;"><u><b><i>Si informa che, in caso di comportamenti scorretti o non conformi al regolamento, l'attività potrà essere sospesa definitivamente, con la conseguente perdita di qualsiasi diritto al rimborso</i></b></u>.</p>
         <p>Resto in attesa di conferma presa visione e in caso di eventuali errori ti prego di segnalarli rispondendo a questa email.</p>
@@ -795,6 +851,17 @@ function Prenotazioni({ user }) {
     if (nuovoStato === 'CONF' && senzaIncasso(p)) {
       if (!puoConfermareSenzaIncasso) return alert("Non è possibile confermare: serve almeno un acconto o il saldo.");
       if (!window.confirm("Su questa prenotazione non risulta alcun incasso. Confermarla comunque?")) return;
+    }
+    // Confermare una partita e' il momento in cui va segnata sul calendario: chiederlo adesso
+    // evita il giro "conferma, riapri la prenotazione, cerca il pulsante" -- e le partite che
+    // sul calendario non ci finiscono mai perche' quel giro nessuno lo fa.
+    // La finestra si apre prima del salvataggio, e non dopo, perche' un window.open che arriva
+    // al termine di un'attesa il browser lo blocca: non e' piu' figlio del clic dell'utente.
+    if (nuovoStato === 'CONF' && !p.googleCalendarSync
+      && window.confirm(`${p.id} confermata.
+
+Vuoi creare adesso l'evento su Google Calendar?`)) {
+      apriGoogleCalendar(p);
     }
     await supabase.from('prenotazioni').update({ stato: nuovoStato }).eq('id', p.id);
     fetchTutto();
@@ -2741,12 +2808,41 @@ function Prenotazioni({ user }) {
         const righeSettimana = prenotazioni.filter(p => isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
         const locLabelRiep = (p) => p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—';
 
-        const rigaTestoBreve = (p) => {
-          const extra = [];
-          if (p.tipoRinfresco) extra.push(p.tipoRinfresco);
-          if (p.numeroPartecipanti) extra.push(`${p.numeroPartecipanti} pers`);
-          return `ore ${p.oraInizio || '—'} ${formattaDataBreveIT(p.data)} - ${etichettaBreveDi(p) || 'Prenotazione'}${extra.length ? ' (' + extra.join(', ') + ')' : ''}`;
+        // Come si legge un evento in un promemoria: prima cosa si gioca, poi -- se c'è -- il
+        // rinfresco e per quante persone. "solo Bubble" oppure "Bubble + merenda (12 persone)".
+        // Il pacchetto qui non serve: a un campo e a un bubbler interessa cosa succede sul posto,
+        // non con quale tariffa è stato venduto.
+        const specificaDi = (p) => {
+          const giochi = etichettaGiochiBreve(giochiBreviDi(p)) || 'Prenotazione';
+          if (!p.tipoRinfresco) return `solo ${giochi}`;
+          const quante = p.numeroPartecipanti ? ` (${p.numeroPartecipanti} persone)` : '';
+          return `${giochi} + ${p.tipoRinfresco}${quante}`;
         };
+
+        // Gli eventi si raggruppano per giorno: è l'ordine con cui un campo legge la settimana, e
+        // toglie il bisogno di ripetere la data su ogni riga.
+        const perGiorno = (righe) => {
+          const giorni = new Map();
+          righe.forEach(p => {
+            if (!giorni.has(p.data)) giorni.set(p.data, []);
+            giorni.get(p.data).push(p);
+          });
+          return [...giorni.entries()]
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([data, eventi]) => ({
+              data,
+              eventi: eventi.sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || '')),
+            }));
+        };
+
+        const righeGiorno = (righe, conLuogo) => perGiorno(righe).flatMap(g => [
+          formattaDataEstesaIT(g.data),
+          ...g.eventi.map(p => {
+            const luogo = conLuogo && locLabelRiep(p) !== '—' ? ` · ${locLabelRiep(p)}` : '';
+            return `  ${p.senzaOrario ? 'tutto il giorno' : (p.oraInizio || '—')} · ${specificaDi(p)}${luogo}`;
+          }),
+          '',
+        ]);
 
         // Raggruppa per operatore
         const perOperatore = {};
@@ -2773,18 +2869,16 @@ function Prenotazioni({ user }) {
 
         const messaggioOperatore = (op) => [
           `Ciao ${op.nome}! 👋`,
-          `Ecco le tue prenotazioni per la settimana ${periodoTxt}:`,
+          'Ecco le tue prossime prenotazioni:',
           '',
-          ...op.righe.map((p, i) => `${i + 1}) ${rigaTestoBreve(p)}${locLabelRiep(p) !== '—' ? ` presso ${locLabelRiep(p)}` : ''}`),
-          '',
+          ...righeGiorno(op.righe, true),
           'Grazie! 💪'
         ].join('\n');
 
         const messaggioCampo = (c) => [
-          `📋 Prenotazioni della settimana - ${c.label}`,
-          `Periodo ${periodoTxt}`,
+          `📋 Prenotazioni - ${c.label}`,
           '',
-          ...c.righe.map((p, i) => `${i + 1}) ${rigaTestoBreve(p)}`)
+          ...righeGiorno(c.righe, false)
         ].join('\n');
 
         return (
@@ -2819,7 +2913,14 @@ function Prenotazioni({ user }) {
                         </div>
                       </div>
                       <ul style={{ margin: '10px 0 0 0', paddingLeft: '20px', fontSize: '0.85rem', color: '#555' }}>
-                        {op.righe.map(p => <li key={p.id}>{rigaTestoBreve(p)}{locLabelRiep(p) !== '—' && ` · ${locLabelRiep(p)}`}</li>)}
+                        {perGiorno(op.righe).map(g => (
+                          <li key={g.data} style={{ listStyle: 'none', marginLeft: '-20px', marginBottom: '6px' }}>
+                            <strong>{formattaDataEstesaIT(g.data)}</strong>
+                            <ul style={{ margin: '2px 0 0 0', paddingLeft: '18px' }}>
+                              {g.eventi.map(p => <li key={p.id}>{p.senzaOrario ? 'tutto il giorno' : (p.oraInizio || '—')} · {specificaDi(p)}{locLabelRiep(p) !== '—' && ` · ${locLabelRiep(p)}`}</li>)}
+                            </ul>
+                          </li>
+                        ))}
                       </ul>
                     </div>
                   );
@@ -2837,7 +2938,14 @@ function Prenotazioni({ user }) {
                       <button type="button" className="btn-preventivo" style={{ width: 'auto', marginTop: 0, fontSize: '0.85rem', padding: '6px 12px' }} onClick={() => { setRiepilogoTesto(messaggioCampo(c)); setRiepilogoCopiato(false); }}>📋 Copia messaggio</button>
                     </div>
                     <ul style={{ margin: '10px 0 0 0', paddingLeft: '20px', fontSize: '0.85rem', color: '#555' }}>
-                      {c.righe.map(p => <li key={p.id}>{rigaTestoBreve(p)}</li>)}
+                      {perGiorno(c.righe).map(g => (
+                        <li key={g.data} style={{ listStyle: 'none', marginLeft: '-20px', marginBottom: '6px' }}>
+                          <strong>{formattaDataEstesaIT(g.data)}</strong>
+                          <ul style={{ margin: '2px 0 0 0', paddingLeft: '18px' }}>
+                            {g.eventi.map(p => <li key={p.id}>{p.senzaOrario ? 'tutto il giorno' : (p.oraInizio || '—')} · {specificaDi(p)}</li>)}
+                          </ul>
+                        </li>
+                      ))}
                     </ul>
                   </div>
                 ))}
