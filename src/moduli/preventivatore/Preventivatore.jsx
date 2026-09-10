@@ -40,6 +40,59 @@ const SCHEDE_LEGACY_VISIBILI = false;
 // Colonne della tabella preventivi (Gestione e Storico): etichetta mostrata e valore su cui ordinare.
 // "Destinazione" ordina sulla località come la si legge in tabella (l'ultima parte dell'indirizzo).
 // "Flag" non ha valore: sono icone, non un dato per cui abbia senso ordinare.
+// Scelta del gioco a catalogo per una riga di listino, con la creazione al volo di quello che
+// ancora non c'è: chi sta caricando un modello mai visto non deve uscire dal form per andare a
+// crearlo da un'altra parte e poi tornare.
+// Sta fuori dal componente perché React non lo rimonti a ogni render facendo perdere il focus.
+function SelettoreGioco({ giochi, valore, onChange, onCrea, stile }) {
+  const [nomeNuovo, setNomeNuovo] = useState("");
+  const [inCreazione, setInCreazione] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+
+  const crea = async () => {
+    const nome = nomeNuovo.trim();
+    if (!nome) return;
+    setSalvando(true);
+    const id = await onCrea(nome);
+    setSalvando(false);
+    if (id == null) return;
+    onChange(id);
+    setNomeNuovo(""); setInCreazione(false);
+  };
+
+  if (inCreazione) {
+    return (
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+        <input type="text" autoFocus placeholder="Nome del gioco nuovo" value={nomeNuovo}
+          onChange={(e) => setNomeNuovo(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), crea())}
+          style={{ ...stile, flex: 1, minWidth: 0 }} />
+        <button type="button" className="btn-accent-inline" disabled={salvando} onClick={crea} style={{ whiteSpace: 'nowrap' }}>
+          {salvando ? '…' : 'Crea'}
+        </button>
+        <button type="button" className="btn-outline-annulla" style={{ borderRadius: '4px', padding: '5px 9px' }}
+          onClick={() => { setInCreazione(false); setNomeNuovo(""); }}>✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={valore ?? ""} style={stile}
+      onChange={(e) => e.target.value === '__nuovo__'
+        ? setInCreazione(true)
+        : onChange(e.target.value ? Number(e.target.value) : "")}
+    >
+      <option value="">-- Seleziona gioco --</option>
+      {/* Un gioco disattivato non si propone più, ma se è quello già scelto su questa riga resta
+          in elenco: altrimenti aprire una riga vecchia ne cancellerebbe il gioco senza dirlo. */}
+      {giochi.filter(j => j.attivo || String(j.id) === String(valore))
+             .map(j => <option key={j.id} value={j.id}>{j.nome}{j.attivo ? '' : ' (non attivo)'}</option>)}
+      <option value="__nuovo__">+ nuovo gioco…</option>
+    </select>
+  );
+}
+
 const COLONNE_PREVENTIVI = [
   { chiave: 'id', label: 'ID', stile: { width: '18%' }, valore: (p) => (typeof p.id === 'object' ? p.id.codice : p.id) || '' },
   { chiave: 'data', label: 'Data', stile: { width: '10%' }, valore: (p) => p.dataEmissione || '' },
@@ -61,9 +114,17 @@ function Preventivatore({ user }) {
 
   // --- STATI DEI DATI ---
   const [sedi, setSedi] = useState([]);
+  // "gonfiabili" è il listino: una riga per esemplare fisico, cioè per coppia gioco + sede, con
+  // il suo prezzo e la sua scheda tecnica. Il nome non è più suo: lo prende dal catalogo, così
+  // le quattro righe di Calcio Balilla Umano restano quattro fornitori ma un gioco solo.
   const [gonfiabili, setGonfiabili] = useState([]);
+  const [giochi, setGiochi] = useState([]);
   const [extras, setExtras] = useState([]);
   const [preventiviSalvati, setPreventiviSalvati] = useState([]);
+  // I codici dei preventivi che una prenotazione sta davvero citando. Non servono a mostrare
+  // niente in tabella: servono a distinguere un "Prenotato" vero da uno rimasto appeso perché
+  // la prenotazione che lo teneva non c’è più e nessuno ha rimesso indietro lo stato.
+  const [codiciPrenotati, setCodiciPrenotati] = useState(new Set());
   
   const [nomeRiferimento, setNomeRiferimento] = useState("");
   const [indirizzoEmail, setIndirizzoEmail] = useState("");
@@ -72,7 +133,7 @@ function Preventivatore({ user }) {
   // --- STATI DEL FORM DI INSERIMENTO ---
   const [nuovaSede, setNuovaSede] = useState({ nome: "", citta: "", referente: "", lat: "", lon: "", costoKm: "", bfm: false });
   const [nuovoGonfiabile, setNuovoGonfiabile] = useState({ 
-    nome: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", 
+    giocoId: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "",
     dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: ""
   });
   const [nuovoExtra, setNuovoExtra] = useState({ nome: "", prezzo: "", costoLibero: false });
@@ -90,7 +151,7 @@ function Preventivatore({ user }) {
   const [idGonfiabileEspanso, setIdGonfiabileEspanso] = useState(null); // riga dell'elenco gonfiabili con le specifiche a vista
   const [idGonfiabileInModifica, setIdGonfiabileInModifica] = useState(null);
   const [datiGonfiabileInModifica, setDatiGonfiabileInModifica] = useState({ 
-    nome: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", 
+    giocoId: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "",
     dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: ""
   });
   const [idExtraInModifica, setIdExtraInModifica] = useState(null);
@@ -164,8 +225,15 @@ function Preventivatore({ user }) {
     const { data: gonfiabiliData } = await supabase.from('gonfiabili').select('*');
     if (gonfiabiliData) setGonfiabili(gonfiabiliData);
 
+    const { data: giochiData } = await supabase.from('giochi').select('*').order('nome');
+    if (giochiData) setGiochi(giochiData);
+
     const { data: extrasData } = await supabase.from('extras').select('*');
     if (extrasData) setExtras(extrasData);
+
+    // Di una prenotazione qui interessa un dato solo: quale preventivo sta tenendo occupato.
+    const { data: agganciData } = await supabase.from('prenotazioni').select('preventivoCollegato').not('preventivoCollegato', 'is', null);
+    if (agganciData) setCodiciPrenotati(new Set(agganciData.map(a => String(a.preventivoCollegato))));
 
     const { data: preventiviData } = await supabase.from('preventivi').select('*').order('codice', { ascending: false });
     if (preventiviData) {
@@ -197,6 +265,17 @@ function Preventivatore({ user }) {
       setPreventiviSalvati(prevFormattati);
     }
   };
+
+  // --- IL NOME DI UNA RIGA DI LISTINO ---
+  // Viene dal catalogo, non dalla riga. Il modulo continua a raggruppare i modelli per nome —
+  // "Calcio Balilla Umano" è una voce sola anche se esiste presso quattro fornitori — ma quel
+  // nome ha ora una fonte sola, quindi rinominarlo si riflette ovunque invece di lasciare
+  // indietro le righe non toccate.
+  //
+  // Il ripiego su g.nome copre le righe non ancora agganciate e serve finché la colonna esiste:
+  // sparirà insieme a lei, quando il codice nuovo sarà in produzione.
+  const nomeGiocoPerId = Object.fromEntries(giochi.map(j => [j.id, j.nome]));
+  const nomeDi = (g) => (g ? (nomeGiocoPerId[g.giocoId] || g.nome || "") : "");
 
   // Il numero documento resta agganciato al preventivo aperto anche mentre lo si modifica:
   // per crearne uno nuovo si usa esplicitamente "Nuovo preventivo" (come in voucher e prenotazioni).
@@ -354,8 +433,8 @@ function Preventivatore({ user }) {
       soluzioni[g.nome] = {
         // L'istanza va ripresa dalla sede salvata: è quella di cui il PDF riporta la scheda tecnica
         prodotto: (g.gonfiabileId && gonfiabili.find(x => x.id === g.gonfiabileId))
-          || gonfiabili.find(x => x.nome === g.nome && x.locationId === sedeSalvata?.id)
-          || gonfiabili.find(x => x.nome === g.nome)
+          || gonfiabili.find(x => nomeDi(x) === g.nome && x.locationId === sedeSalvata?.id)
+          || gonfiabili.find(x => nomeDi(x) === g.nome)
           || { prezzo: 0 },
         // Il flag "di proprietà" va riletto dall'anagrafica sedi: nel preventivo si salva solo il nome
         // L'id va riportato dentro, altrimenti il primo risalvataggio lo perderebbe.
@@ -401,10 +480,10 @@ function Preventivatore({ user }) {
       // in quel caso si risale alla sede dall'anagrafica del gonfiabile.
       const sedeGO = (go.sedeId && sedi.find(s => s.id === go.sedeId))
         || sedi.find(s => s.nome === go.sedePartenza)
-        || sedi.find(s => s.id === gonfiabili.find(g => g.nome === go.nome)?.locationId);
+        || sedi.find(s => s.id === gonfiabili.find(g => nomeDi(g) === go.nome)?.locationId);
       soluzioneGO = {
         prodotto: (go.gonfiabileId && gonfiabili.find(g => g.id === go.gonfiabileId))
-          || gonfiabili.find(g => g.nome === go.nome) || { prezzo: 0 },
+          || gonfiabili.find(g => nomeDi(g) === go.nome) || { prezzo: 0 },
         // Il nome è quello salvato, come nelle righe dei gonfiabili qui sopra: è ciò che il
         // preventivo diceva al cliente il giorno in cui è stato emesso, e ristampandolo deve
         // dire ancora quello. Il nome di adesso serve solo ai preventivi vecchi, salvati prima
@@ -485,7 +564,7 @@ function Preventivatore({ user }) {
       for (const nomeGonfiabile of nomiScelti) {
         // Un gonfiabile a prezzo 0 non è quotabile: vincerebbe sempre il confronto fra le sedi
         // falsando i costi. Resta selezionabile solo a prezzo concordato, digitando l'importo.
-        const istanzeProdotto = gonfiabili.filter(g => g.nome === nomeGonfiabile && (parseFloat(g.prezzo) || 0) > 0);
+        const istanzeProdotto = gonfiabili.filter(g => nomeDi(g) === nomeGonfiabile && (parseFloat(g.prezzo) || 0) > 0);
         const calcoliIstanze = istanzeProdotto.map(async (istanza) => {
           const sedePartenza = sedi.find(s => s.id === istanza.locationId);
           if (!sedePartenza) return null;
@@ -591,7 +670,7 @@ function Preventivatore({ user }) {
         setSoluzioneGiocoOfferta(null);
         return;
       }
-      const istanza = gonfiabiliBFM.find(g => g.nome === giocoOffertaSelezionato);
+      const istanza = gonfiabiliBFM.find(g => nomeDi(g) === giocoOffertaSelezionato);
       const sedePartenza = sedi.find(s => s.id === istanza?.locationId);
       if (!istanza || !sedePartenza) {
         setSoluzioneGiocoOfferta(null);
@@ -729,9 +808,9 @@ function Preventivatore({ user }) {
     if (!sedeScelta && (costoDigitato === undefined || costoDigitato === "")) return automatica;
 
     const partenza = sedeScelta || automatica?.partenza || { nome: "—", bfm: false };
-    const prodotto = gonfiabili.find(g => g.nome === nome && g.locationId === idSede)
+    const prodotto = gonfiabili.find(g => nomeDi(g) === nome && g.locationId === idSede)
       || automatica?.prodotto
-      || gonfiabili.find(g => g.nome === nome)
+      || gonfiabili.find(g => nomeDi(g) === nome)
       || { prezzo: 0 };
     const costo = parseFloat(costoDigitato) || 0;
     return {
@@ -1062,17 +1141,35 @@ function Preventivatore({ user }) {
     if (!error) { setNuovaSede({ nome: "", citta: "", referente: "", lat: "", lon: "", costoKm: "", bfm: false }); setShowFormSede(false); fetchData(); }
   };
 
+  // Crea al volo un gioco a catalogo dal form del listino, e ne restituisce l'id per agganciarlo
+  // subito alla riga che si sta compilando.
+  const creaGioco = async (nome) => {
+    const { data, error } = await supabase.from('giochi').insert([{ nome }]).select('id').single();
+    if (error) {
+      console.error(error);
+      alert(`Non è stato possibile creare "${nome}".\n\nEsiste già a catalogo?`);
+      return null;
+    }
+    await fetchData();
+    return data.id;
+  };
+
+  // Il nome viene dal catalogo, ma si scrive anche sulla riga di listino finché la colonna
+  // esiste: la versione in produzione lo legge ancora, e deve continuare a trovarlo. Sparirà
+  // insieme alla colonna, quando il codice nuovo sarà online.
+  const campiNomeListino = (giocoId) => ({ giocoId, nome: nomeGiocoPerId[giocoId] || "" });
+
   const addGonfiabile = async (e) => {
     e.preventDefault();
-    if (!nuovoGonfiabile.nome || !nuovoGonfiabile.prezzo || !nuovoGonfiabile.locationId) return alert("Compila tutti i campi principali");
-    const newG = { 
-      id: "g_" + Date.now(), nome: nuovoGonfiabile.nome, prezzo: parseFloat(nuovoGonfiabile.prezzo), locationId: nuovoGonfiabile.locationId,
+    if (!nuovoGonfiabile.giocoId || !nuovoGonfiabile.prezzo || !nuovoGonfiabile.locationId) return alert("Scegli il gioco, il prezzo e la sede");
+    const newG = {
+      id: "g_" + Date.now(), ...campiNomeListino(nuovoGonfiabile.giocoId), prezzo: parseFloat(nuovoGonfiabile.prezzo), locationId: nuovoGonfiabile.locationId,
       giocatori: nuovoGonfiabile.giocatori, etaConsigliata: nuovoGonfiabile.etaConsigliata, dimensioni: nuovoGonfiabile.dimensioni,
       superficie: nuovoGonfiabile.superficie, alimentazione: nuovoGonfiabile.alimentazione, tempoMontaggio: nuovoGonfiabile.tempoMontaggio
     };
     const { error } = await supabase.from('gonfiabili').insert([newG]);
     if (!error) { 
-      setNuovoGonfiabile({ nome: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: "" });
+      setNuovoGonfiabile({ giocoId: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: "" });
       setShowFormGonfiabile(false);
       fetchData();
     }
@@ -1098,7 +1195,7 @@ function Preventivatore({ user }) {
 
   const salvaModificaGonfiabile = async () => {
     await supabase.from('gonfiabili').update({ 
-      nome: datiGonfiabileInModifica.nome, prezzo: parseFloat(datiGonfiabileInModifica.prezzo), locationId: datiGonfiabileInModifica.locationId,
+      ...campiNomeListino(datiGonfiabileInModifica.giocoId), prezzo: parseFloat(datiGonfiabileInModifica.prezzo), locationId: datiGonfiabileInModifica.locationId,
       giocatori: datiGonfiabileInModifica.giocatori, etaConsigliata: datiGonfiabileInModifica.etaConsigliata, dimensioni: datiGonfiabileInModifica.dimensioni,
       superficie: datiGonfiabileInModifica.superficie, alimentazione: datiGonfiabileInModifica.alimentazione, tempoMontaggio: datiGonfiabileInModifica.tempoMontaggio
     }).eq('id', idGonfiabileInModifica);
@@ -1118,17 +1215,17 @@ function Preventivatore({ user }) {
   const rimuoviGonfiabile = async (id) => { await supabase.from('gonfiabili').delete().eq('id', id); fetchData(); };
   const rimuoviExtra = async (id) => { await supabase.from('extras').delete().eq('id', id); fetchData(); };
 
-  const nomiUniciGonfiabili = Array.from(new Set(gonfiabili.map(g => g.nome)));
+  const nomiUniciGonfiabili = Array.from(new Set(gonfiabili.map(nomeDi).filter(Boolean)));
   // Un gonfiabile presente solo a prezzo 0 non è quotabile dal sistema: compare fra i selezionabili
   // soltanto a prezzo concordato, dove il costo lo si digita a mano.
-  const quotabileAutomaticamente = (nome) => gonfiabili.some(g => g.nome === nome && (parseFloat(g.prezzo) || 0) > 0);
+  const quotabileAutomaticamente = (nome) => gonfiabili.some(g => nomeDi(g) === nome && (parseFloat(g.prezzo) || 0) > 0);
   const gonfiabiliDisponibiliInDropdown = nomiUniciGonfiabili
     .filter(nome => !serviziSelezionati.includes(nome))
     .filter(nome => prezzoConcordato || quotabileAutomaticamente(nome));
 
   // Sedi presso cui esiste un dato gonfiabile: sono i fornitori con cui si può pattuire il prezzo
   const sediDiGonfiabile = (nome) => gonfiabili
-    .filter(g => g.nome === nome)
+    .filter(g => nomeDi(g) === nome)
     .map(g => sedi.find(s => s.id === g.locationId))
     .filter(Boolean);
 
@@ -1499,7 +1596,7 @@ function Preventivatore({ user }) {
                       {/* Solo i giochi presso sedi di proprietà possono essere messi in offerta */}
                       <select value="" onChange={(e) => setGiocoOffertaSelezionato(e.target.value)} disabled={senzaDestinazione}>
                         <option value="">{senzaDestinazione ? "Indica prima il luogo di consegna" : "+ Scegli il gioco in offerta…"}</option>
-                        {!senzaDestinazione && gonfiabiliBFM.map(g => <option key={g.id} value={g.nome}>{g.nome}</option>)}
+                        {!senzaDestinazione && gonfiabiliBFM.map(g => <option key={g.id} value={nomeDi(g)}>{nomeDi(g)}</option>)}
                       </select>
                     </td>
                   </tr>
@@ -1862,6 +1959,15 @@ function Preventivatore({ user }) {
                   {p.stato === "Confermato" && (
                     <button type="button" className="btn-icon-action" title="Riporta a Registrato" onClick={() => cambiaStatoPreventivo(codice, "Registrato")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
+                  {/* "Prenotato" di norma non si tocca a mano: lo mette e lo toglie il modulo
+                      Prenotazioni, e finché dura tiene il preventivo fuori dalle tendine perché non
+                      finisca su due prenotazioni. Ma se la prenotazione che lo teneva non esiste più,
+                      quello stato non protegge nulla e impedisce soltanto di rimettere a posto: allora,
+                      e solo allora, si sblocca. Il doppio aggancio resta impossibile, perché quando
+                      l’aggancio c’è il pulsante non compare. */}
+                  {p.stato === "Prenotato" && !codiciPrenotati.has(String(codice)) && (
+                    <button type="button" className="btn-icon-action" title="Nessuna prenotazione lo sta usando: riportalo a Confermato" onClick={() => cambiaStatoPreventivo(codice, "Confermato")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                  )}
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => onApri(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
                   {user.isAdmin && (
                     <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => eliminaPreventivo(codice)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
@@ -1973,7 +2079,7 @@ function Preventivatore({ user }) {
               <button className={`nav-btn ${configTabAdmin === 'sedi' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('sedi')}><Icona nome="sedi" />Sedi</button>
             )}
             {puoVedere(user, 'preventivatore', 'admin', 'gonfiabili') && (
-              <button className={`nav-btn ${configTabAdmin === 'gonfiabili' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('gonfiabili')}><Icona nome="gonfiabili" />Gonfiabili</button>
+              <button className={`nav-btn ${configTabAdmin === 'gonfiabili' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('gonfiabili')}><Icona nome="gonfiabili" />Listino</button>
             )}
             {puoVedere(user, 'preventivatore', 'admin', 'extra') && (
               <button className={`nav-btn ${configTabAdmin === 'extra' ? 'active' : ''}`} onClick={() => setConfigTabAdmin('extra')}><Icona nome="extra" />Extra</button>
@@ -2078,7 +2184,7 @@ function Preventivatore({ user }) {
           {configTabAdmin === 'gonfiabili' && puoVedere(user, 'preventivatore', 'admin', 'gonfiabili') && (
           <div className="admin-sezione-fullwidth" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '15px' }}>
             <div style={{ order: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              <h3 style={{ margin: 0 }}>Gonfiabili ({gonfiabili.length})</h3>
+              <h3 style={{ margin: 0 }}>Listino ({gonfiabili.length} voci)</h3>
               <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={() => setShowFormGonfiabile(true)}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
             </div>
 
@@ -2086,12 +2192,16 @@ function Preventivatore({ user }) {
               <div className="modal-form-backdrop" onClick={() => setShowFormGonfiabile(false)}>
                 <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
                   <button type="button" className="modal-form-close" onClick={() => setShowFormGonfiabile(false)} aria-label="Chiudi">✕</button>
-                  <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem' , color: '#0288d1' }}>Aggiungi Nuovo Gonfiabile</h3>
+                  <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem' , color: '#0288d1' }}>Aggiungi voce di listino</h3>
                   <form onSubmit={addGonfiabile}>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '15px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'end' }}>
-                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px', color: '#555' }}>Nome Modello</label>
-                        <input type="text" placeholder="Es. Scivolo Titanic" value={nuovoGonfiabile.nome} onChange={(e) => setNuovoGonfiabile({...nuovoGonfiabile, nome: e.target.value})} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', margin: '0' }} />
+                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px', color: '#555' }}>Gioco</label>
+                        <SelettoreGioco
+                          giochi={giochi} valore={nuovoGonfiabile.giocoId} onCrea={creaGioco}
+                          onChange={(id) => setNuovoGonfiabile({ ...nuovoGonfiabile, giocoId: id })}
+                          stile={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', margin: '0' }}
+                        />
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'end' }}>
                         <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px', color: '#555' }}>Prezzo (€)</label>
@@ -2127,7 +2237,7 @@ function Preventivatore({ user }) {
                 <thead>
                   <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                     <th style={{ padding: '10px 12px', width: '40px', color: '#444' }}></th>
-                    <th style={{ padding: '10px 12px', width: '32%', color: '#444' }}>Modello</th>
+                    <th style={{ padding: '10px 12px', width: '32%', color: '#444' }}>Gioco</th>
                     <th style={{ padding: '10px 12px', width: '15%', color: '#444' }}>Prezzo</th>
                     <th style={{ padding: '10px 12px', width: '28%', color: '#444' }}>Ubicazione</th>
                     <th style={{ padding: '10px 12px', width: '25%', textAlign: 'center', color: '#444' }}>Azioni</th>
@@ -2149,7 +2259,11 @@ function Preventivatore({ user }) {
                           {inModifica ? (
                             <>
                               <td style={{ padding: '10px 12px' }}>
-                                <input type="text" className="table-input" value={datiGonfiabileInModifica.nome} onChange={(e)=>setDatiGonfiabileInModifica({...datiGonfiabileInModifica, nome: e.target.value})} style={{ width: '100%', fontSize: '0.85rem', height: '30px' }} />
+                                <SelettoreGioco
+                                  giochi={giochi} valore={datiGonfiabileInModifica.giocoId} onCrea={creaGioco}
+                                  onChange={(id) => setDatiGonfiabileInModifica({ ...datiGonfiabileInModifica, giocoId: id })}
+                                  stile={{ width: '100%', fontSize: '0.85rem', height: '30px', padding: '2px 6px', border: '1px solid #3b82f6', borderRadius: '4px', background: '#f8fafc' }}
+                                />
                               </td>
                               <td style={{ padding: '10px 12px' }}>
                                 <input type="number" step="any" className="table-input" value={datiGonfiabileInModifica.prezzo} onChange={(e)=>setDatiGonfiabileInModifica({...datiGonfiabileInModifica, prezzo: e.target.value})} style={{ width: '100%', fontSize: '0.85rem', height: '30px' }} />
@@ -2168,7 +2282,7 @@ function Preventivatore({ user }) {
                             </>
                           ) : (
                             <>
-                              <td style={{ padding: '10px 12px', verticalAlign: 'middle', fontSize: '0.9rem', fontWeight: 'bold', color: '#111' }}>{g.nome}</td>
+                              <td style={{ padding: '10px 12px', verticalAlign: 'middle', fontSize: '0.9rem', fontWeight: 'bold', color: '#111' }}>{nomeDi(g)}</td>
                               <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#2e7d32', fontSize: '0.85rem' }}>€{parseFloat(g.prezzo).toFixed(2)}</td>
                               <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#555', fontSize: '0.85rem' }}>
                                 {sd ? sd.nome : <em style={{ color: '#999' }}>Non assegnata</em>}
@@ -2179,7 +2293,7 @@ function Preventivatore({ user }) {
                                     setIdGonfiabileEspanso(g.id);
                                     setIdGonfiabileInModifica(g.id);
                                     setDatiGonfiabileInModifica({
-                                      nome: g.nome, prezzo: g.prezzo, locationId: g.locationId, giocatori: g.giocatori || "",
+                                      giocoId: g.giocoId ?? "", prezzo: g.prezzo, locationId: g.locationId, giocatori: g.giocatori || "",
                                       etaConsigliata: g.etaConsigliata || "", dimensioni: g.dimensioni || "", superficie: g.superficie || "",
                                       alimentazione: g.alimentazione || "", tempoMontaggio: g.tempoMontaggio || ""
                                     });
@@ -2458,7 +2572,7 @@ function Preventivatore({ user }) {
 
                     // Le schede tecniche sono per sede: vale l'istanza da cui il gioco parte davvero
                     // (scelta dal calcolo o indicata a mano col prezzo concordato), non la prima per nome.
-                    const gonfiabileCorrente = sol.prodotto || gonfiabili.find(g => g.nome === nome) || {};
+                    const gonfiabileCorrente = sol.prodotto || gonfiabili.find(g => nomeDi(g) === nome) || {};
                     const haParametri = gonfiabileCorrente.giocatori || gonfiabileCorrente.etaConsigliata || gonfiabileCorrente.dimensioni || gonfiabileCorrente.superficie || gonfiabileCorrente.alimentazione || gonfiabileCorrente.tempoMontaggio;
 
                     return (
@@ -2547,7 +2661,7 @@ function Preventivatore({ user }) {
 
                     // Le schede tecniche sono per sede: vale l'istanza da cui il gioco parte davvero
                     // (scelta dal calcolo o indicata a mano col prezzo concordato), non la prima per nome.
-                    const gonfiabileCorrente = sol.prodotto || gonfiabili.find(g => g.nome === nome) || {};
+                    const gonfiabileCorrente = sol.prodotto || gonfiabili.find(g => nomeDi(g) === nome) || {};
                     const haParametri = gonfiabileCorrente.giocatori || gonfiabileCorrente.etaConsigliata || gonfiabileCorrente.dimensioni || gonfiabileCorrente.superficie || gonfiabileCorrente.alimentazione || gonfiabileCorrente.tempoMontaggio;
 
                     return (
@@ -2613,7 +2727,7 @@ function Preventivatore({ user }) {
                 const vScontoGO = parseFloat(venditaGiocoOfferta.sconto) || 0;
                 const prezzoVenditaFinaleGO = vPrezzoGO * (1 - vScontoGO / 100);
 
-                const gonfiabileGO = gonfiabili.find(g => g.nome === giocoOffertaSelezionato) || {};
+                const gonfiabileGO = gonfiabili.find(g => nomeDi(g) === giocoOffertaSelezionato) || {};
                 const haParametriGO = gonfiabileGO.giocatori || gonfiabileGO.etaConsigliata || gonfiabileGO.dimensioni || gonfiabileGO.superficie || gonfiabileGO.alimentazione || gonfiabileGO.tempoMontaggio;
 
                 return (
