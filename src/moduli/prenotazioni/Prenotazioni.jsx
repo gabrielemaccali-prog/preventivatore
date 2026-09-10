@@ -2868,6 +2868,18 @@ function Prenotazioni({ user }) {
         // rinfresco e per quante persone. "solo Bubble" oppure "Bubble + merenda (12 persone)".
         // Il pacchetto qui non serve: a un campo e a un bubbler interessa cosa succede sul posto,
         // non con quale tariffa è stato venduto.
+        // L'orario per intero: a chi apre il campo serve sapere quando finisce, non solo quando
+        // comincia. L'ora di fine non sempre e' salvata -- un pacchetto a durata fissa non ne ha
+        // bisogno -- quindi dove manca si calcola dalla durata.
+        const orarioDi = (p) => {
+          if (p.senzaOrario) return 'tutto il giorno';
+          if (!p.oraInizio) return '—';
+          const fine = p.oraFine || (p.durataOre ? oraPiuOre(p.oraInizio, p.durataOre) : '');
+          const ore = p.oraFine ? oreDaOrari(p.oraInizio, p.oraFine) : (parseFloat(p.durataOre) || 0);
+          const durata = ore > 0 ? ` (${String(ore).replace('.', ',')}h)` : '';
+          return fine ? `${p.oraInizio} - ${fine}${durata}` : p.oraInizio;
+        };
+
         const specificaDi = (p) => {
           const giochi = etichettaGiochiBreve(giochiBreviDi(p)) || 'Prenotazione';
           if (!p.tipoRinfresco) return `solo ${giochi}`;
@@ -2895,7 +2907,7 @@ function Prenotazioni({ user }) {
           formattaDataEstesaIT(g.data),
           ...g.eventi.map(p => {
             const luogo = conLuogo && locLabelRiep(p) !== '—' ? ` · ${locLabelRiep(p)}` : '';
-            return `  ${p.senzaOrario ? 'tutto il giorno' : (p.oraInizio || '—')} · ${specificaDi(p)}${luogo}`;
+            return `  ${orarioDi(p)} · ${specificaDi(p)}${luogo}`;
           }),
           '',
         ]);
@@ -2973,7 +2985,7 @@ function Prenotazioni({ user }) {
                           <li key={g.data} style={{ listStyle: 'none', marginLeft: '-20px', marginBottom: '6px' }}>
                             <strong>{formattaDataEstesaIT(g.data)}</strong>
                             <ul style={{ margin: '2px 0 0 0', paddingLeft: '18px' }}>
-                              {g.eventi.map(p => <li key={p.id}>{p.senzaOrario ? 'tutto il giorno' : (p.oraInizio || '—')} · {specificaDi(p)}{locLabelRiep(p) !== '—' && ` · ${locLabelRiep(p)}`}</li>)}
+                              {g.eventi.map(p => <li key={p.id}>{orarioDi(p)} · {specificaDi(p)}{locLabelRiep(p) !== '—' && ` · ${locLabelRiep(p)}`}</li>)}
                             </ul>
                           </li>
                         ))}
@@ -2998,7 +3010,7 @@ function Prenotazioni({ user }) {
                         <li key={g.data} style={{ listStyle: 'none', marginLeft: '-20px', marginBottom: '6px' }}>
                           <strong>{formattaDataEstesaIT(g.data)}</strong>
                           <ul style={{ margin: '2px 0 0 0', paddingLeft: '18px' }}>
-                            {g.eventi.map(p => <li key={p.id}>{p.senzaOrario ? 'tutto il giorno' : (p.oraInizio || '—')} · {specificaDi(p)}</li>)}
+                            {g.eventi.map(p => <li key={p.id}>{orarioDi(p)} · {specificaDi(p)}</li>)}
                           </ul>
                         </li>
                       ))}
