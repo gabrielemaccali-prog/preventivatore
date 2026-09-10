@@ -13,7 +13,7 @@ const GIORNI = [
   { n: 5, l: 'Ven' }, { n: 6, l: 'Sab' }, { n: 7, l: 'Dom' }
 ];
 
-const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", centroRicavo: "", prevedeRinfresco: false, numeroPartecipanti: "" };
+const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", centroRicavo: "", prevedeRinfresco: false, numeroPartecipanti: "", giochi_richiesti: "1" };
 const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusaCampo: false, ivaInclusaRinfresco: false, costoMerenda: "", costoAperitivo: "", ivaCampo: "22", ivaRinfresco: "22", noRinfresco: false };
 
 // Frazione IVA da applicare (percentuale campo, es. 22 -> 0.22); 22% di default se non specificata sul campo.
@@ -23,7 +23,7 @@ const PREN_VUOTA = {
   data: "", altriGiorni: [], piuGiorni: false, senzaOrario: false, pacchettoId: "", giocoId: "", oraInizio: "", oraFine: "",
   nominativo: "", email: "", telefono: "",
   campoId: "", campoPrenotato: false, locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
-  operatoriIds: [], senzaOperatori: false, sconto: "0", prezzoManuale: "",
+  operatoriIds: [], senzaOperatori: false, sconto: "0", prezzoManuale: "", giochiAltri: [],
   tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "",
   preventivoCollegato: "", ereditaCosti: false, costoEreditato: "", voci: [],
   fattTipo: "privato",
@@ -654,6 +654,8 @@ function Prenotazioni({ user }) {
       tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
       pagamenti: p.pagamenti || [], voucherCodice: p.voucherCodice || "",
       preventivoCollegato: p.preventivoCollegato || "", ereditaCosti: !!p.ereditaCosti, costoEreditato: p.costoEreditato ?? "", voci: p.voci || [],
+      // I giochi oltre il primo si rileggono dalle righe: e' li' che erano stati scritti.
+      giochiAltri: (p.voci || []).map(v => v.giocoId).filter(Boolean).slice(1),
       fattTipo: p.fattTipo || "privato",
       fattNome: p.fattNome || "", fattCognome: p.fattCognome || "", fattIndirizzo: p.fattIndirizzo || "", fattCap: p.fattCap || "", fattCitta: p.fattCitta || "", fattProvincia: p.fattProvincia || "", fattCF: p.fattCF || "",
       fattStraniero: !!p.fattStraniero, fattStato: p.fattStato || "",
@@ -1131,7 +1133,10 @@ function Prenotazioni({ user }) {
     const oraFine = (senzaOrario || durataFissa) ? "" : normalizzaOra24(f.oraFine);
     // Tutti i campi obbligatori vengono controllati insieme (non uno alla volta) così l'utente
     // li vede evidenziati di rosso tutti insieme invece di scoprirli uno a uno a ogni tentativo.
-    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim() || !f.giocoId
+    const quantiRichiesti = Math.max(1, parseInt(pac?.giochi_richiesti, 10) || 1);
+    // Tutti i giochi che il pacchetto chiede, non solo il primo.
+    const giochiRichiestiMancanti = [f.giocoId, ...(f.giochiAltri || [])].slice(0, quantiRichiesti).filter(Boolean).length < quantiRichiesti;
+    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim() || giochiRichiestiMancanti
       || (!senzaOrario && !f.oraInizio) || (!senzaOrario && !durataFissa && !f.oraFine)
       || (!!pac?.prevedeRinfresco && !f.tipoRinfresco);
     if (mancaCampoObbligatorio) {
@@ -1167,9 +1172,18 @@ function Prenotazioni({ user }) {
     // e solo in mancanza di entrambi dal campo digitato a mano (noleggio di un gioco nostro,
     // senza preventivo). Le righe, quando ci sono, sono la fonte: non c'è un totale a sé che
     // possa contraddirle.
-    const totVoci = sommaVoci(f.voci);
-    const conVoci = (f.voci || []).length > 0;
-    const baseNetta = conVoci ? totVoci.ricavo : (parseFloat(f.prezzoManuale) || 0);
+    // Un pacchetto che comprende piu' giochi scrive le sue righe da se': una per gioco, senza
+    // importi, perche' il prezzo sta sul pacchetto e non sulle righe. A dividerlo fra i giochi ci
+    // pensa il resoconto, che sa anche a che prezzo si e' venduto dopo lo sconto -- mentre una
+    // meta' scritta qui sarebbe rimasta ferma al primo salvataggio.
+    const vociDelPacchetto = (quantiRichiesti > 1 && !f.preventivoCollegato)
+      ? [f.giocoId, ...(f.giochiAltri || [])].slice(0, quantiRichiesti).filter(Boolean)
+          .map(id => ({ giocoId: id, nome: nomeGiocoPerId[id] || '', sede: '', quantita: 1, ricavo: 0, costo: 0 }))
+      : null;
+    const vociDaSalvare = vociDelPacchetto || f.voci;
+    const totVoci = sommaVoci(vociDaSalvare);
+    const conVoci = (vociDaSalvare || []).length > 0;
+    const baseNetta = (conVoci && totVoci.ricavo > 0) ? totVoci.ricavo : (parseFloat(f.prezzoManuale) || 0);
     const prezzoBaseNetto = pacHaPrezzo ? (parseFloat(pac.prezzo) / (1 + IVA)) : baseNetta;
     const prezzoBaseLordo = pacHaPrezzo ? parseFloat(pac.prezzo) : (baseNetta * (1 + IVA));
     const prezzoVenditaNetto = prezzoBaseNetto * scontoFrac;
@@ -1218,7 +1232,7 @@ function Prenotazioni({ user }) {
       preventivoCollegato: f.preventivoCollegato || null,
       // Il dettaglio per gioco viaggia con la prenotazione: nasce dal preventivo ma da lì è suo,
       // e correggere il preventivo domani non riscrive quello che è stato venduto oggi.
-      voci: conVoci ? f.voci.map(v => ({ ...v, ricavo: parseFloat(v.ricavo) || 0, costo: parseFloat(v.costo) || 0 })) : null,
+      voci: conVoci ? vociDaSalvare.map(v => ({ ...v, ricavo: parseFloat(v.ricavo) || 0, costo: parseFloat(v.costo) || 0 })) : null,
       // I due totali restano a database perché tutto il resto li legge — pagamenti, mail,
       // costi/ricavi — ma non si scrivono più a mano: sono la somma delle righe.
       ereditaCosti: conVoci || !!f.ereditaCosti,
@@ -1274,7 +1288,9 @@ function Prenotazioni({ user }) {
       prezzo: numOrNull(formPacchetto.prezzo),
       centroRicavo: formPacchetto.centroRicavo,
       prevedeRinfresco: formPacchetto.prevedeRinfresco,
-      numeroPartecipanti: numOrNull(formPacchetto.numeroPartecipanti)
+      numeroPartecipanti: numOrNull(formPacchetto.numeroPartecipanti),
+      // Quanti giochi chiede: uno di norma, due per "Due giochi", e non c'e' un tetto.
+      giochi_richiesti: Math.max(1, parseInt(formPacchetto.giochi_richiesti, 10) || 1)
     };
     let error;
     if (editPacchetto) ({ error } = await supabase.from('pren_pacchetti').update(rec).eq('id', editPacchetto));
@@ -1287,7 +1303,8 @@ function Prenotazioni({ user }) {
     setEditPacchetto(p.id);
     setFormPacchetto({
       nome: p.nome || "", durataOre: p.durataOre ?? "", locationTipo: p.locationTipo || "libera",
-      prezzo: p.prezzo ?? "", centroRicavo: p.centroRicavo || "", prevedeRinfresco: !!p.prevedeRinfresco, numeroPartecipanti: p.numeroPartecipanti ?? ""
+      prezzo: p.prezzo ?? "", centroRicavo: p.centroRicavo || "", prevedeRinfresco: !!p.prevedeRinfresco, numeroPartecipanti: p.numeroPartecipanti ?? "",
+      giochi_richiesti: String(p.giochi_richiesti ?? 1)
     });
     setShowFormPacchetto(true);
   };
@@ -1439,7 +1456,20 @@ function Prenotazioni({ user }) {
         });
         const dataMancante = !formPren.data;
         const pacchettoMancante = !pac;
+        // Quanti giochi vuole il pacchetto: lo dice lui, non il suo nome. "Due giochi (2h)" ne
+        // chiede due, e il giorno che ne servira' uno da tre bastera' scriverlo a configuratore.
+        // Il primo resta su "giocoId", che e' quello che identifica la pratica; gli altri stanno
+        // in coda, e al salvataggio diventano le righe di dettaglio.
+        const quantiGiochi = Math.max(1, parseInt(pac?.giochi_richiesti, 10) || 1);
         const giochiProponibili = giochiSelezionabili(pac, formPren.giocoId);
+        const giocoAllaPosizione = (i) => (i === 0 ? formPren.giocoId : (formPren.giochiAltri?.[i - 1] ?? "")) || "";
+        const giochiScelti = () => Array.from({ length: quantiGiochi }, (_, i) => giocoAllaPosizione(i));
+        const impostaGiocoAllaPosizione = (i, id) => {
+          if (i === 0) return setF({ giocoId: id });
+          const altri = [...(formPren.giochiAltri || [])];
+          altri[i - 1] = id;
+          setF({ giochiAltri: altri });
+        };
         // Su un noleggio le due strade si escludono: scelto il preventivo il gioco non si chiede
         // più (sta là dentro), scelto il gioco il preventivo non serve. Finché non hai scelto,
         // sono a video tutte e due. Il preventivo ha la precedenza perché sceglierlo compila da
@@ -1450,7 +1480,7 @@ function Prenotazioni({ user }) {
         const scegliereUnaStrada = noleggioIncompleto(pac, formPren.giocoId, formPren.preventivoCollegato);
         // Su un pacchetto da campo il gioco è sempre obbligatorio; su un noleggio lo è solo se
         // non hai collegato un preventivo.
-        const giocoMancante = !formPren.giocoId && (!noleggio || scegliereUnaStrada);
+        const giocoMancante = giochiScelti().some(g => !g) && (!noleggio || scegliereUnaStrada);
         const nominativoMancante = !formPren.nominativo.trim();
         const oraInizioMancante = !formPren.senzaOrario && !formPren.oraInizio;
         const oraFineMancante = !formPren.senzaOrario && !durataFissa && !formPren.oraFine;
@@ -1538,20 +1568,28 @@ function Prenotazioni({ user }) {
               {/* Il pacchetto dice come è stata venduta la partita, il gioco a cosa si gioca.
                   Su un pacchetto da campo valgono i giochi che vendi così; su un noleggio solo i
                   nostri, perché quello di un fornitore ha bisogno del preventivo. */}
-              {mostraGioco && (
-                <label style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>
-                  Gioco{(!noleggio || scegliereUnaStrada) ? ' *' : ''}
-                  <select
-                    className={`dropdown-gonfiabili ${campoRosso('giocoId', giocoMancante).className}`}
-                    style={campoRosso('giocoId', giocoMancante).style}
-                    value={formPren.giocoId ?? ""}
-                    onChange={(e) => setF({ giocoId: e.target.value ? Number(e.target.value) : "" })}
-                  >
-                    <option value="">-- Seleziona gioco --</option>
-                    {giochiProponibili.map(g => <option key={g.id} value={g.id}>{g.nome}{g.attivo ? '' : ' (non attivo)'}</option>)}
-                  </select>
-                </label>
-              )}
+              {mostraGioco && Array.from({ length: quantiGiochi }).map((_, i) => {
+                const scelto = giocoAllaPosizione(i);
+                // Un gioco già scelto in un'altra posizione non si ripropone: "Due giochi" vuole
+                // due giochi diversi, altrimenti è "Solo gioco 2h" con un nome più lungo.
+                const altrove = new Set(giochiScelti().filter((_, k) => k !== i));
+                return (
+                  <label key={i} style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>
+                    {quantiGiochi > 1 ? `Gioco ${i + 1}` : 'Gioco'}{(!noleggio || scegliereUnaStrada) ? ' *' : ''}
+                    <select
+                      className={`dropdown-gonfiabili ${campoRosso('giocoId', giocoMancante && !scelto).className}`}
+                      style={campoRosso('giocoId', giocoMancante && !scelto).style}
+                      value={scelto ?? ""}
+                      onChange={(e) => impostaGiocoAllaPosizione(i, e.target.value ? Number(e.target.value) : "")}
+                    >
+                      <option value="">-- Seleziona gioco --</option>
+                      {giochiSelezionabili(pac, scelto)
+                        .filter(g => !altrove.has(g.id))
+                        .map(g => <option key={g.id} value={g.id}>{g.nome}{g.attivo ? '' : ' (non attivo)'}</option>)}
+                    </select>
+                  </label>
+                );
+              })}
             </div>
             {noleggio && (
               <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: scegliereUnaStrada ? '#c62828' : '#64748b' }}>
@@ -2075,6 +2113,7 @@ function Prenotazioni({ user }) {
                       <Campo label="Prezzo € (vuoto = manuale in prenotazione. Se fissato è IVA inclusa)"><input type="number" step="any" value={formPacchetto.prezzo} onChange={(e) => setFormPacchetto({ ...formPacchetto, prezzo: e.target.value })} style={inputStyle} /></Campo>
                       <Campo label="Centro di ricavo"><input type="text" value={formPacchetto.centroRicavo} onChange={(e) => setFormPacchetto({ ...formPacchetto, centroRicavo: e.target.value })} style={inputStyle} /></Campo>
                       <Campo label="N° partecipanti (se stabilito in anticipo)"><input type="number" step="1" value={formPacchetto.numeroPartecipanti} onChange={(e) => setFormPacchetto({ ...formPacchetto, numeroPartecipanti: e.target.value })} style={inputStyle} /></Campo>
+                      <Campo label="N° giochi che il pacchetto comprende"><input type="number" step="1" min="1" value={formPacchetto.giochi_richiesti} onChange={(e) => setFormPacchetto({ ...formPacchetto, giochi_richiesti: e.target.value })} style={inputStyle} /></Campo>
                       <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
                         <input type="checkbox" checked={formPacchetto.prevedeRinfresco} onChange={(e) => setFormPacchetto({ ...formPacchetto, prevedeRinfresco: e.target.checked })} /> Prevede rinfresco dopo partita
                       </label>

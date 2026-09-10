@@ -458,13 +458,18 @@ function CostiRicavi({ user }) {
       const base = (extra) => ({ pren: p, giocoId: p.giocoId ?? null, nome: '', sede: sedeDiRipiego(p), ricavo: 0, costo: 0, compPrev: 0, compCons: 0, ...extra });
       if (voci.length > 0) {
         const sommaVoci = voci.reduce((t, v) => t + (parseFloat(v.ricavo) || 0), 0);
-        const proporzione = sommaVoci > 0 ? nettoRicavo(p) / sommaVoci : 0;
+        // Le righe di un pacchetto a prezzo fisso non portano importi: il prezzo sta sul
+        // pacchetto, non su di loro. Senza questo caso il ricavo di quelle prenotazioni sparirebbe
+        // dal resoconto -- moltiplicato per zero -- invece di dividersi fra i giochi che lo hanno
+        // prodotto. "Due giochi (2h)" e' un'ora per uno, quindi la divisione e' in parti uguali.
+        const inPartiUguali = sommaVoci === 0;
+        const proporzione = inPartiUguali ? (nettoRicavo(p) / voci.length) : (nettoRicavo(p) / sommaVoci);
         voci.forEach(v => righe.push({
           pren: p,
           giocoId: v.giocoId ?? null,
           nome: v.nome || '',
-          sede: v.sede || 'Non indicata',
-          ricavo: (parseFloat(v.ricavo) || 0) * proporzione,
+          sede: v.sede || sedeDiRipiego(p),
+          ricavo: inPartiUguali ? proporzione : (parseFloat(v.ricavo) || 0) * proporzione,
           // Un gioco che parte da una nostra sede non ci costa niente di suo: il prezzo a listino
           // serve al preventivatore per calcolare la vendita, e il costo che il preventivo gli
           // attribuisce e' la logistica -- cioe' il rimborso all'operatore, che qui arriva dal
