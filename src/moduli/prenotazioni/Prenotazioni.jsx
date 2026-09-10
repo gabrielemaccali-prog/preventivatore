@@ -2514,7 +2514,12 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
       })()}
       {currentView === "calendario" && puoVedere(user, 'prenotazioni', 'calendario') && (() => {
         // Una prenotazione su più giorni compare in ciascuno dei suoi giorni, anche se non consecutivi.
-        const prenDelGiorno = (iso) => prenotazioni.filter(p => giorniEventoDi(p).includes(iso)).sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
+        // Una partita annullata non occupa piu' niente, quindi dal calendario sparisce: lasciarla
+        // farebbe sembrare pieno uno slot che e' libero. Una posticipata invece resta: l'acconto e'
+        // stato incassato e il campo e' ancora tenuto, finche' non si decide la data nuova.
+        const prenDelGiorno = (iso) => prenotazioni
+          .filter(p => p.stato !== 'ANNULLATA' && giorniEventoDi(p).includes(iso))
+          .sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
 
         // --- Griglia oraria (viste Settimana/Giorno): posiziona ogni prenotazione in base a orario e durata reali ---
         const ORE_GRIGLIA = Array.from({ length: 19 }, (_, i) => (6 + i) % 24); // 06:00 -> 00:00 (19 fasce da un'ora)
@@ -2856,7 +2861,9 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
         const inizio = inizioSettimana(riepilogoData);
         const fine = addGiorni(inizio, 6);
         const isoSettimana = new Set(Array.from({ length: 7 }, (_, i) => toISODate(addGiorni(inizio, i))));
-        const righeSettimana = prenotazioni.filter(p => isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
+        // Stessa regola dei promemoria: a un campo non si annuncia una partita annullata, mentre
+        // una posticipata resta sua finche' non la si sposta.
+        const righeSettimana = prenotazioni.filter(p => p.stato !== 'ANNULLATA' && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
         const locLabelRiep = (p) => p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—';
 
         // Come si legge un evento in un promemoria: prima cosa si gioca, poi -- se c'è -- il
