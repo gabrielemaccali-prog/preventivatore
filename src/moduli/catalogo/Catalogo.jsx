@@ -106,14 +106,17 @@ function Catalogo({ user }) {
       nome_breve: datiInline.nome_breve.trim() || null,
       famiglia: datiInline.famiglia.trim() || null,
       centro_ricavo: datiInline.centro_ricavo.trim() || null,
+      per_pacchetti: !!datiInline.per_pacchetti,
+      attivo: !!datiInline.attivo,
     }).eq('id', idInline);
     setSalvataggio(false);
     if (error) return segnalaErrore('Errore nel salvataggio del gioco', error);
     setIdInline(null); fetchTutto();
   };
 
-  // I due interruttori si toccano dall'elenco, come il flag Bubbler in Impostazioni: sono la
-  // cosa che si cambia più spesso e non vale la pena entrare in modifica per una spunta.
+  // I due interruttori si toccano anche dall'elenco, come il flag Bubbler in Impostazioni: sono
+  // la cosa che si cambia più spesso e per una spunta sola non vale la pena entrare in modifica.
+  // In modifica ci sono lo stesso, perché chi è già dentro non deve uscire per cambiarle.
   const alterna = async (g, campo) => {
     const { error } = await supabase.from('giochi').update({ [campo]: !g[campo] }).eq('id', g.id);
     if (error) return segnalaErrore('Errore nel salvataggio del gioco', error);
@@ -260,9 +263,13 @@ function Catalogo({ user }) {
                     <td style={{ padding: '8px 12px' }}><input type="text" className="table-input" placeholder="Nome breve" value={datiInline.nome_breve} onChange={(e) => setDatiInline({ ...datiInline, nome_breve: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                     <td style={{ padding: '8px 12px' }}><input type="text" className="table-input" list="catalogo-famiglie" placeholder="Famiglia" value={datiInline.famiglia} onChange={(e) => setDatiInline({ ...datiInline, famiglia: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                     <td style={{ padding: '8px 12px' }}><input type="text" className="table-input" list="catalogo-centri" placeholder="Centro di ricavo" value={datiInline.centro_ricavo} onChange={(e) => setDatiInline({ ...datiInline, centro_ricavo: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
-                    <td colSpan={3} style={{ padding: '8px 12px', color: '#94a3b8', fontSize: '0.78rem' }}>
-                      Le spunte si cambiano dall&apos;elenco
+                    <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                      <input type="checkbox" checked={datiInline.per_pacchetti} onChange={(e) => setDatiInline({ ...datiInline, per_pacchetti: e.target.checked })} title="Proponibile sui pacchetti a location dai campi" />
                     </td>
+                    <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                      <input type="checkbox" checked={datiInline.attivo} onChange={(e) => setDatiInline({ ...datiInline, attivo: e.target.checked })} title="Un gioco spento non si propone piu' sulle prenotazioni nuove" />
+                    </td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', color: '#94a3b8' }}>{usoListino[g.id] || 0}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right', color: '#94a3b8' }}>{usoPrenotazioni[g.id] || 0}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
