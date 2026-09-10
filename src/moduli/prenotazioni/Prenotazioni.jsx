@@ -859,17 +859,6 @@ function Prenotazioni({ user }) {
       if (!puoConfermareSenzaIncasso) return alert("Non è possibile confermare: serve almeno un acconto o il saldo.");
       if (!window.confirm("Su questa prenotazione non risulta alcun incasso. Confermarla comunque?")) return;
     }
-    // Confermare una partita e' il momento in cui va segnata sul calendario: chiederlo adesso
-    // evita il giro "conferma, riapri la prenotazione, cerca il pulsante" -- e le partite che
-    // sul calendario non ci finiscono mai perche' quel giro nessuno lo fa.
-    // La finestra si apre prima del salvataggio, e non dopo, perche' un window.open che arriva
-    // al termine di un'attesa il browser lo blocca: non e' piu' figlio del clic dell'utente.
-    if (nuovoStato === 'CONF' && !p.googleCalendarSync
-      && window.confirm(`${p.id} confermata.
-
-Vuoi creare adesso l'evento su Google Calendar?`)) {
-      apriGoogleCalendar(p);
-    }
     // Tornando fra le partite vive il motivo dell'annullamento se ne va con lo stato: tenerlo
     // vorrebbe dire raccontare di una cosa che non e' piu' successa.
     const tornaInGioco = p.stato === 'ANNULLATA' || p.stato === 'POSTICIPATA';
@@ -1361,6 +1350,7 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
 
     setSalvataggioPren(true);
     let codice = codicePrenInModifica;
+    const eraNuova = !codice;
     const voucherPrecedente = codice ? (prenotazioni.find(p => p.id === codice)?.voucherCodice || "") : "";
     const preventivoPrecedente = codice ? (prenotazioni.find(p => p.id === codice)?.preventivoCollegato || "") : "";
     if (!codice) {
@@ -1379,7 +1369,15 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
     setCodicePrenInModifica(codice);
     setFormPrenOriginale(f);
     fetchTutto();
-    alert(`Prenotazione ${codice} salvata.`);
+    // Una prenotazione appena nata va segnata sul calendario finche' si ha in mano il contesto:
+    // chiederlo adesso evita il giro "salva, cerca la riga, apri, clicca" -- e le partite che sul
+    // calendario non ci finiscono mai perche' quel giro nessuno lo fa. Su una modifica non si
+    // chiede: l'evento c'e' gia', e semmai va corretto a mano.
+    if (eraNuova && window.confirm(`Prenotazione ${codice} salvata.\n\nVuoi creare adesso l'evento su Google Calendar?`)) {
+      apriGoogleCalendar({ id: codice, ...rec });
+    } else {
+      alert(`Prenotazione ${codice} salvata.`);
+    }
   };
 
   const btnSalva = { display: 'inline-flex', alignItems: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' };
