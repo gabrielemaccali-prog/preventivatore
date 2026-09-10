@@ -4,7 +4,7 @@ import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import html2pdf from 'html2pdf.js'
 import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita } from './calcolo'
-import { toMinutes, righeResidenza } from '../../lib/utils'
+import { toMinutes, righeResidenza, etichettaPartita } from '../../lib/utils'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -148,6 +148,10 @@ function Compensi({ user }) {
   const [periodi, setPeriodi] = useState([]);
   const [campi, setCampi] = useState([]);
   const [anagrafiche, setAnagrafiche] = useState([]);
+  // Il catalogo giochi serve solo a scrivere per esteso di che partita si tratta: il compenso
+  // dipende da quando si è lavorato e con chi, non da cosa si è giocato.
+  const [giochi, setGiochi] = useState([]);
+  const nomeGiocoPerId = Object.fromEntries(giochi.map(g => [g.id, g.nome]));
   // I periodi portano l'id dell'operatore, non il suo nome: il nome si chiede all'anagrafica,
   // così cambiarlo si riflette ovunque invece di lasciare in giro copie vecchie.
   const nomeOperatore = (utenteId) => {
@@ -172,9 +176,9 @@ function Compensi({ user }) {
   const fetchPartite = async () => {
     setCaricamentoPartite(true);
     // Solo partite confermate: una FORSE non giocata non genera compenso.
-    const [pr, vc, pe, ca, ut] = await Promise.all([
+    const [pr, vc, pe, ca, ut, gi] = await Promise.all([
       supabase.from('prenotazioni')
-        .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoId, campoNome, pacchettoNome, locationIndirizzo, locationCitta, locationProvincia, pacchettoNome, operatori')
+        .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoId, campoNome, pacchettoNome, giocoId, locationIndirizzo, locationCitta, locationProvincia, operatori')
         .eq('stato', 'CONF').lte('data', oggiIso()).order('data', { ascending: false }),
       supabase.from('op_voci').select('*').lte('data', oggiIso()),
       supabase.from('op_periodi').select('*').order('dal', { ascending: false }),
@@ -184,6 +188,7 @@ function Compensi({ user }) {
       // Residenza e codice fiscale del bubbler, che vanno in testa al documento: si compilano in
       // Disponibilità > Configuratore. I periodi e le voci puntano a utenti.id.
       supabase.from('utenti').select('id, username, nome, cognome, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true),
+      supabase.from('giochi').select('id, nome'),
     ]);
     setCaricamentoPartite(false);
     if (pr.error || vc.error || pe.error || ca.error) { console.error(pr.error || vc.error || pe.error || ca.error); return; }
@@ -195,6 +200,7 @@ function Compensi({ user }) {
     setPeriodi(pe.data || []);
     setCampi(ca.data || []);
     setAnagrafiche(ut.data || []);
+    setGiochi(gi.data || []);
   };
 
   // Anche gli indicatori leggono i periodi, quindi devono far scattare lo scarico: senza,
@@ -630,7 +636,7 @@ function Compensi({ user }) {
             <th style={{ padding: '8px 10px', width: '104px' }}>Orario</th>
             <th style={{ padding: '8px 10px', width: '124px' }}>Partita</th>
             <th style={{ padding: '8px 10px' }}>Nominativo</th>
-            <th style={{ padding: '8px 10px' }}>Pacchetto</th>
+            <th style={{ padding: '8px 10px' }}>Gioco · Pacchetto</th>
             <th style={{ padding: '8px 10px' }}>Location</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '58px' }}>Ore</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '80px' }}>Compenso</th>
@@ -685,7 +691,7 @@ function Compensi({ user }) {
                       </td>
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{x.partita.id}</td>
                       <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}</td>
-                      <td style={{ padding: '7px 10px', color: '#666' }}>{x.partita.pacchettoNome || '—'}</td>
+                      <td style={{ padding: '7px 10px', color: '#666' }}>{etichettaPartita(nomeGiocoPerId[x.partita.giocoId], x.partita.pacchettoNome) || '—'}</td>
                       <td style={{ padding: '7px 10px', color: '#666' }}>{locationDi(x.partita)}</td>
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>{ore(x.oreAttribuite)}</td>
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>{euro(x.compenso)}</td>

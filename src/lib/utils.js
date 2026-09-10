@@ -119,6 +119,14 @@ export const campiFatturazioneMancanti = (p) => (p.fattTipo === 'azienda'
 // compresi, tranne per lo straniero, a cui l'app li impone).
 export const fatturazioneCompletaDi = (p) => campiFatturazioneMancanti(p).length === 0;
 
+// Come si chiama una partita in una riga sola: il gioco e la modalità con cui è stato venduto,
+// "Bubble Football · Party Basic". Il gioco viene prima perché è la cosa; il pacchetto è il come.
+// Vive qui perché la usano prenotazioni e compensi, e in una mail al cliente e in un riepilogo
+// interno la stessa partita deve chiamarsi allo stesso modo.
+// Il nome del gioco arriva già risolto dal catalogo: la prenotazione ne conserva solo l'id.
+export const etichettaPartita = (giocoNome, pacchettoNome) =>
+  [giocoNome, pacchettoNome].filter(Boolean).join(' · ');
+
 // Giorni coperti da una prenotazione, in ordine. Possono essere più di uno e non consecutivi
 // (es. un evento il sabato e il sabato dopo): "data" resta il primo giorno, "giorni" li elenca tutti
 // ed è nulla sulle prenotazioni di un giorno solo.

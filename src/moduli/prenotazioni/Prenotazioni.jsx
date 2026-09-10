@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
-import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida } from '../../lib/utils'
+import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, arrotondaAllaDecina } from '../../lib/utils'
 import { puoVedere } from '../../lib/permessi'
 import { STATI_ESTERI, STATO_ITALIA } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
@@ -20,12 +20,12 @@ const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta:
 const fracIva = (v) => (v != null && v !== '' ? parseFloat(v) : 22) / 100;
 
 const PREN_VUOTA = {
-  data: "", altriGiorni: [], piuGiorni: false, senzaOrario: false, pacchettoId: "", oraInizio: "", oraFine: "",
+  data: "", altriGiorni: [], piuGiorni: false, senzaOrario: false, pacchettoId: "", giocoId: "", oraInizio: "", oraFine: "",
   nominativo: "", email: "", telefono: "",
   campoId: "", campoPrenotato: false, locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
   operatoriIds: [], senzaOperatori: false, sconto: "0", prezzoManuale: "",
   tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "",
-  preventivoCollegato: "", ereditaCosti: false, costoEreditato: "",
+  preventivoCollegato: "", ereditaCosti: false, costoEreditato: "", voci: [],
   fattTipo: "privato",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
   fattStraniero: false, fattStato: "",
@@ -95,14 +95,16 @@ const dataOraGoogle = (d) => {
 };
 
 // Costruisce la descrizione estesa dell'evento Google Calendar: contatti, dettagli vendita, pagamento, fatturazione
-const dettagliGoogleCalendar = (p) => {
+// `giocoNome` arriva risolto dal catalogo: queste due funzioni stanno fuori dal componente e
+// non possono leggerlo da sole, ma senza di esso l'evento non direbbe a cosa si gioca.
+const dettagliGoogleCalendar = (p, giocoNome) => {
   const righe = [];
   righe.push(`Contatti: ${p.nominativo || ''}${p.telefono ? ` · Tel ${p.telefono}` : ''}${p.email ? ` · ${p.email}` : ''}`);
   if (p.etaMedia) righe.push(`Età media partecipanti: ${p.etaMedia}`);
   if (p.note) righe.push(`Note: ${p.note}`);
 
   righe.push('');
-  righe.push(`Pacchetto: ${p.pacchettoNome || '—'}${p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} partecipanti` : ''}`);
+  righe.push(`Pacchetto: ${etichettaPartita(giocoNome, p.pacchettoNome) || '—'}${p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} partecipanti` : ''}`);
   if (p.tipoRinfresco) righe.push(`Rinfresco: ${p.tipoRinfresco}`);
   righe.push(`Prezzo vendita: €${(parseFloat(p.prezzoVendita) || 0).toFixed(2)}${p.sconto ? ` (sconto ${p.sconto}%)` : ''}`);
 
@@ -131,7 +133,7 @@ const dettagliGoogleCalendar = (p) => {
 // Link "Aggiungi a Google Calendar" precompilato con i dati della prenotazione, sul calendario condiviso GOOGLE_CALENDAR_ID.
 // operatoriAnagrafica serve a risolvere l'email corrente degli operatori assegnati (nello snapshot della prenotazione c'è solo id/nome).
 // campiAnagrafica serve a risolvere l'indirizzo corrente del campo (nello snapshot della prenotazione c'è solo id/nome).
-const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica) => {
+const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica, giocoNome) => {
   // Google riceve un evento solo: se i giorni sono consecutivi lo si estende fino all'ultimo,
   // altrimenti (giorni sparsi) copre il primo giorno e gli altri vanno aggiunti a mano.
   // Senza orario serve un evento "tutto il giorno": due date senza ora, con la fine esclusa.
@@ -148,7 +150,7 @@ const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica) => {
   const campoInfo = p.campoId ? (campiAnagrafica || []).find(c => c.id === p.campoId) : null;
   const indirizzoCampo = campoInfo ? [campoInfo.indirizzo, campoInfo.citta].filter(Boolean).join(', ') : '';
   const luogo = indirizzoCampo || p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '';
-  const titolo = [p.nominativo, p.campoNome, p.pacchettoNome].filter(Boolean).join(' - ');
+  const titolo = [p.nominativo, p.campoNome, etichettaPartita(giocoNome, p.pacchettoNome)].filter(Boolean).join(' - ');
   const emailOperatori = (p.operatori || [])
     .map(op => (operatoriAnagrafica || []).find(o => o.id === op.id)?.email)
     .filter(Boolean);
@@ -156,7 +158,7 @@ const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica) => {
     action: 'TEMPLATE',
     text: titolo,
     dates: p.senzaOrario ? soloDate : `${dataOraGoogle(inizio)}/${dataOraGoogle(fine)}`,
-    details: dettagliGoogleCalendar(p),
+    details: dettagliGoogleCalendar(p, giocoNome),
     location: luogo,
     src: GOOGLE_CALENDAR_ID,
     authuser: GOOGLE_CALENDAR_ID,
@@ -202,7 +204,8 @@ const COLONNE_PREN = [
   { chiave: 'createdAt', label: 'Inserito il', valore: (p) => p.createdAt || '' },
   { chiave: 'data', label: 'Data evento', valore: (p) => `${p.data || ''}T${p.oraInizio || ''}` }, // eventi senza orario: prima degli altri dello stesso giorno
   { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
-  { chiave: 'pacchetto', label: 'Pacchetto', valore: (p) => p.pacchettoNome || '' },
+  // Il valore di ordinamento viene sostituito nel componente, dove il nome del gioco è risolvibile.
+  { chiave: 'pacchetto', label: 'Gioco · Pacchetto', valore: (p) => p.pacchettoNome || '' },
   { chiave: 'location', label: 'Location', valore: (p) => p.campoNome || p.locationCitta || '' },
   { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') || (p.senzaOperatori ? 'non richiesti' : '') },
   { chiave: 'importo', label: 'Pagato / Totale', valore: (p) => parseFloat(p.prezzoVendita) || 0 },
@@ -289,6 +292,12 @@ function Prenotazioni({ user }) {
   const [mostraErroriValidazione, setMostraErroriValidazione] = useState(false); // evidenzia di rosso i campi obbligatori mancanti, solo dopo un tentativo di salvataggio
 
   const [pacchetti, setPacchetti] = useState([]);
+  // Il catalogo giochi: il pacchetto dice come è stata venduta la partita, il gioco dice a cosa
+  // si è giocato. La prenotazione conserva solo l'id del gioco, il nome si rilegge sempre da qui.
+  const [giochi, setGiochi] = useState([]);
+  const [listino, setListino] = useState([]);
+  const [sedi, setSedi] = useState([]);
+  const [extras, setExtras] = useState([]);
   const [operatori, setOperatori] = useState([]); // bubbler (utenti con flag bubbler), fonte in Disponibilità > Configuratore
   const [dispCalendario, setDispCalendario] = useState([]);
   const [fasceDisp, setFasceDisp] = useState([]);
@@ -337,7 +346,11 @@ function Prenotazioni({ user }) {
   const [codicePrenInModifica, setCodicePrenInModifica] = useState(null);
   const [salvataggioPren, setSalvataggioPren] = useState(false);
   const [nuovoPagamento, setNuovoPagamento] = useState({ importo: "", data: "", nominativo: "" });
-  const [nuovoGiornoPren, setNuovoGiornoPren] = useState(""); // data in corso di aggiunta all'elenco dei giorni dell'evento
+  const [nuovoGiornoPren, setNuovoGiornoPren] = useState("");
+  // Il dettaglio per gioco si legge sempre, si modifica solo dopo averlo chiesto: sono i numeri
+  // da cui escono prezzo e costo della pratica, e un clic distratto non deve poterli spostare.
+  const [dettaglioInModifica, setDettaglioInModifica] = useState(false);
+  const [vociPrimaDellaModifica, setVociPrimaDellaModifica] = useState(null); // data in corso di aggiunta all'elenco dei giorni dell'evento
   const [filtroPrenData, setFiltroPrenData] = useState("");
   const [filtroPrenSettimana, setFiltroPrenSettimana] = useState(""); // lunedì (ISO) della settimana mostrata, "" = nessun filtro
   const [filtroPrenStato, setFiltroPrenStato] = useState("");
@@ -365,7 +378,7 @@ function Prenotazioni({ user }) {
   useEffect(() => { fetchTutto(); }, []);
 
   const fetchTutto = async () => {
-    const [p, o, c, t, pr, pv, vc, dc, df, pag] = await Promise.all([
+    const [p, o, c, t, pr, pv, vc, dc, df, pag, gi, li, se, ex] = await Promise.all([
       supabase.from('pren_pacchetti').select('*').order('nome'),
       // Operatori = bubbler configurati in Disponibilità (utenti con flag bubbler), non più una tabella a parte.
       supabase.from('utenti').select('id, username, nome, cognome, nome_breve, telefono, email').eq('bubbler', true).order('nome_breve'),
@@ -377,8 +390,19 @@ function Prenotazioni({ user }) {
       supabase.from('disp_calendario').select('*'),
       supabase.from('disp_fasce').select('*').order('ordine'),
       supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data'),
+      supabase.from('giochi').select('*').order('nome'),
+      // Solo per risalire dal "gonfiabileId" scritto in una riga di preventivo al gioco a
+      // catalogo: serve a proporre il gioco quando si collega un preventivo a un noleggio.
+      supabase.from('gonfiabili').select('id, giocoId, locationId'),
+      supabase.from('sedi').select('id, bfm'),
+      // Servizi accessori: si aggiungono a mano al dettaglio di un noleggio.
+      supabase.from('extras').select('*').order('nome'),
     ]);
     if (p.data) setPacchetti(p.data);
+    if (gi.data) setGiochi(gi.data);
+    if (li.data) setListino(li.data);
+    if (se.data) setSedi(se.data);
+    if (ex.data) setExtras(ex.data);
     if (o.data) setOperatori(o.data.map(b => ({ id: b.id, nome: b.nome_breve || [b.nome, b.cognome].filter(Boolean).join(' ') || b.username, email: b.email, telefono: b.telefono })));
     if (c.data) setCampi(c.data);
     if (t.data) setTariffe(t.data);
@@ -399,6 +423,125 @@ function Prenotazioni({ user }) {
     if (dc.data) setDispCalendario(dc.data);
     if (df.data) setFasceDisp(df.data);
   };
+
+  // --- IL GIOCO DI UNA PRENOTAZIONE ---
+  // Sulla prenotazione c'è solo l'id: il nome si rilegge dal catalogo, così rinominare un gioco
+  // si riflette ovunque invece di lasciare indietro le righe già salvate.
+  const nomeGiocoPerId = Object.fromEntries(giochi.map(g => [g.id, g.nome]));
+  const nomeGiocoDi = (p) => nomeGiocoPerId[p?.giocoId] || "";
+  // Come la partita si chiama per esteso, ovunque: gioco e modalità. Da quando il pacchetto è
+  // solo la modalità, il nome del gioco è l'unico posto in cui si legge a cosa si è giocato.
+  const etichettaDi = (p) => etichettaPartita(nomeGiocoDi(p), p?.pacchettoNome);
+
+  // I giochi proponibili dipendono dal pacchetto: su un pacchetto a location dai campi valgono
+  // solo quelli spuntati come giocabili su campo (partono dalla sede BFM); su un noleggio a
+  // location libera vale tutto il catalogo. Un gioco spento non si propone più, ma se è quello
+  // già scelto resta in elenco, altrimenti riaprire una prenotazione vecchia lo cancellerebbe.
+  const giochiSelezionabili = (pacchetto, giocoIdCorrente) => giochi.filter(g => {
+    if (!g.attivo && String(g.id) !== String(giocoIdCorrente)) return false;
+    // Su un pacchetto da campo valgono i giochi che hai deciso di vendere così.
+    if (pacchetto?.locationTipo === 'campi') return g.per_pacchetti;
+    // Su un noleggio si sceglie un gioco solo se è nostro: quello di un fornitore ha un costo
+    // che sa solo il preventivo, e infatti l'alternativa al gioco è proprio il preventivo.
+    return giochiPropri.has(g.id) || String(g.id) === String(giocoIdCorrente);
+  });
+
+  // --- QUANDO IL NOLEGGIO PUÒ FARE A MENO DEL PREVENTIVO ---
+  // Un gioco è "nostro" se a listino esiste presso una sede di proprietà. Non è un flag da
+  // mantenere: è un fatto, e sta già nel listino. Tenerlo derivato evita che si allontani dalla
+  // realtà, ed è diverso da "per_pacchetti", che è invece una scelta commerciale — Archery Tag
+  // è nostro ma non lo vendi come pacchetto da campo, e deve restare noleggiabile lo stesso.
+  const idSediProprie = new Set(sedi.filter(s => s.bfm).map(s => s.id));
+  const giochiPropri = new Set(listino.filter(l => idSediProprie.has(l.locationId)).map(l => l.giocoId));
+
+  // Un noleggio è un pacchetto senza prezzo fisso: se il prezzo non sta sul pacchetto deve venire
+  // da qualche parte, e quel posto è il preventivo. Riconoscerlo così invece che dal nome regge
+  // anche quando i pacchetti verranno riorganizzati.
+  const eUnNoleggio = (pacchetto) => !!pacchetto && (pacchetto.prezzo == null || pacchetto.prezzo === "");
+  // Un noleggio si descrive in uno dei due modi, mai in tutti e due: o con un preventivo, che
+  // contiene i giochi, le sedi e i costi — anche più giochi insieme — oppure con un gioco solo
+  // fra i nostri, che non ha bisogno di nessun preventivo perché non lo compriamo da nessuno.
+  // Sceglierne uno esclude l'altro, e uno dei due va scelto.
+  const noleggioIncompleto = (pacchetto, giocoId, preventivo) =>
+    eUnNoleggio(pacchetto) && !preventivo && !giocoId;
+
+  // Il gioco di un preventivo: quello della sua prima riga, risalendo per identificatore.
+  // Un preventivo può contenerne più d'uno — il dettaglio completo resta lì dentro, ed è da lì
+  // che Costi/Ricavi lo prenderà; alla prenotazione serve il principale, per dirle di cosa parla.
+  // --- COSA SI EREDITA DA UN PREVENTIVO ---
+  // Il preventivo è già stato scritto e mandato al cliente: luogo, date, contatti e note ci sono
+  // già dentro. Ricopiarli a mano è tempo perso e un'occasione per sbagliare, quindi arrivano
+  // da soli — ma solo dove il campo è ancora vuoto: quello che hai già scritto non si tocca.
+
+  // La destinazione del preventivo è una riga sola, composta per essere letta ("Via Rossi 1,
+  // CAP 26845, Codogno (Lodi)"): qui si riapre nei quattro campi della prenotazione. Le parti
+  // che mancano — spesso via e CAP — restano vuote invece di essere indovinate.
+  const scomponiDestinazione = (testo) => {
+    const parti = (testo || '').split(',').map(x => x.trim()).filter(Boolean);
+    if (parti.length === 0) return {};
+    const ultima = parti.pop();
+    const m = /^(.*?)\s*(?:\(([^)]+)\))?$/.exec(ultima) || [];
+    const iCap = parti.findIndex(x => /^CAP\s+\d+/i.test(x));
+    return {
+      indirizzo: parti.filter((_, i) => i !== iCap).join(', '),
+      cap: iCap >= 0 ? parti[iCap].replace(/^CAP\s+/i, '').trim() : '',
+      citta: (m[1] || '').trim(),
+      provincia: siglaProvincia(m[2] || ''),
+    };
+  };
+
+  // "Dal 04/09/2026 al 04/09/2026" -> le due date ISO. Un periodo aperto ("al N/D") dà solo l'inizio.
+  const dateDelPeriodo = (periodo) => {
+    const g = [...(periodo || '').matchAll(/(\d{2})\/(\d{2})\/(\d{4})/g)].map(m => `${m[3]}-${m[2]}-${m[1]}`);
+    return { inizio: g[0] || '', fine: g[1] || '' };
+  };
+
+  const giocoDelPreventivo = (codice) => {
+    const pv = preventivi.find(x => String(x.codice) === String(codice));
+    const primaRiga = (pv?.gonfiabili || [])[0];
+    return listino.find(l => l.id === primaRiga?.gonfiabileId)?.giocoId ?? "";
+  };
+
+  // Lo spaccato per gioco di un preventivo collegato: quanto rende e quanto costa ogni voce.
+  // È il dettaglio che la prenotazione non tiene — lei ne conserva solo il totale — ed è la
+  // stessa scomposizione da cui Costi/Ricavi leggerà.
+  //
+  // Il nome del gioco si risolve dal catalogo passando per la riga di listino; quello congelato
+  // nel preventivo resta come ripiego per le righe vecchie, che l'identificatore non ce l'hanno.
+  // Il costo di riga si arrotonda alla decina come fa il preventivatore, altrimenti la somma
+  // delle righe non tornerebbe con il totale che hai in alto.
+  const vociDalPreventivo = (codice) => {
+    const pv = preventivi.find(x => String(x.codice) === String(codice));
+    if (!pv) return [];
+    const righe = (pv.gonfiabili || []).map(g => {
+      const giocoId = listino.find(l => l.id === g.gonfiabileId)?.giocoId ?? null;
+      return {
+        giocoId,
+        // Il nome si congela qui perché la riga può riferirsi a un extra o a un gioco che non è
+        // a catalogo: senza, resterebbe una riga senza nome. Quando c'è il gioco vince il catalogo.
+        nome: nomeGiocoPerId[giocoId] || g.nome || '—',
+        sede: g.sedePartenza || '—',
+        quantita: g.quantita || 1,
+        ricavo: parseFloat(g.prezzoVendita) || 0,
+        // Arrotondato alla decina come fa il preventivatore, altrimenti la somma delle righe non
+        // tornerebbe con il costo vivo che il preventivo dichiara.
+        costo: arrotondaAllaDecina((parseFloat(g.costoNoleggio) || 0) + (parseFloat(g.costoLogistica) || 0)),
+      };
+    });
+    const extra = (pv.extras || []).map(e => ({
+      giocoId: null, nome: e.nome || 'Servizio', sede: '—', quantita: 1,
+      ricavo: parseFloat(e.prezzoVendita) || 0,
+      costo: arrotondaAllaDecina(parseFloat(e.costo) || 0),
+    }));
+    return [...righe, ...extra];
+  };
+
+  // I due totali della prenotazione non sono più campi a sé: sono la somma delle righe. Correggere
+  // una riga li aggiorna, e non possono più dire una cosa diversa dal dettaglio che hanno sotto.
+  const sommaVoci = (voci) => (voci || []).reduce(
+    (a, v) => ({ ricavo: a.ricavo + (parseFloat(v.ricavo) || 0), costo: a.costo + (parseFloat(v.costo) || 0) }),
+    { ricavo: 0, costo: 0 }
+  );
 
   // Disponibilità di un operatore (bubbler), incrociando il campo (se la location è un campo registrato)
   // e la data/orario della prenotazione con il calendario di Disponibilità.
@@ -475,7 +618,7 @@ function Prenotazioni({ user }) {
     setCodicePrenInModifica(p.id);
     const caricato = {
       data: p.data || "", altriGiorni: giorniEventoDi(p).filter(g => g !== p.data),
-      piuGiorni: giorniEventoDi(p).length > 1, senzaOrario: !!p.senzaOrario, pacchettoId: p.pacchettoId || "",
+      piuGiorni: giorniEventoDi(p).length > 1, senzaOrario: !!p.senzaOrario, pacchettoId: p.pacchettoId || "", giocoId: p.giocoId ?? "",
       oraInizio: p.oraInizio || "", oraFine: p.oraFine || "",
       nominativo: p.nominativo || "", email: p.email || "", telefono: p.telefono || "",
       campoId: p.campoId || "", campoPrenotato: !!p.campoPrenotato,
@@ -484,7 +627,7 @@ function Prenotazioni({ user }) {
       sconto: String(p.sconto ?? "0"), prezzoManuale,
       tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
       pagamenti: p.pagamenti || [], voucherCodice: p.voucherCodice || "",
-      preventivoCollegato: p.preventivoCollegato || "", ereditaCosti: !!p.ereditaCosti, costoEreditato: p.costoEreditato ?? "",
+      preventivoCollegato: p.preventivoCollegato || "", ereditaCosti: !!p.ereditaCosti, costoEreditato: p.costoEreditato ?? "", voci: p.voci || [],
       fattTipo: p.fattTipo || "privato",
       fattNome: p.fattNome || "", fattCognome: p.fattCognome || "", fattIndirizzo: p.fattIndirizzo || "", fattCap: p.fattCap || "", fattCitta: p.fattCitta || "", fattProvincia: p.fattProvincia || "", fattCF: p.fattCF || "",
       fattStraniero: !!p.fattStraniero, fattStato: p.fattStato || "",
@@ -528,7 +671,7 @@ function Prenotazioni({ user }) {
       `di seguito puoi trovare l'avvenuta conferma della tua prenotazione:`,
       '',
       'PRENOTAZIONE',
-      p.pacchettoNome || '',
+      etichettaDi(p) || '',
       'Data:',
       formattaDataEstesaIT(p.data),
       'Orario:',
@@ -578,7 +721,7 @@ function Prenotazioni({ user }) {
         <p>di seguito puoi trovare l'avvenuta conferma della tua prenotazione:</p>
         <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:12px 0;">
           <tbody>
-            ${rigaTabella('PRENOTAZIONE', p.pacchettoNome || '', true)}
+            ${rigaTabella('PRENOTAZIONE', etichettaDi(p) || '', true)}
             ${rigaTabella('Data:', formattaDataEstesaIT(p.data))}
             ${rigaTabella('Orario:', oraTxt)}
             ${rigaTabella('Centro Sportivo:', locationTxt)}
@@ -635,7 +778,7 @@ function Prenotazioni({ user }) {
   };
   // Apre il link precompilato Google Calendar e segna la prenotazione come sincronizzata (ripristinato a "non sincronizzato" ad ogni modifica salvata)
   const apriGoogleCalendar = async (p) => {
-    window.open(linkGoogleCalendar(p, operatori, campi), '_blank', 'noopener,noreferrer');
+    window.open(linkGoogleCalendar(p, operatori, campi, nomeGiocoDi(p)), '_blank', 'noopener,noreferrer');
     await supabase.from('prenotazioni').update({ googleCalendarSync: true }).eq('id', p.id);
     setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, googleCalendarSync: true } : prev);
     fetchTutto();
@@ -660,7 +803,11 @@ function Prenotazioni({ user }) {
 
   const oggiIso = toISODate(new Date());
   // Ordinamento condiviso da Storico e Gestione: la tabella è la stessa, quindi lo è anche il criterio scelto.
-  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(VALORI_ORDINAMENTO_PREN);
+  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella({
+    ...VALORI_ORDINAMENTO_PREN,
+    // La colonna mostra "gioco · pacchetto": si ordina su quello che si legge, non su metà.
+    pacchetto: (p) => etichettaDi(p),
+  });
 
   // Riga di tabella condivisa da Storico e dalle sotto-schede di Gestione.
   // Il clic sulla riga espande un pannello con i dettagli (telefono, email, note, pagamenti) e sblocca le azioni (apri, conferma, calendario, elimina).
@@ -695,7 +842,7 @@ function Prenotazioni({ user }) {
             <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar (clic per correggere a mano)' : 'Non sincronizzato con Google Calendar (clic per correggere a mano)'} style={{ cursor: 'pointer', color: p.googleCalendarSync ? '#16a34a' : '#dc2626', fontWeight: 'bold' }} onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(p); }}>{p.googleCalendarSync ? '✓' : '⚠'}</span> <strong>{p.nominativo}</strong>
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>
-            {p.pacchettoNome || '—'}{p.durataOre ? ` (${p.durataOre}h)` : ''}
+            {etichettaDi(p) || '—'}{p.durataOre ? ` (${p.durataOre}h)` : ''}
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>
             {p.campoNome || p.locationCitta || '—'}
@@ -871,6 +1018,9 @@ function Prenotazioni({ user }) {
     setFormPren(prev => ({
       ...prev,
       pacchettoId: id,
+      // Cambiando pacchetto il gioco può non essere più proponibile — passando a un pacchetto da
+      // campo, un gonfiabile da noleggio non lo è: si azzera invece di restare scelto di nascosto.
+      giocoId: giochiSelezionabili(p, prev.giocoId).some(g => String(g.id) === String(prev.giocoId)) ? prev.giocoId : "",
       numeroPartecipanti: (p && p.numeroPartecipanti != null) ? p.numeroPartecipanti : prev.numeroPartecipanti,
       campoId: "",
       oraFine: (p && p.durataOre != null && p.durataOre !== "") ? "" : prev.oraFine,
@@ -955,7 +1105,7 @@ function Prenotazioni({ user }) {
     const oraFine = (senzaOrario || durataFissa) ? "" : normalizzaOra24(f.oraFine);
     // Tutti i campi obbligatori vengono controllati insieme (non uno alla volta) così l'utente
     // li vede evidenziati di rosso tutti insieme invece di scoprirli uno a uno a ogni tentativo.
-    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim()
+    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim() || !f.giocoId
       || (!senzaOrario && !f.oraInizio) || (!senzaOrario && !durataFissa && !f.oraFine)
       || (!!pac?.prevedeRinfresco && !f.tipoRinfresco);
     if (mancaCampoObbligatorio) {
@@ -963,6 +1113,12 @@ function Prenotazioni({ user }) {
       return alert("Compila i campi obbligatori evidenziati in rosso.");
     }
     if (!senzaOrario && (oraInizio === null || oraFine === null)) return alert("Orario non valido: usa il formato 24h, es. 19:00 (i minuti si possono omettere: 19 diventa 19:00).");
+    // Un noleggio deve dire di cosa parla: o il preventivo, o un gioco nostro. Senza nessuno dei
+    // due la prenotazione non sa cosa si è noleggiato né quanto è costato.
+    if (noleggioIncompleto(pac, f.giocoId, f.preventivoCollegato)) {
+      setMostraErroriValidazione(true);
+      return alert("Su un noleggio scegli un preventivo — che contiene i giochi e i costi — oppure un singolo gioco fra i nostri.");
+    }
     if (pac.prevedeRinfresco && campi.find(c => c.id === f.campoId)?.noRinfresco) return alert("Questo campo non consente pacchetti con rinfresco: cambia campo o pacchetto.");
     if (f.fattTipo === 'privato' && !f.fattStraniero && f.fattCF && !validaCF(f.fattCF)) return alert("Codice Fiscale non valido.");
     // La provincia va scritta in sigla: si accetta anche il nome (viene convertito), ma non una
@@ -981,8 +1137,15 @@ function Prenotazioni({ user }) {
     const sconto = parseFloat(f.sconto) || 0;
     const scontoFrac = 1 - sconto / 100;
     const pacHaPrezzo = pac.prezzo != null && pac.prezzo !== "";
-    const prezzoBaseNetto = pacHaPrezzo ? (parseFloat(pac.prezzo) / (1 + IVA)) : (parseFloat(f.prezzoManuale) || 0);
-    const prezzoBaseLordo = pacHaPrezzo ? parseFloat(pac.prezzo) : ((parseFloat(f.prezzoManuale) || 0) * (1 + IVA));
+    // Il prezzo base: dal pacchetto se ce l'ha, altrimenti dalla somma delle righe di dettaglio,
+    // e solo in mancanza di entrambi dal campo digitato a mano (noleggio di un gioco nostro,
+    // senza preventivo). Le righe, quando ci sono, sono la fonte: non c'è un totale a sé che
+    // possa contraddirle.
+    const totVoci = sommaVoci(f.voci);
+    const conVoci = (f.voci || []).length > 0;
+    const baseNetta = conVoci ? totVoci.ricavo : (parseFloat(f.prezzoManuale) || 0);
+    const prezzoBaseNetto = pacHaPrezzo ? (parseFloat(pac.prezzo) / (1 + IVA)) : baseNetta;
+    const prezzoBaseLordo = pacHaPrezzo ? parseFloat(pac.prezzo) : (baseNetta * (1 + IVA));
     const prezzoVenditaNetto = prezzoBaseNetto * scontoFrac;
     const prezzoVenditaLordo = prezzoBaseLordo * scontoFrac;
     const ivaCampoFrac = campo ? fracIva(campo.ivaCampo) : IVA;
@@ -1011,6 +1174,10 @@ function Prenotazioni({ user }) {
 
     const rec = {
       data: giorniEvento[0] || f.data, giorni, senzaOrario, pacchettoId: f.pacchettoId, pacchettoNome: pac.nome || "",
+      // Del gioco si salva solo l'id: il nome si rilegge sempre dal catalogo, così una rinomina
+      // vale anche sulle prenotazioni già registrate. Il pacchetto invece resta fotografato,
+      // perché dice come è stata venduta quella partita quel giorno.
+      giocoId: f.giocoId || null,
       durataOre, oraInizio, oraFine: (senzaOrario || durataFissa) ? null : oraFine,
       nominativo: f.nominativo, email: f.email, telefono: f.telefono,
       campoId: campo ? campo.id : null, campoNome: campo ? campo.nome : null, campoPrenotato: f.campoPrenotato,
@@ -1022,7 +1189,14 @@ function Prenotazioni({ user }) {
       tipoRinfresco: pac.prevedeRinfresco ? f.tipoRinfresco : null, numeroPartecipanti: numPart,
       costoRinfresco: costoRinfrescoLordo, costoRinfrescoNetto, costoRinfrescoLordo,
       etaMedia: f.etaMedia, note: f.note,
-      preventivoCollegato: f.preventivoCollegato || null, ereditaCosti: !!f.ereditaCosti, costoEreditato: f.ereditaCosti ? (parseFloat(f.costoEreditato) || 0) : null,
+      preventivoCollegato: f.preventivoCollegato || null,
+      // Il dettaglio per gioco viaggia con la prenotazione: nasce dal preventivo ma da lì è suo,
+      // e correggere il preventivo domani non riscrive quello che è stato venduto oggi.
+      voci: conVoci ? f.voci.map(v => ({ ...v, ricavo: parseFloat(v.ricavo) || 0, costo: parseFloat(v.costo) || 0 })) : null,
+      // I due totali restano a database perché tutto il resto li legge — pagamenti, mail,
+      // costi/ricavi — ma non si scrivono più a mano: sono la somma delle righe.
+      ereditaCosti: conVoci || !!f.ereditaCosti,
+      costoEreditato: conVoci ? totVoci.costo : (f.ereditaCosti ? (parseFloat(f.costoEreditato) || 0) : null),
       voucherCodice: f.voucherCodice || null,
       statoPagamento: statoPagamentoDi(f.pagamenti, prezzoVenditaLordo, valoreVoucherDi(f.voucherCodice)),
       stato: f.stato || "FORSE",
@@ -1092,6 +1266,11 @@ function Prenotazioni({ user }) {
     setShowFormPacchetto(true);
   };
   const rimuoviPacchetto = async (id) => { if (window.confirm("Eliminare il pacchetto?")) { await supabase.from('pren_pacchetti').delete().eq('id', id); fetchTutto(); } };
+  const alternaAttivoPacchetto = async (p) => {
+    const { error } = await supabase.from('pren_pacchetti').update({ attivo: p.attivo === false }).eq('id', p.id);
+    if (error) { console.error(error); return alert("Errore nel salvataggio del pacchetto."); }
+    fetchTutto();
+  };
   const iniziaInlinePacchetto = (p) => {
     setShowFormPacchetto(false);
     setIdPacchettoInline(p.id);
@@ -1180,8 +1359,13 @@ function Prenotazioni({ user }) {
         const sconto = parseFloat(formPren.sconto) || 0;
         const scontoFrac = 1 - sconto / 100;
         const pacHaPrezzo = pac && pac.prezzo != null && pac.prezzo !== "";
-        // Prezzo di vendita: se dal pacchetto è IVA inclusa (lordo); se manuale è IVA esclusa (netto) -> aggiunge IVA
-        const prezzoBaseLordo = pacHaPrezzo ? parseFloat(pac.prezzo) : ((parseFloat(formPren.prezzoManuale) || 0) * (1 + IVA));
+        // Stesso ordine del salvataggio: pacchetto, poi somma delle righe, poi il campo a mano.
+        const totaliVoci = sommaVoci(formPren.voci);
+        const conVoci = formPren.voci.length > 0;
+        // Prezzo di vendita: se dal pacchetto è IVA inclusa (lordo); altrimenti è netto -> aggiunge IVA
+        const prezzoBaseLordo = pacHaPrezzo
+          ? parseFloat(pac.prezzo)
+          : ((conVoci ? totaliVoci.ricavo : (parseFloat(formPren.prezzoManuale) || 0)) * (1 + IVA));
         const prezzoLordo = prezzoBaseLordo * scontoFrac;
         const prezzoVendita = prezzoLordo; // il cliente paga il lordo
         // Costo rinfresco (i valori sono lordi o netti a seconda del flag ivaInclusaRinfresco del campo)
@@ -1229,18 +1413,64 @@ function Prenotazioni({ user }) {
         });
         const dataMancante = !formPren.data;
         const pacchettoMancante = !pac;
+        const giochiProponibili = giochiSelezionabili(pac, formPren.giocoId);
+        // Su un noleggio le due strade si escludono: scelto il preventivo il gioco non si chiede
+        // più (sta là dentro), scelto il gioco il preventivo non serve. Finché non hai scelto,
+        // sono a video tutte e due. Il preventivo ha la precedenza perché sceglierlo compila da
+        // sé anche il gioco, e senza questa priorità la casella si nasconderebbe da sola.
+        const noleggio = eUnNoleggio(pac);
+        const mostraPreventivo = noleggio && (!!formPren.preventivoCollegato || !formPren.giocoId);
+        const mostraGioco = !noleggio || (!formPren.preventivoCollegato && (!!formPren.giocoId || !formPren.preventivoCollegato));
+        const scegliereUnaStrada = noleggioIncompleto(pac, formPren.giocoId, formPren.preventivoCollegato);
+        // Su un pacchetto da campo il gioco è sempre obbligatorio; su un noleggio lo è solo se
+        // non hai collegato un preventivo.
+        const giocoMancante = !formPren.giocoId && (!noleggio || scegliereUnaStrada);
         const nominativoMancante = !formPren.nominativo.trim();
         const oraInizioMancante = !formPren.senzaOrario && !formPren.oraInizio;
         const oraFineMancante = !formPren.senzaOrario && !durataFissa && !formPren.oraFine;
         const tipoRinfrescoMancante = !!pac?.prevedeRinfresco && !formPren.tipoRinfresco;
 
-        // Selezionando un preventivo si eredita subito costo e prezzo di vendita (restano poi modificabili a mano)
+        // Selezionando un preventivo si eredita subito costo e prezzo di vendita (restano poi modificabili a mano),
+        // e si propone il gioco della sua prima riga: su un noleggio è quasi sempre quello giusto,
+        // e resta correggibile. Un gioco già scelto a mano non viene sovrascritto.
         const onCambiaPreventivoCollegato = (codice) => {
           const pv = preventivi.find(p => String(p.codice) === String(codice));
-          setF(pv
-            ? { preventivoCollegato: codice, ereditaCosti: true, prezzoManuale: String(pv.totaleVendita ?? "0"), sconto: "0", costoEreditato: String(pv.costoVivoTotale ?? "0") }
-            : { preventivoCollegato: codice, ereditaCosti: false }
-          );
+          if (pv) {
+            const luogo = scomponiDestinazione(pv.destinazione);
+            const { inizio, fine } = dateDelPeriodo(pv.periodo);
+            // I giorni in mezzo si riempiono solo se il preventivo copre un periodo: sono quelli
+            // che l'offerta dichiara. Restano poi togliibili uno a uno come sempre.
+            const giorniInMezzo = [];
+            if (inizio && fine && fine > inizio) {
+              for (let d = addGiorni(dataOraLocale(inizio), 1); toISODate(d) <= fine; d = addGiorni(d, 1)) giorniInMezzo.push(toISODate(d));
+            }
+            // Solo dove è vuoto: quello che hai già scritto vince sempre sul preventivo.
+            const seVuoto = (attuale, dalPreventivo) => (attuale ? attuale : (dalPreventivo || attuale));
+            setF({
+              preventivoCollegato: codice, ereditaCosti: true,
+              voci: vociDalPreventivo(codice), sconto: "0",
+              giocoId: giocoDelPreventivo(codice) || formPren.giocoId,
+              data: seVuoto(formPren.data, inizio),
+              piuGiorni: formPren.piuGiorni || giorniInMezzo.length > 0,
+              altriGiorni: formPren.altriGiorni.length > 0 ? formPren.altriGiorni : giorniInMezzo,
+              oraInizio: seVuoto(formPren.oraInizio, pv.oraInizio),
+              oraFine: seVuoto(formPren.oraFine, pv.oraFine),
+              nominativo: seVuoto(formPren.nominativo, pv.nomeReferente),
+              email: seVuoto(formPren.email, pv.emailReferente),
+              telefono: seVuoto(formPren.telefono, pv.telefonoReferente),
+              note: seVuoto(formPren.note, pv.note),
+              locationIndirizzo: seVuoto(formPren.locationIndirizzo, luogo.indirizzo),
+              locationCap: seVuoto(formPren.locationCap, luogo.cap),
+              locationCitta: seVuoto(formPren.locationCitta, luogo.citta),
+              locationProvincia: seVuoto(formPren.locationProvincia, luogo.provincia),
+            });
+            return;
+          }
+          // Togliendo il preventivo si azzera anche il gioco che aveva compilato lui: era suo, e
+          // lasciarlo lì farebbe sembrare scelta una strada che non è stata scelta. Il resto —
+          // luogo, date, contatti — resta: è roba della prenotazione, ormai, e cancellarla
+          // sarebbe una sorpresa.
+          setF({ preventivoCollegato: "", ereditaCosti: false, giocoId: "", costoEreditato: "", voci: [] });
         };
 
         return (
@@ -1257,10 +1487,60 @@ function Prenotazioni({ user }) {
               <label style={{ flex: '1 1 260px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Pacchetto
                 <select className={`dropdown-gonfiabili ${campoRosso('pacchettoId', pacchettoMancante).className}`} value={formPren.pacchettoId} onChange={(e) => selezionaPacchettoPren(e.target.value)} style={campoRosso('pacchettoId', pacchettoMancante).style}>
                   <option value="">-- Seleziona pacchetto --</option>
-                  {pacchetti.map(p => <option key={p.id} value={p.id}>{p.nome}{p.durataOre ? ` (${p.durataOre}h)` : ' (durata libera)'}</option>)}
+                  {/* Un pacchetto spento non si propone più, ma se è quello con cui la prenotazione
+                      è stata venduta resta in elenco: la storia non si riscrive. */}
+                  {pacchetti.filter(p => p.attivo !== false || p.id === formPren.pacchettoId)
+                            .map(p => <option key={p.id} value={p.id}>{p.nome}{p.durataOre ? ` (${p.durataOre}h)` : ' (durata libera)'}</option>)}
                 </select>
               </label>
+              {/* Su un noleggio il preventivo è una delle due strade: sceglierlo racconta tutto —
+                  quali giochi, da che sedi, a che costo — e rende superflua la scelta del gioco. */}
+              {mostraPreventivo && (
+                <label style={{ flex: '1 1 260px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>
+                  Preventivo{scegliereUnaStrada ? ' *' : ''}
+                  <select
+                    className={`dropdown-gonfiabili ${campoRosso('preventivoCollegato', scegliereUnaStrada).className}`}
+                    style={campoRosso('preventivoCollegato', scegliereUnaStrada).style}
+                    value={formPren.preventivoCollegato} onChange={(e) => onCambiaPreventivoCollegato(e.target.value)}
+                  >
+                    <option value="">-- Nessuno --</option>
+                    {preventivi.filter(pv => pv.stato === 'Confermato' || String(pv.codice) === String(formPren.preventivoCollegato))
+                               .map(pv => <option key={pv.codice} value={pv.codice}>{pv.codice} — {pv.destinazione || pv.nomeReferente || ''} (€{(parseFloat(pv.totaleVendita) || 0).toFixed(2)})</option>)}
+                  </select>
+                </label>
+              )}
+              {/* Il pacchetto dice come è stata venduta la partita, il gioco a cosa si gioca.
+                  Su un pacchetto da campo valgono i giochi che vendi così; su un noleggio solo i
+                  nostri, perché quello di un fornitore ha bisogno del preventivo. */}
+              {mostraGioco && (
+                <label style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>
+                  Gioco{(!noleggio || scegliereUnaStrada) ? ' *' : ''}
+                  <select
+                    className={`dropdown-gonfiabili ${campoRosso('giocoId', giocoMancante).className}`}
+                    style={campoRosso('giocoId', giocoMancante).style}
+                    value={formPren.giocoId ?? ""}
+                    onChange={(e) => setF({ giocoId: e.target.value ? Number(e.target.value) : "" })}
+                  >
+                    <option value="">-- Seleziona gioco --</option>
+                    {giochiProponibili.map(g => <option key={g.id} value={g.id}>{g.nome}{g.attivo ? '' : ' (non attivo)'}</option>)}
+                  </select>
+                </label>
+              )}
             </div>
+            {noleggio && (
+              <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: scegliereUnaStrada ? '#c62828' : '#64748b' }}>
+                {formPren.preventivoCollegato
+                  ? 'Giochi, sedi e costi arrivano dal preventivo. Per scegliere invece un singolo gioco nostro, togli il preventivo.'
+                  : formPren.giocoId
+                    ? 'Un solo gioco, nostro: non serve preventivo. Per noleggiare più giochi o roba di un fornitore, azzera il gioco e collega un preventivo.'
+                    : 'Scegli un preventivo — che contiene giochi, sedi e costi — oppure un singolo gioco fra i nostri.'}
+              </p>
+            )}
+            {pac && !noleggio && giochiProponibili.length === 0 && (
+              <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: '#c62828' }}>
+                ⚠️ Nessun gioco proponibile per questo pacchetto. Spunta &quot;su campo&quot; sui giochi giocabili, in Catalogo.
+              </p>
+            )}
             <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
               <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>{formPren.piuGiorni ? 'Primo giorno' : 'Data'}
                 <input type="date" value={formPren.data} onChange={(e) => setF({ data: e.target.value })} {...campoRosso('data', dataMancante)} />
@@ -1485,33 +1765,153 @@ function Prenotazioni({ user }) {
             <h2>Vendita e Pagamenti</h2>
             {!pacHaPrezzo && (
               <>
-                <div className="date-grid" style={{ flexWrap: 'wrap', marginBottom: '12px' }}>
-                  <label style={{ flex: '2 1 240px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Preventivo collegato
-                    <select className="dropdown-gonfiabili" value={formPren.preventivoCollegato} onChange={(e) => onCambiaPreventivoCollegato(e.target.value)} style={evidenzia('preventivoCollegato')}>
-                      <option value="">-- Nessuno --</option>
-                      {preventivi.filter(pv => pv.stato === 'Confermato' || String(pv.codice) === String(formPren.preventivoCollegato)).map(pv => <option key={pv.codice} value={pv.codice}>{pv.codice} — {pv.destinazione || pv.nomeReferente || ''} (€{(parseFloat(pv.totaleVendita) || 0).toFixed(2)})</option>)}
-                    </select>
-                  </label>
-                  {formPren.preventivoCollegato && !locationDaCampi && (
-                    <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Costo noleggio
-                      <input type="number" step="any" value={formPren.costoEreditato} onChange={(e) => setF({ costoEreditato: e.target.value })} style={evidenzia('costoEreditato')} />
-                    </label>
-                  )}
-                </div>
+                {/* Il preventivo si sceglie in testa al form, insieme al pacchetto: è lì che si
+                    decide di cosa parla la prenotazione. Qui resta solo il costo che ne deriva. */}
+                {/* Il costo del noleggio non ha più una casella sua: è la somma di questa tabella,
+                    e ripeterlo sopra voleva dire mostrare due volte lo stesso numero — con la
+                    possibilità di scriverne uno diverso da quello che il preventivo dice.
+                    "costoEreditato" continua a essere valorizzato dal preventivo, in silenzio. */}
+                {/* Una prenotazione registrata prima che il dettaglio esistesse ha solo i totali.
+                    Riempirla in automatico riaprendola riscriverebbe quello che è stato venduto
+                    con quello che era stato offerto — e le due cose possono legittimamente
+                    differire. Quindi si chiede, e lo si vede prima di confermare. */}
+                {formPren.preventivoCollegato && formPren.voci.length === 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', margin: '0 0 12px 0', padding: '10px 14px', background: '#e1f5fe', border: '1px solid #7dd3fc', borderRadius: '6px' }}>
+                    <span style={{ fontSize: '0.82rem', color: '#01579b', flex: '1 1 260px' }}>
+                      Questa prenotazione non ha il dettaglio per gioco. Prendendolo da {formPren.preventivoCollegato}, prezzo e costo verranno ricalcolati dalle sue righe.
+                    </span>
+                    <button
+                      type="button" className="btn-accent-inline" style={{ padding: '7px 14px', fontSize: '0.82rem' }}
+                      onClick={() => {
+                        const nuove = vociDalPreventivo(formPren.preventivoCollegato);
+                        const t = sommaVoci(nuove);
+                        if (!nuove.length) return alert(`${formPren.preventivoCollegato} non ha righe da cui ricavare il dettaglio.`);
+                        if (!window.confirm(
+                          `Prendere il dettaglio da ${formPren.preventivoCollegato}?\n\n`
+                          + `${nuove.length} righe: ricavo €${t.ricavo.toFixed(2)}, costo €${t.costo.toFixed(2)}.\n\n`
+                          + `Oggi la prenotazione dice ricavo €${((parseFloat(formPren.prezzoManuale) || 0)).toFixed(2)} e costo €${(parseFloat(formPren.costoEreditato) || 0).toFixed(2)}.`
+                        )) return;
+                        setF({ voci: nuove });
+                      }}
+                    >Prendi il dettaglio dal preventivo</button>
+                  </div>
+                )}
+                {formPren.voci.length > 0 && (() => {
+                  const cella = { padding: '5px 8px' };
+                  const cellaNum = { ...cella, textAlign: 'right' };
+                  const inputNum = { width: '92px', textAlign: 'right', height: '28px', padding: '2px 6px', fontSize: '0.82rem', border: '1px solid #cbd5e1', borderRadius: '4px' };
+                  const cambiaVoce = (i, campo, valore) => setF({
+                    voci: formPren.voci.map((v, j) => j === i ? { ...v, [campo]: valore } : v),
+                  });
+                  const aggiungiExtra = (id) => {
+                    const e = extras.find(x => String(x.id) === String(id));
+                    if (!e) return;
+                    // Un servizio a costo libero nasce a zero: l'importo cambia ogni volta e si scrive qui.
+                    const costo = e.costoLibero ? 0 : (parseFloat(e.prezzo) || 0);
+                    setF({ voci: [...formPren.voci, { giocoId: null, nome: e.nome, sede: '—', quantita: 1, costo, ricavo: costo }] });
+                  };
+                  return (
+                    <div className="sotto-sezione" style={{ marginTop: 0, paddingTop: '10px' }}>
+                      <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <span>Dettaglio per gioco {formPren.preventivoCollegato && <span style={{ fontSize: '0.7rem', fontWeight: 'normal', color: '#94a3b8', textTransform: 'none', letterSpacing: 0 }}>da {formPren.preventivoCollegato}</span>}</span>
+                        {dettaglioInModifica ? (
+                          <span style={{ display: 'inline-flex', gap: '6px' }}>
+                            <button type="button" className="btn-accent-inline" style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                              onClick={() => { setDettaglioInModifica(false); setVociPrimaDellaModifica(null); }}>Fine</button>
+                            <button type="button" className="btn-outline-annulla" style={{ fontSize: '0.75rem', padding: '4px 10px', borderRadius: '4px' }}
+                              onClick={() => { setF({ voci: vociPrimaDellaModifica }); setDettaglioInModifica(false); setVociPrimaDellaModifica(null); }}>Annulla</button>
+                          </span>
+                        ) : (
+                          <button type="button" className="btn-outline-annulla" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.75rem', padding: '4px 10px', borderRadius: '4px' }}
+                            onClick={() => { setVociPrimaDellaModifica(formPren.voci); setDettaglioInModifica(true); }}>
+                            <Icona nome="modifica" size={13} style={{ marginRight: '5px' }} />Modifica
+                          </button>
+                        )}
+                      </h3>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', minWidth: '460px', borderCollapse: 'collapse', fontSize: '0.82rem', background: '#fff' }}>
+                          <thead>
+                            <tr style={{ background: '#f8fafc', color: '#64748b', textAlign: 'left' }}>
+                              <th style={cella}>Gioco</th>
+                              <th style={cella}>Sede</th>
+                              <th style={cellaNum}>Costo</th>
+                              <th style={cellaNum}>Ricavo</th>
+                              {dettaglioInModifica && <th style={{ ...cella, width: '34px' }}></th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {formPren.voci.map((r, i) => (
+                              <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                                <td style={cella}><strong>{r.nome}</strong>{r.quantita > 1 ? ` ×${r.quantita}` : ''}</td>
+                                <td style={{ ...cella, color: '#64748b' }}>{r.sede}</td>
+                                <td style={{ ...cellaNum, color: '#c62828' }}>
+                                  {dettaglioInModifica
+                                    ? <input type="number" step="any" value={r.costo} style={{ ...inputNum, color: '#c62828' }} onChange={(e) => cambiaVoce(i, 'costo', e.target.value)} />
+                                    : `€${(parseFloat(r.costo) || 0).toFixed(2)}`}
+                                </td>
+                                <td style={cellaNum}>
+                                  {dettaglioInModifica
+                                    ? <input type="number" step="any" value={r.ricavo} style={inputNum} onChange={(e) => cambiaVoce(i, 'ricavo', e.target.value)} />
+                                    : `€${(parseFloat(r.ricavo) || 0).toFixed(2)}`}
+                                </td>
+                                {dettaglioInModifica && (
+                                  <td style={{ ...cella, textAlign: 'center' }}>
+                                    <button type="button" className="btn-icon-action danger" aria-label="Togli la riga" title="Togli la riga"
+                                      style={{ width: '26px', height: '26px' }}
+                                      onClick={() => setF({ voci: formPren.voci.filter((_, j) => j !== i) })}>
+                                      <Icona nome="elimina" size={13} style={{ marginRight: 0 }} />
+                                    </button>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                            {dettaglioInModifica && extras.length > 0 && (
+                              <tr style={{ borderTop: '1px solid #f1f5f9', background: '#fcfdfe' }}>
+                                <td style={cella} colSpan={5}>
+                                  <select value="" onChange={(e) => aggiungiExtra(e.target.value)}
+                                    style={{ height: '30px', padding: '2px 8px', fontSize: '0.8rem', border: '1px dashed #cbd5e1', borderRadius: '4px', background: '#fff', color: '#475569' }}>
+                                    <option value="">+ Aggiungi servizio accessorio…</option>
+                                    {extras.map(e => <option key={e.id} value={e.id}>{e.nome}{e.costoLibero ? ' (costo libero)' : ` (€${(parseFloat(e.prezzo) || 0).toFixed(2)})`}</option>)}
+                                  </select>
+                                </td>
+                              </tr>
+                            )}
+                            <tr style={{ borderTop: '2px solid #e2e8f0', background: '#f8fafc', fontWeight: 'bold' }}>
+                              <td style={cella} colSpan={2}>Totale</td>
+                              <td style={{ ...cellaNum, color: '#c62828' }}>€{totaliVoci.costo.toFixed(2)}</td>
+                              <td style={cellaNum}>€{totaliVoci.ricavo.toFixed(2)}</td>
+                              {dettaglioInModifica && <td style={cella}></td>}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <p style={{ margin: '8px 0 0 0', fontSize: '0.75rem', color: '#94a3b8' }}>
+                        Importi al netto d&apos;IVA. Le righe nascono dal preventivo e da qui si correggono: da queste
+                        somme escono il prezzo di vendita e il costo della prenotazione. Il compenso degli operatori non è compreso.
+                      </p>
+                    </div>
+                  );
+                })()}
               </>
             )}
-            <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-              {(pac && pac.prezzo != null && pac.prezzo !== "") ? (
-                <div style={{ flex: '1 1 160px', fontSize: '0.9rem', alignSelf: 'end', padding: '10px 0' }}>Prezzo pacchetto: <strong>€{parseFloat(pac.prezzo).toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span></div>
+            {/* Chiusura dei conti, allineata a destra come il piede di una fattura: da cosa si
+                parte, quanto si sconta, quanto paga il cliente. */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '18px', alignItems: 'flex-end', justifyContent: 'flex-end', textAlign: 'right' }}>
+              {pacHaPrezzo ? (
+                <div style={{ fontSize: '0.9rem', padding: '10px 0' }}>Prezzo pacchetto: <strong>€{parseFloat(pac.prezzo).toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span></div>
+              ) : conVoci ? (
+                // Con il dettaglio a video il prezzo non si digita né si ripete: è il totale della
+                // tabella qui sopra, e riscriverlo qui voleva dire mostrarlo due volte.
+                null
               ) : (
-                <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prezzo di vendita
+                <label style={{ width: '160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', textAlign: 'left' }}>Prezzo di vendita
                   <input type="number" step="any" value={formPren.prezzoManuale} onChange={(e) => setF({ prezzoManuale: e.target.value })} style={evidenzia('prezzoManuale')} />
                 </label>
               )}
-              <label style={{ flex: '1 1 120px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Sconto (%)
+              <label style={{ width: '110px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', textAlign: 'left' }}>Sconto (%)
                 <input type="number" min="0" max="100" value={formPren.sconto} onChange={(e) => setF({ sconto: e.target.value })} style={evidenzia('sconto')} />
               </label>
-              <div style={{ flex: '1 1 220px', alignSelf: 'end', padding: '10px 0' }}>
+              <div style={{ padding: '10px 0' }}>
                 Prezzo finale: <strong style={{ color: '#10b981', fontSize: '1.2rem' }}>€{prezzoLordo.toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span>
               </div>
             </div>
@@ -1664,7 +2064,7 @@ function Prenotazioni({ user }) {
                 <div className="admin-table-box" style={boxTabella}>
                   <table style={{ width: '100%', minWidth: '850px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                     <thead><tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                      <th style={{ padding: '10px 12px' }}>Nome</th><th style={{ padding: '10px 12px' }}>Durata</th><th style={{ padding: '10px 12px' }}>Location</th><th style={{ padding: '10px 12px' }}>Prezzo</th><th style={{ padding: '10px 12px' }}>C. Ricavo</th><th style={{ padding: '10px 12px' }}>N° Part.</th><th style={{ padding: '10px 12px' }}>Rinfresco</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Azioni</th>
+                      <th style={{ padding: '10px 12px' }}>Nome</th><th style={{ padding: '10px 12px' }}>Durata</th><th style={{ padding: '10px 12px' }}>Location</th><th style={{ padding: '10px 12px' }}>Prezzo</th><th style={{ padding: '10px 12px' }}>C. Ricavo</th><th style={{ padding: '10px 12px' }}>N° Part.</th><th style={{ padding: '10px 12px' }}>Rinfresco</th><th style={{ padding: '10px 12px', textAlign: 'center', width: '70px' }}>Attivo</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Azioni</th>
                     </tr></thead>
                     <tbody>
                       {pacchetti.map(p => idPacchettoInline === p.id ? (
@@ -1684,7 +2084,7 @@ function Prenotazioni({ user }) {
                           </td>
                         </tr>
                       ) : (
-                        <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <tr key={p.id} style={{ borderBottom: '1px solid #eee', opacity: p.attivo === false ? 0.55 : 1 }}>
                           <td style={{ padding: '10px 12px' }}><strong>{p.nome}</strong></td>
                           <td style={{ padding: '10px 12px' }}>{p.durataOre ? `${p.durataOre}h` : 'Libera'}</td>
                           <td style={{ padding: '10px 12px' }}>{p.locationTipo === 'campi' ? 'Dai campi' : 'Libera'}</td>
@@ -1692,6 +2092,14 @@ function Prenotazioni({ user }) {
                           <td style={{ padding: '10px 12px' }}>{p.centroRicavo || '—'}</td>
                           <td style={{ padding: '10px 12px' }}>{p.numeroPartecipanti || '—'}</td>
                           <td style={{ padding: '10px 12px' }}>{p.prevedeRinfresco ? 'Sì' : 'No'}</td>
+                          {/* Un pacchetto non si cancella — le prenotazioni passate ci puntano —
+                              ma si spegne: sparisce dalle tendine e resta nella storia. */}
+                          <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                            <input
+                              type="checkbox" checked={p.attivo !== false} onChange={() => alternaAttivoPacchetto(p)}
+                              title={p.attivo === false ? 'Spento: non si può più scegliere su una prenotazione nuova' : 'Attivo: compare nella tendina'}
+                            />
+                          </td>
                           <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                               <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => iniziaInlinePacchetto(p)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
@@ -1700,7 +2108,7 @@ function Prenotazioni({ user }) {
                           </td>
                         </tr>
                       ))}
-                      {pacchetti.length === 0 && <tr><td colSpan="8" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun pacchetto.</td></tr>}
+                      {pacchetti.length === 0 && <tr><td colSpan="9" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun pacchetto.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -1977,7 +2385,7 @@ function Prenotazioni({ user }) {
           const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
           const hasOp = p.operatori && p.operatori.length > 0;
           return (
-            <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${p.stato} · ${p.nominativo} · ${campoTxt} · ${p.pacchettoNome || ''} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
+            <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${p.stato} · ${p.nominativo} · ${campoTxt} · ${etichettaDi(p)} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4px' }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'}>{p.googleCalendarSync ? '✅' : '⚠️'}</span> {p.senzaOrario ? <strong>tutto il giorno</strong> : (p.oraInizio ? <strong>{p.oraInizio}</strong> : '')} - {p.nominativo}
@@ -1988,7 +2396,7 @@ function Prenotazioni({ user }) {
                   <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
                 </span>
               </div>
-              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{p.pacchettoNome || '—'} - {campoTxt}</div>
+              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaDi(p) || '—'} - {campoTxt}</div>
             </div>
           );
         };
@@ -2203,7 +2611,7 @@ function Prenotazioni({ user }) {
                                       <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
                                     </span>
                                   </div>
-                                  <div style={{ fontSize: '0.76rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{p.pacchettoNome || '—'} - {p.campoNome || p.locationCitta || '—'}</div>
+                                  <div style={{ fontSize: '0.76rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaDi(p) || '—'} - {p.campoNome || p.locationCitta || '—'}</div>
                                 </div>
                               </div>
                             );
@@ -2230,7 +2638,7 @@ function Prenotazioni({ user }) {
                   <div style={{ marginTop: '12px', fontSize: '0.9rem', lineHeight: 1.6 }}>
                     📅 {prenSelezionata.data} · {prenSelezionata.oraInizio}{prenSelezionata.oraFine ? `–${prenSelezionata.oraFine}` : ''}{prenSelezionata.durataOre ? ` (${prenSelezionata.durataOre}h)` : ''}<br />
                     👤 <strong>{prenSelezionata.nominativo}</strong>{prenSelezionata.telefono ? ` · 📞 ${prenSelezionata.telefono}` : ''}{prenSelezionata.email ? ` · ✉️ ${prenSelezionata.email}` : ''}<br />
-                    {prenSelezionata.pacchettoNome || '—'}<br />
+                    {etichettaDi(prenSelezionata) || '—'}<br />
                     {prenSelezionata.campoNome || [prenSelezionata.locationIndirizzo, prenSelezionata.locationCitta].filter(Boolean).join(', ') || '—'}<br />
                     {prenSelezionata.operatori && prenSelezionata.operatori.length > 0 && <>🧑 {prenSelezionata.operatori.map(o => o.nome).join(', ')}<br /></>}
                     {prenSelezionata.tipoRinfresco && <>🍽️ Rinfresco: {prenSelezionata.tipoRinfresco}{prenSelezionata.numeroPartecipanti ? ` · ${prenSelezionata.numeroPartecipanti} pers` : ''}<br /></>}
@@ -2270,7 +2678,7 @@ function Prenotazioni({ user }) {
           const extra = [];
           if (p.tipoRinfresco) extra.push(p.tipoRinfresco);
           if (p.numeroPartecipanti) extra.push(`${p.numeroPartecipanti} pers`);
-          return `ore ${p.oraInizio || '—'} ${formattaDataBreveIT(p.data)} - ${p.pacchettoNome || 'Prenotazione'}${extra.length ? ' (' + extra.join(', ') + ')' : ''}`;
+          return `ore ${p.oraInizio || '—'} ${formattaDataBreveIT(p.data)} - ${etichettaDi(p) || 'Prenotazione'}${extra.length ? ' (' + extra.join(', ') + ')' : ''}`;
         };
 
         // Raggruppa per operatore
