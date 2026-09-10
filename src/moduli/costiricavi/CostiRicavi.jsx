@@ -27,7 +27,6 @@ const nettoRicavo = (p) => p.prezzoVenditaNetto != null ? parseFloat(p.prezzoVen
 const nettoCampo = (p) => p.costoCampoNetto != null ? parseFloat(p.costoCampoNetto) : (parseFloat(p.costoCampo) || 0) / 1.22;
 const nettoRinf = (p) => p.costoRinfrescoNetto != null ? parseFloat(p.costoRinfrescoNetto) : (parseFloat(p.costoRinfresco) || 0) / 1.22;
 const nettoEreditato = (p) => p.ereditaCosti ? (parseFloat(p.costoEreditato) || 0) : 0;
-const costoTotaleNetto = (p) => nettoCampo(p) + nettoRinf(p) + nettoEreditato(p);
 
 // Assegna un colore stabile per nome-centro in base alla posizione nell'elenco completo (ordine alfabetico),
 // cosi' un centro mantiene sempre lo stesso colore anche cambiando i filtri attivi.
@@ -218,6 +217,62 @@ function CostiRicavi({ user }) {
     return totale;
   }, [opPeriodi, prenotazioni, opVoci, parametriCompensi]);
 
+  // Una partita giocata su un nostro campo parte per forza dalla nostra sede: i pacchetti da
+  // campo si vendono con la nostra attrezzatura, non ne esistono con quella di un fornitore.
+  // Quindi dove il dettaglio non dice la sede -- e su una prenotazione vecchia non la dice --
+  // ma c'è un campo, la sede è la nostra. Senza campo resta non indicata, che è la verità.
+  const sedePropria = useMemo(() => sedi.find(s => s.bfm)?.nome || '', [sedi]);
+
+  // Da quale sede e' partito il gioco di una prenotazione che non ha il dettaglio. Non e' una
+  // resa: la risposta esiste quasi sempre, basta seguire gli id.
+  //
+  //   1. se la partita e' stata giocata su un nostro campo, il gioco e' partito da casa nostra:
+  //      i pacchetti da campo si vendono con la nostra attrezzatura, non con quella di un altro;
+  //   2. se c'e' un preventivo collegato, la sede sta nelle sue righe -- non scritta, ma
+  //      raggiungibile: riga di offerta -> riga di listino -> sede. Vale quando tutte le righe
+  //      partono dalla stessa, che e' il caso di un noleggio da un fornitore solo;
+  //   3. se il gioco esiste a listino presso la nostra sede, e' nostro. E' il caso dei noleggi
+  //      senza preventivo, che l'app permette solo sui giochi nostri proprio perche' non c'e'
+  //      nessun fornitore da pagare.
+  //
+  // Resta "Non indicata" solo cio' che davvero non si sa.
+  const sedeDelGonfiabile = useMemo(() => {
+    const nomeSede = Object.fromEntries(sedi.map(s => [s.id, s.nome]));
+    return Object.fromEntries(listino.map(g => [g.id, nomeSede[g.locationId]]).filter(([, n]) => !!n));
+  }, [listino, sedi]);
+
+  const sedeDelPreventivo = useMemo(() => {
+    const per = {};
+    preventivi.forEach(pv => {
+      const trovate = [...new Set((pv.gonfiabili || []).map(g => sedeDelGonfiabile[g.gonfiabileId]).filter(Boolean))];
+      if (trovate.length === 1) per[pv.codice] = trovate[0];
+    });
+    return per;
+  }, [preventivi, sedeDelGonfiabile]);
+
+  const sedeDiRipiego = useCallback((p) => {
+    if (p.campoId && sedePropria) return sedePropria;
+    const dalPreventivo = p.preventivoCollegato ? sedeDelPreventivo[p.preventivoCollegato] : null;
+    if (dalPreventivo) return dalPreventivo;
+    if (p.giocoId != null && giochiNostri.has(p.giocoId) && sedePropria) return sedePropria;
+    return 'Non indicata';
+  }, [sedePropria, sedeDelPreventivo, giochiNostri]);
+  const nostra = useCallback((sede) => !!sedePropria && String(sede || '') === String(sedePropria), [sedePropria]);
+
+  // Il costo ereditato di una partita, contato come lo conta la scheda "Per gioco": la logistica
+  // di un gioco che parte da una nostra sede non e' un costo. Il prezzo a listino serve a
+  // calcolare la vendita, e l'uscita vera e' il rimborso all'operatore, che arriva dal compenso.
+  // Contarla qui e non di la' faceva dire alle due schede due margini diversi sulla stessa
+  // prenotazione -- e chi apre un modulo di costi non deve scegliere a quale delle due credere.
+  const ereditatoDi = (p) => {
+    const voci = Array.isArray(p.voci) ? p.voci.filter(Boolean) : [];
+    if (voci.length > 0) {
+      return voci.reduce((t, v) => t + (nostra(v.sede || sedeDiRipiego(p)) ? 0 : (parseFloat(v.costo) || 0)), 0);
+    }
+    return nostra(sedeDiRipiego(p)) ? 0 : nettoEreditato(p);
+  };
+  const costoDirettoDi = (p) => nettoCampo(p) + nettoRinf(p) + ereditatoDi(p);
+
   // ====================== TABELLA (dettaglio partite, filtri e export) ======================
   const [filtroData, setFiltroData] = useState("");
   const [filtroStato, setFiltroStato] = useState("");
@@ -261,7 +316,7 @@ function CostiRicavi({ user }) {
   // dove non c'e' vale zero perche' non e' ancora stato pagato -- non perche' sia gratis.
   const compensoPrevDi = useCallback((p) => compensoPrevisto[p.id] || 0, [compensoPrevisto]);
   const compensoConsDi = useCallback((p) => compensoConsuntivato[p.id] || 0, [compensoConsuntivato]);
-  const costoConCompenso = (p) => costoTotaleNetto(p) + compensoPrevDi(p);
+  const costoConCompenso = (p) => costoDirettoDi(p) + compensoPrevDi(p);
 
   const COLONNE_CR = [
     { chiave: 'data', label: 'Codice / Data', valore: (p) => p.data || '' },
@@ -272,7 +327,7 @@ function CostiRicavi({ user }) {
     { chiave: 'ricavo', label: 'Ricavo', stile: { textAlign: 'right' }, valore: nettoRicavo },
     { chiave: 'costoCampo', label: 'Costo campo', stile: { textAlign: 'right' }, valore: nettoCampo },
     { chiave: 'costoRinfresco', label: 'Costo rinfresco', stile: { textAlign: 'right' }, valore: nettoRinf },
-    { chiave: 'costoEreditato', label: 'Costo ereditato', stile: { textAlign: 'right' }, valore: nettoEreditato },
+    { chiave: 'costoEreditato', label: 'Costo ereditato', stile: { textAlign: 'right' }, valore: ereditatoDi },
     { chiave: 'compensoPrev', label: 'Compenso prev.', stile: { textAlign: 'right' }, valore: compensoPrevDi },
     { chiave: 'compensoCons', label: 'Compenso cons.', stile: { textAlign: 'right' }, valore: compensoConsDi },
     { chiave: 'margine', label: 'Margine', stile: { textAlign: 'right' }, valore: (p) => nettoRicavo(p) - costoConCompenso(p) },
@@ -287,7 +342,7 @@ function CostiRicavi({ user }) {
 
   // Riga e tabella (con totali) condivise da "Tabella" e "Completate"
   const rigaCR = (p, conPratica) => {
-    const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), ce = nettoEreditato(p);
+    const r = nettoRicavo(p), cc = nettoCampo(p), cr = nettoRinf(p), ce = ereditatoDi(p);
     const kp = compensoPrevDi(p), kc = compensoConsDi(p);
     const m = r - cc - cr - ce - kp;
     return (
@@ -300,7 +355,7 @@ function CostiRicavi({ user }) {
         <td style={{ padding: '10px', textAlign: 'right' }}>€{r.toFixed(2)}</td>
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cc.toFixed(2)}</td>
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cr.toFixed(2)}</td>
-        <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{p.ereditaCosti ? `€${ce.toFixed(2)}` : '—'}</td>
+        <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{ce > 0 ? `€${ce.toFixed(2)}` : '—'}</td>
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{kp > 0 ? `€${kp.toFixed(2)}` : '—'}</td>
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{kc > 0 ? `€${kc.toFixed(2)}` : '—'}</td>
         <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: m >= 0 ? '#2e7d32' : '#c62828' }}>€{m.toFixed(2)}</td>
@@ -401,48 +456,6 @@ function CostiRicavi({ user }) {
   // totali quadrati con il resto del modulo invece di inventare una categoria che non esiste.
   const [raggruppaPer, setRaggruppaPer] = useState('centro');
 
-  // Una partita giocata su un nostro campo parte per forza dalla nostra sede: i pacchetti da
-  // campo si vendono con la nostra attrezzatura, non ne esistono con quella di un fornitore.
-  // Quindi dove il dettaglio non dice la sede -- e su una prenotazione vecchia non la dice --
-  // ma c'è un campo, la sede è la nostra. Senza campo resta non indicata, che è la verità.
-  const sedePropria = useMemo(() => sedi.find(s => s.bfm)?.nome || '', [sedi]);
-
-  // Da quale sede e' partito il gioco di una prenotazione che non ha il dettaglio. Non e' una
-  // resa: la risposta esiste quasi sempre, basta seguire gli id.
-  //
-  //   1. se la partita e' stata giocata su un nostro campo, il gioco e' partito da casa nostra:
-  //      i pacchetti da campo si vendono con la nostra attrezzatura, non con quella di un altro;
-  //   2. se c'e' un preventivo collegato, la sede sta nelle sue righe -- non scritta, ma
-  //      raggiungibile: riga di offerta -> riga di listino -> sede. Vale quando tutte le righe
-  //      partono dalla stessa, che e' il caso di un noleggio da un fornitore solo;
-  //   3. se il gioco esiste a listino presso la nostra sede, e' nostro. E' il caso dei noleggi
-  //      senza preventivo, che l'app permette solo sui giochi nostri proprio perche' non c'e'
-  //      nessun fornitore da pagare.
-  //
-  // Resta "Non indicata" solo cio' che davvero non si sa.
-  const sedeDelGonfiabile = useMemo(() => {
-    const nomeSede = Object.fromEntries(sedi.map(s => [s.id, s.nome]));
-    return Object.fromEntries(listino.map(g => [g.id, nomeSede[g.locationId]]).filter(([, n]) => !!n));
-  }, [listino, sedi]);
-
-  const sedeDelPreventivo = useMemo(() => {
-    const per = {};
-    preventivi.forEach(pv => {
-      const trovate = [...new Set((pv.gonfiabili || []).map(g => sedeDelGonfiabile[g.gonfiabileId]).filter(Boolean))];
-      if (trovate.length === 1) per[pv.codice] = trovate[0];
-    });
-    return per;
-  }, [preventivi, sedeDelGonfiabile]);
-
-  const sedeDiRipiego = useCallback((p) => {
-    if (p.campoId && sedePropria) return sedePropria;
-    const dalPreventivo = p.preventivoCollegato ? sedeDelPreventivo[p.preventivoCollegato] : null;
-    if (dalPreventivo) return dalPreventivo;
-    if (p.giocoId != null && giochiNostri.has(p.giocoId) && sedePropria) return sedePropria;
-    return 'Non indicata';
-  }, [sedePropria, sedeDelPreventivo, giochiNostri]);
-  const nostra = useCallback((sede) => !!sedePropria && String(sede || '') === String(sedePropria), [sedePropria]);
-
   const righePerGioco = useMemo(() => {
     const righe = [];
     prenotazioni.forEach(p => {
@@ -474,7 +487,7 @@ function CostiRicavi({ user }) {
           // serve al preventivatore per calcolare la vendita, e il costo che il preventivo gli
           // attribuisce e' la logistica -- cioe' il rimborso all'operatore, che qui arriva dal
           // compenso. Lasciarlo qui vorrebbe dire pagarlo due volte.
-          costo: nostra(v.sede) ? 0 : (parseFloat(v.costo) || 0),
+          costo: nostra(v.sede || sedeDiRipiego(p)) ? 0 : (parseFloat(v.costo) || 0),
           compPrev: 0, compCons: 0,
         }));
         righe.push(base({ costo: costoStruttura, compPrev, compCons }));
