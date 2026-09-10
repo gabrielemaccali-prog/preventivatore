@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
-import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, arrotondaAllaDecina } from '../../lib/utils'
+import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
 import { puoVedere } from '../../lib/permessi'
 import { STATI_ESTERI, STATO_ITALIA } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
@@ -104,7 +104,7 @@ const dettagliGoogleCalendar = (p, giocoNome) => {
   if (p.note) righe.push(`Note: ${p.note}`);
 
   righe.push('');
-  righe.push(`Pacchetto: ${etichettaPartita(giocoNome, p.pacchettoNome) || '—'}${p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} partecipanti` : ''}`);
+  righe.push(`Pacchetto: ${etichettaPartita(p.pacchettoNome, giocoNome) || '—'}${p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} partecipanti` : ''}`);
   if (p.tipoRinfresco) righe.push(`Rinfresco: ${p.tipoRinfresco}`);
   righe.push(`Prezzo vendita: €${(parseFloat(p.prezzoVendita) || 0).toFixed(2)}${p.sconto ? ` (sconto ${p.sconto}%)` : ''}`);
 
@@ -150,7 +150,7 @@ const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica, giocoNome) 
   const campoInfo = p.campoId ? (campiAnagrafica || []).find(c => c.id === p.campoId) : null;
   const indirizzoCampo = campoInfo ? [campoInfo.indirizzo, campoInfo.citta].filter(Boolean).join(', ') : '';
   const luogo = indirizzoCampo || p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '';
-  const titolo = [p.nominativo, p.campoNome, etichettaPartita(giocoNome, p.pacchettoNome)].filter(Boolean).join(' - ');
+  const titolo = [p.nominativo, p.campoNome, etichettaPartita(p.pacchettoNome, giocoNome)].filter(Boolean).join(' - ');
   const emailOperatori = (p.operatori || [])
     .map(op => (operatoriAnagrafica || []).find(o => o.id === op.id)?.email)
     .filter(Boolean);
@@ -427,11 +427,22 @@ function Prenotazioni({ user }) {
   // --- IL GIOCO DI UNA PRENOTAZIONE ---
   // Sulla prenotazione c'è solo l'id: il nome si rilegge dal catalogo, così rinominare un gioco
   // si riflette ovunque invece di lasciare indietro le righe già salvate.
+  const giocoPerId = Object.fromEntries(giochi.map(g => [g.id, g]));
   const nomeGiocoPerId = Object.fromEntries(giochi.map(g => [g.id, g.nome]));
-  const nomeGiocoDi = (p) => nomeGiocoPerId[p?.giocoId] || "";
-  // Come la partita si chiama per esteso, ovunque: gioco e modalità. Da quando il pacchetto è
-  // solo la modalità, il nome del gioco è l'unico posto in cui si legge a cosa si è giocato.
-  const etichettaDi = (p) => etichettaPartita(nomeGiocoDi(p), p?.pacchettoNome);
+
+  // I giochi di una prenotazione sono più d'uno quando ha il dettaglio: un noleggio che porta
+  // Bubble e Archery è una partita sola, e chiamarla col nome del primo nasconde metà di quello
+  // che è stato venduto. Senza dettaglio vale il gioco della prenotazione, che è tutto quello che
+  // si sa.
+  const giochiDi = (p) => {
+    const nomeDi = (id) => giocoPerId[id]?.nome || "";
+    const voci = Array.isArray(p?.voci) ? p.voci.filter(v => v && v.giocoId != null) : [];
+    if (voci.length > 0) return voci.map(v => nomeDi(v.giocoId));
+    return p?.giocoId != null ? [nomeDi(p.giocoId)] : [];
+  };
+
+  // Per esteso dove lo spazio c'è: la mail al cliente, il documento, l'evento su Google Calendar.
+  const etichettaDi = (p) => etichettaPartita(p?.pacchettoNome, giochiDi(p));
 
   // I giochi proponibili dipendono dal pacchetto: su un pacchetto a location dai campi valgono
   // solo quelli spuntati come giocabili su campo (partono dalla sede BFM); su un noleggio a
@@ -455,6 +466,19 @@ function Prenotazioni({ user }) {
   // è nostro ma non lo vendi come pacchetto da campo, e deve restare noleggiabile lo stesso.
   const idSediProprie = new Set(sedi.filter(s => s.bfm).map(s => s.id));
   const giochiPropri = new Set(listino.filter(l => idSediProprie.has(l.locationId)).map(l => l.giocoId));
+
+  // L'etichetta corta, per tabelle e calendario. I giochi nostri si vedono sempre uno per uno --
+  // dicono cosa esce dal magazzino -- mentre quelli di un fornitore, se sono piu' d'uno,
+  // diventano "Vari": in due centimetri non ci stanno, e il dettaglio e' a un clic di distanza.
+  const giochiBreviDi = (p) => {
+    const voci = Array.isArray(p?.voci) ? p.voci.filter(v => v && v.giocoId != null) : [];
+    const ids = voci.length > 0 ? voci.map(v => v.giocoId) : (p?.giocoId != null ? [p.giocoId] : []);
+    return ids.map(id => ({
+      nome: giocoPerId[id]?.nome_breve || giocoPerId[id]?.nome || '',
+      nostro: giochiPropri.has(id),
+    }));
+  };
+  const etichettaBreveDi = (p) => etichettaPartita(p?.pacchettoNome, etichettaGiochiBreve(giochiBreviDi(p)));
 
   // Un noleggio è un pacchetto senza prezzo fisso: se il prezzo non sta sul pacchetto deve venire
   // da qualche parte, e quel posto è il preventivo. Riconoscerlo così invece che dal nome regge
@@ -780,7 +804,7 @@ function Prenotazioni({ user }) {
   };
   // Apre il link precompilato Google Calendar e segna la prenotazione come sincronizzata (ripristinato a "non sincronizzato" ad ogni modifica salvata)
   const apriGoogleCalendar = async (p) => {
-    window.open(linkGoogleCalendar(p, operatori, campi, nomeGiocoDi(p)), '_blank', 'noopener,noreferrer');
+    window.open(linkGoogleCalendar(p, operatori, campi, giochiDi(p).join(' + ')), '_blank', 'noopener,noreferrer');
     await supabase.from('prenotazioni').update({ googleCalendarSync: true }).eq('id', p.id);
     setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, googleCalendarSync: true } : prev);
     fetchTutto();
@@ -808,7 +832,7 @@ function Prenotazioni({ user }) {
   const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella({
     ...VALORI_ORDINAMENTO_PREN,
     // La colonna mostra "gioco · pacchetto": si ordina su quello che si legge, non su metà.
-    pacchetto: (p) => etichettaDi(p),
+    pacchetto: (p) => etichettaBreveDi(p),
   });
 
   // Riga di tabella condivisa da Storico e dalle sotto-schede di Gestione.
@@ -844,7 +868,7 @@ function Prenotazioni({ user }) {
             <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar (clic per correggere a mano)' : 'Non sincronizzato con Google Calendar (clic per correggere a mano)'} style={{ cursor: 'pointer', color: p.googleCalendarSync ? '#16a34a' : '#dc2626', fontWeight: 'bold' }} onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(p); }}>{p.googleCalendarSync ? '✓' : '⚠'}</span> <strong>{p.nominativo}</strong>
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>
-            {etichettaDi(p) || '—'}{p.durataOre ? ` (${p.durataOre}h)` : ''}
+            {etichettaBreveDi(p) || '—'}{p.durataOre ? ` (${p.durataOre}h)` : ''}
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>
             {p.campoNome || p.locationCitta || '—'}
@@ -2398,7 +2422,7 @@ function Prenotazioni({ user }) {
                   <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
                 </span>
               </div>
-              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaDi(p) || '—'} - {campoTxt}</div>
+              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaBreveDi(p) || '—'} - {campoTxt}</div>
             </div>
           );
         };
@@ -2613,7 +2637,7 @@ function Prenotazioni({ user }) {
                                       <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
                                     </span>
                                   </div>
-                                  <div style={{ fontSize: '0.76rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaDi(p) || '—'} - {p.campoNome || p.locationCitta || '—'}</div>
+                                  <div style={{ fontSize: '0.76rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaBreveDi(p) || '—'} - {p.campoNome || p.locationCitta || '—'}</div>
                                 </div>
                               </div>
                             );
@@ -2680,7 +2704,7 @@ function Prenotazioni({ user }) {
           const extra = [];
           if (p.tipoRinfresco) extra.push(p.tipoRinfresco);
           if (p.numeroPartecipanti) extra.push(`${p.numeroPartecipanti} pers`);
-          return `ore ${p.oraInizio || '—'} ${formattaDataBreveIT(p.data)} - ${etichettaDi(p) || 'Prenotazione'}${extra.length ? ' (' + extra.join(', ') + ')' : ''}`;
+          return `ore ${p.oraInizio || '—'} ${formattaDataBreveIT(p.data)} - ${etichettaBreveDi(p) || 'Prenotazione'}${extra.length ? ' (' + extra.join(', ') + ')' : ''}`;
         };
 
         // Raggruppa per operatore

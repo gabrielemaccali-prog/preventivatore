@@ -691,7 +691,7 @@ function Compensi({ user }) {
                       </td>
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{x.partita.id}</td>
                       <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}</td>
-                      <td style={{ padding: '7px 10px', color: '#666' }}>{etichettaPartita(nomeGiocoPerId[x.partita.giocoId], x.partita.pacchettoNome) || '—'}</td>
+                      <td style={{ padding: '7px 10px', color: '#666' }}>{etichettaPartita(x.partita.pacchettoNome, nomeGiocoPerId[x.partita.giocoId]) || '—'}</td>
                       <td style={{ padding: '7px 10px', color: '#666' }}>{locationDi(x.partita)}</td>
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>{ore(x.oreAttribuite)}</td>
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>{euro(x.compenso)}</td>

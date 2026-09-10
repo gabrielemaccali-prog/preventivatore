@@ -119,13 +119,38 @@ export const campiFatturazioneMancanti = (p) => (p.fattTipo === 'azienda'
 // compresi, tranne per lo straniero, a cui l'app li impone).
 export const fatturazioneCompletaDi = (p) => campiFatturazioneMancanti(p).length === 0;
 
-// Come si chiama una partita in una riga sola: il gioco e la modalità con cui è stato venduto,
-// "Bubble Football · Party Basic". Il gioco viene prima perché è la cosa; il pacchetto è il come.
-// Vive qui perché la usano prenotazioni e compensi, e in una mail al cliente e in un riepilogo
-// interno la stessa partita deve chiamarsi allo stesso modo.
-// Il nome del gioco arriva già risolto dal catalogo: la prenotazione ne conserva solo l'id.
-export const etichettaPartita = (giocoNome, pacchettoNome) =>
-  [giocoNome, pacchettoNome].filter(Boolean).join(' · ');
+// Come si chiama una partita in una riga sola: la modalità con cui è stata venduta e il gioco,
+// "Party Basic · Bubble Football". Il pacchetto viene prima perché è quello che ordina l'elenco:
+// le partite si leggono per tipo di vendita, e il gioco specifica.
+// Vive qui perché la usano prenotazioni, compensi e costi/ricavi, e in una mail al cliente e in un
+// riepilogo interno la stessa partita deve chiamarsi allo stesso modo.
+// I nomi dei giochi arrivano già risolti dal catalogo: la prenotazione ne conserva solo gli id, e
+// possono essere più d'uno — un noleggio che porta Bubble e Archery è una partita sola.
+export const etichettaPartita = (pacchettoNome, giochi) => {
+  const nomi = Array.isArray(giochi) ? nomiDistinti(giochi).join(' + ') : giochi;
+  return [pacchettoNome, nomi].filter(Boolean).join(' · ');
+};
+
+// Nomi distinti, nell'ordine in cui compaiono. Due giochi diversi possono avere lo stesso nome
+// breve — il Biliardino 2vs2 e il 4vs4 sono "Biliardino" per chi guarda un calendario — e in
+// etichetta valgono per uno.
+export const nomiDistinti = (nomi) => [...new Set((nomi || []).filter(Boolean))];
+
+// L'etichetta dei giochi per gli spazi stretti: celle di calendario, colonne di tabella.
+//
+// I giochi nostri si vedono sempre, uno per uno. Sono quelli che dicono cosa esce dal magazzino e
+// chi deve caricarlo, quindi nasconderli dietro una parola generica toglie proprio l'informazione
+// per cui si guarda un calendario.
+//
+// Quelli di un fornitore, se sono più d'uno, diventano "Vari": in due centimetri non ci stanno, e
+// per sapere quali sono si apre la prenotazione — dove il dettaglio li elenca tutti con il loro
+// costo. Uno solo invece si chiama col suo nome, che ci sta e serve.
+export const etichettaGiochiBreve = (giochi) => {
+  const nostri = nomiDistinti((giochi || []).filter(g => g?.nostro).map(g => g?.nome));
+  const altri = nomiDistinti((giochi || []).filter(g => !g?.nostro).map(g => g?.nome))
+    .filter(n => !nostri.includes(n));
+  return [...nostri, ...(altri.length > 1 ? ['Vari'] : altri)].join(' + ');
+};
 
 // Giorni coperti da una prenotazione, in ordine. Possono essere più di uno e non consecutivi
 // (es. un evento il sabato e il sabato dopo): "data" resta il primo giorno, "giorni" li elenca tutti

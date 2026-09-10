@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
-import { fineEventoDi, fatturazioneCompletaDi, etichettaPartita } from '../../lib/utils'
+import { fineEventoDi, fatturazioneCompletaDi, etichettaPartita, etichettaGiochiBreve } from '../../lib/utils'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { preventiviPerOperatore, lordizza } from '../compensi/calcolo'
@@ -172,10 +172,25 @@ function CostiRicavi({ user }) {
     return manca.join(' e ').replace(/^./, c => c.toUpperCase());
   };
 
-  const etichettaDi = useCallback(
-    (p) => etichettaPartita(giocoPerId[p.giocoId]?.nome, p.pacchettoNome) || '—',
-    [giocoPerId]
-  );
+  // I giochi di una prenotazione: quelli del dettaglio quando c'e', altrimenti il suo. In una
+  // colonna di tabella si usa il nome breve del catalogo, e due giochi che lo condividono
+  // contano per uno -- oltre due l'elenco non ci sta e diventa "Vari".
+  // I giochi che teniamo noi: non un flag da mantenere allineato, ma un fatto che sta gia' nel
+  // listino -- esiste una riga presso la nostra sede.
+  const giochiNostri = useMemo(() => {
+    const nostre = new Set(sedi.filter(s => s.bfm).map(s => s.id));
+    return new Set(listino.filter(g => nostre.has(g.locationId)).map(g => g.giocoId));
+  }, [listino, sedi]);
+
+  const etichettaDi = useCallback((p) => {
+    const vocePerGioco = (id) => ({
+      nome: giocoPerId[id]?.nome_breve || giocoPerId[id]?.nome || '',
+      nostro: giochiNostri.has(id),
+    });
+    const voci = Array.isArray(p.voci) ? p.voci.filter(v => v && v.giocoId != null) : [];
+    const elenco = voci.length > 0 ? voci.map(v => vocePerGioco(v.giocoId)) : (p.giocoId != null ? [vocePerGioco(p.giocoId)] : []);
+    return etichettaPartita(p.pacchettoNome, etichettaGiochiBreve(elenco)) || '—';
+  }, [giocoPerId, giochiNostri]);
 
   // Quello che ci aspettiamo di pagare agli operatori, con i parametri di oggi, su tutte le
   // partite: e' una previsione, quindi vale anche dove il periodo e' gia' stato chiuso.
@@ -418,13 +433,6 @@ function CostiRicavi({ user }) {
     });
     return per;
   }, [preventivi, sedeDelGonfiabile]);
-
-  // I giochi che teniamo noi: non un flag da mantenere allineato, ma un fatto che sta gia' nel
-  // listino -- esiste una riga presso la nostra sede.
-  const giochiNostri = useMemo(() => {
-    const nostre = new Set(sedi.filter(s => s.bfm).map(s => s.id));
-    return new Set(listino.filter(g => nostre.has(g.locationId)).map(g => g.giocoId));
-  }, [listino, sedi]);
 
   const sedeDiRipiego = useCallback((p) => {
     if (p.campoId && sedePropria) return sedePropria;

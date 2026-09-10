@@ -12,7 +12,7 @@ import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 // quante partite di Archery abbiamo fatto, quanto ha reso il Calcio Balilla, quanto pesa la
 // famiglia Biliardino. Famiglia e centro di ricavo sono i due livelli di raggruppamento.
 
-const GIOCO_VUOTO = { nome: '', famiglia: '', centro_ricavo: '', per_pacchetti: false, attivo: true };
+const GIOCO_VUOTO = { nome: '', nome_breve: '', famiglia: '', centro_ricavo: '', per_pacchetti: false, attivo: true };
 
 // I valori già usati diventano suggerimenti: famiglia e centro di ricavo restano testo libero
 // — come "centroRicavo" e "centroCosto" che esistono già — ma dopo averne scritto uno la volta
@@ -77,6 +77,7 @@ function Catalogo({ user }) {
     setSalvataggio(true);
     const { error } = await supabase.from('giochi').insert([{
       nome,
+      nome_breve: nuovo.nome_breve.trim() || null,
       famiglia: nuovo.famiglia.trim() || null,
       centro_ricavo: nuovo.centro_ricavo.trim() || null,
       per_pacchetti: nuovo.per_pacchetti,
@@ -90,7 +91,7 @@ function Catalogo({ user }) {
   const iniziaInline = (g) => {
     setIdInline(g.id);
     setDatiInline({
-      nome: g.nome || '', famiglia: g.famiglia || '', centro_ricavo: g.centro_ricavo || '',
+      nome: g.nome || '', nome_breve: g.nome_breve || '', famiglia: g.famiglia || '', centro_ricavo: g.centro_ricavo || '',
       per_pacchetti: !!g.per_pacchetti, attivo: !!g.attivo,
     });
   };
@@ -102,6 +103,7 @@ function Catalogo({ user }) {
     setSalvataggio(true);
     const { error } = await supabase.from('giochi').update({
       nome,
+      nome_breve: datiInline.nome_breve.trim() || null,
       famiglia: datiInline.famiglia.trim() || null,
       centro_ricavo: datiInline.centro_ricavo.trim() || null,
     }).eq('id', idInline);
@@ -137,6 +139,7 @@ function Catalogo({ user }) {
 
   const COLONNE = [
     { chiave: 'nome', label: 'Gioco', valore: (g) => g.nome || '' },
+    { chiave: 'breve', label: 'Nome breve', valore: (g) => g.nome_breve || '' },
     { chiave: 'famiglia', label: 'Famiglia', valore: (g) => g.famiglia || '' },
     { chiave: 'centro', label: 'Centro di ricavo', valore: (g) => g.centro_ricavo || '' },
     { chiave: 'campi', label: 'Su campo', stile: { textAlign: 'center', width: '90px' }, valore: (g) => (g.per_pacchetti ? 1 : 0) },
@@ -151,7 +154,7 @@ function Catalogo({ user }) {
   const righe = giochi.filter(g => {
     const t = filtro.trim().toLowerCase();
     if (!t) return true;
-    return [g.nome, g.famiglia, g.centro_ricavo].some(v => (v || '').toLowerCase().includes(t));
+    return [g.nome, g.nome_breve, g.famiglia, g.centro_ricavo].some(v => (v || '').toLowerCase().includes(t));
   });
 
   const famiglie = valoriUsati(giochi, 'famiglia');
@@ -208,6 +211,7 @@ function Catalogo({ user }) {
             <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Nuovo gioco</h3>
             <form onSubmit={salvaNuovo} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <input type="text" placeholder="Nome del gioco" value={nuovo.nome} onChange={(e) => setNuovo({ ...nuovo, nome: e.target.value })} style={stileInput} />
+              <input type="text" placeholder="Nome breve (per calendari e tabelle strette)" value={nuovo.nome_breve} onChange={(e) => setNuovo({ ...nuovo, nome_breve: e.target.value })} style={stileInput} />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <input type="text" list="catalogo-famiglie" placeholder="Famiglia" value={nuovo.famiglia} onChange={(e) => setNuovo({ ...nuovo, famiglia: e.target.value })} style={stileInput} />
                 <input type="text" list="catalogo-centri" placeholder="Centro di ricavo" value={nuovo.centro_ricavo} onChange={(e) => setNuovo({ ...nuovo, centro_ricavo: e.target.value })} style={stileInput} />
@@ -253,6 +257,7 @@ function Catalogo({ user }) {
                 {idInline === g.id ? (
                   <>
                     <td style={{ padding: '8px 12px' }}><input type="text" className="table-input" value={datiInline.nome} onChange={(e) => setDatiInline({ ...datiInline, nome: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
+                    <td style={{ padding: '8px 12px' }}><input type="text" className="table-input" placeholder="Nome breve" value={datiInline.nome_breve} onChange={(e) => setDatiInline({ ...datiInline, nome_breve: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                     <td style={{ padding: '8px 12px' }}><input type="text" className="table-input" list="catalogo-famiglie" placeholder="Famiglia" value={datiInline.famiglia} onChange={(e) => setDatiInline({ ...datiInline, famiglia: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                     <td style={{ padding: '8px 12px' }}><input type="text" className="table-input" list="catalogo-centri" placeholder="Centro di ricavo" value={datiInline.centro_ricavo} onChange={(e) => setDatiInline({ ...datiInline, centro_ricavo: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                     <td colSpan={3} style={{ padding: '8px 12px', color: '#94a3b8', fontSize: '0.78rem' }}>
@@ -269,6 +274,7 @@ function Catalogo({ user }) {
                 ) : (
                   <>
                     <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}><strong>{g.nome}</strong></td>
+                    <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#555' }}>{g.nome_breve || testoVuoto}</td>
                     <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#555' }}>{g.famiglia || testoVuoto}</td>
                     <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#555' }}>{g.centro_ricavo || testoVuoto}</td>
                     <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
@@ -296,7 +302,7 @@ function Catalogo({ user }) {
               </tr>
             ))}
             {righe.length === 0 && (
-              <tr><td colSpan={8} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+              <tr><td colSpan={9} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                 {giochi.length === 0 ? 'Nessun gioco a catalogo.' : 'Nessun gioco corrisponde alla ricerca.'}
               </td></tr>
             )}
