@@ -59,21 +59,28 @@ const raggruppaPerCentro = (righe, getCentro, getValore) => {
 const formattaEuro = (v) => `€${(+v || 0).toFixed(2)}`;
 
 function CostiRicavi({ user }) {
-  const primaSchedaCR = ['tabella', 'andamento', 'completate'].find(s => puoVedere(user, 'costiricavi', s)) || 'tabella';
+  const primaSchedaCR = ['tabella', 'andamento', 'pergioco', 'completate'].find(s => puoVedere(user, 'costiricavi', s)) || 'tabella';
   const [currentView, setCurrentView] = useState(primaSchedaCR);
 
   const [prenotazioni, setPrenotazioni] = useState([]);
-  const [pacchetti, setPacchetti] = useState([]);
   const [campi, setCampi] = useState([]);
+  // Il catalogo: da qui arrivano nome, famiglia e centro di ricavo di ogni gioco, risolti per id.
+  // Risolverli qui invece di congelarli sulla prenotazione è il punto: sposti un gioco di famiglia
+  // e il resoconto si riscrive anche sullo storico, che è come deve comportarsi un resoconto.
+  const [giochi, setGiochi] = useState([]);
+  // Le sedi servono a una cosa sola: sapere come si chiama la nostra, per attribuirle le partite
+  // giocate sui campi. Il nome non lo scrivo nel codice perché è un dato, e i dati si rinominano.
+  const [sedi, setSedi] = useState([]);
 
   useEffect(() => { fetchTutto(); }, []);
 
   const fetchTutto = async () => {
-    const [pr, pa, ca, pag] = await Promise.all([
+    const [pr, ca, pag, gi, se] = await Promise.all([
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
-      supabase.from('pren_pacchetti').select('*').order('nome'),
       supabase.from('pren_campi').select('*').order('nome'),
       supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data'),
+      supabase.from('giochi').select('*').order('nome'),
+      supabase.from('sedi').select('*'),
     ]);
     // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher), non più
     // nella colonna jsonb prenotazioni.pagamenti: vengono agganciati qui a ogni prenotazione.
@@ -81,11 +88,16 @@ function CostiRicavi({ user }) {
       ...p,
       pagamenti: (pag.data || []).filter(x => x.riferimento === p.id).map(x => ({ data: x.data, importo: x.importo, nominativo: x.nominativo || "" }))
     })));
-    if (pa.data) setPacchetti(pa.data);
     if (ca.data) setCampi(ca.data);
+    if (gi.data) setGiochi(gi.data);
+    if (se.data) setSedi(se.data);
   };
 
-  const centroRicavoDi = useCallback((p) => pacchetti.find(x => x.id === p.pacchettoId)?.centroRicavo || 'Non assegnato', [pacchetti]);
+  const giocoPerId = useMemo(() => Object.fromEntries(giochi.map(g => [g.id, g])), [giochi]);
+  // Il centro di ricavo viene dal gioco, non più dal pacchetto. Da quando il pacchetto dice solo
+  // la modalità -- Party Basic, Noleggio -- non ha più niente da dire su dove finisce il ricavo,
+  // mentre il gioco sì: è l'unica cosa che si vende davvero, e il suo centro sta a catalogo.
+  const centroRicavoDi = useCallback((p) => giocoPerId[p.giocoId]?.centro_ricavo || 'Non assegnato', [giocoPerId]);
   const centroCostoDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.centroCosto || 'Non assegnato', [campi]);
   const campoNomeDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.nome || '—', [campi]);
 
@@ -217,7 +229,7 @@ function CostiRicavi({ user }) {
   const [centroRicavoSel, setCentroRicavoSel] = useState("");
 
   const centriCostoDisponibili = useMemo(() => [...new Set(campi.map(c => c.centroCosto).filter(Boolean))].sort(), [campi]);
-  const centriRicavoDisponibili = useMemo(() => [...new Set(pacchetti.map(p => p.centroRicavo).filter(Boolean))].sort(), [pacchetti]);
+  const centriRicavoDisponibili = useMemo(() => [...new Set(giochi.map(g => g.centro_ricavo).filter(Boolean))].sort(), [giochi]);
 
   const righeAndamento = useMemo(() => prenotazioni.filter(p => {
     if (!p.data) return false;
@@ -249,10 +261,111 @@ function CostiRicavi({ user }) {
     return per;
   }, [righeAndamento, annoSel]);
 
-  const mappaColoriRicavo = useMemo(() => mappaColoriCentri(pacchetti.map(x => x.centroRicavo)), [pacchetti]);
+  const mappaColoriRicavo = useMemo(() => mappaColoriCentri(giochi.map(g => g.centro_ricavo)), [giochi]);
   const mappaColoriCosto = useMemo(() => mappaColoriCentri(campi.map(c => c.centroCosto)), [campi]);
   const datiTortaRicavi = useMemo(() => raggruppaPerCentro(righeAndamento, centroRicavoDi, nettoRicavo), [righeAndamento, centroRicavoDi]);
   const datiTortaCosti = useMemo(() => raggruppaPerCentro(righeAndamento, centroCostoDi, costoTotaleNetto), [righeAndamento, centroCostoDi]);
+
+  // ====================== PER GIOCO ======================
+  // Una prenotazione e' una vendita sola, ma le domande a cui questa scheda deve rispondere --
+  // quanto rende l'Archery, quanto pesa una sede, come va la famiglia Gonfiabili -- si fanno sul
+  // gioco, non sulla vendita. Quindi ogni prenotazione viene aperta nelle sue righe.
+  //
+  // Dove il dettaglio c'e', una riga per voce. Dove non c'e' -- e oggi e' quasi sempre cosi', il
+  // dettaglio e' appena nato -- una riga sola, con il gioco della prenotazione e i suoi totali:
+  // il resoconto vale su tutto lo storico, non solo sulle prenotazioni fatte da domani.
+  //
+  // Due cose sui numeri. Lo sconto e' una percentuale sul totale e sulle voci non compare, quindi
+  // le righe vengono riportate in proporzione al netto davvero incassato: senza, questa scheda
+  // direbbe importi piu' alti della scheda Tabella sulle stesse partite. Campo e rinfresco non
+  // sono di nessun gioco in particolare e vanno sul gioco che identifica la prenotazione: e'
+  // un'approssimazione voluta -- quei costi si controllano per campo e per data -- e tiene i
+  // totali quadrati con il resto del modulo invece di inventare una categoria che non esiste.
+  const [raggruppaPer, setRaggruppaPer] = useState('centro');
+
+  // Una partita giocata su un nostro campo parte per forza dalla nostra sede: i pacchetti da
+  // campo si vendono con la nostra attrezzatura, non ne esistono con quella di un fornitore.
+  // Quindi dove il dettaglio non dice la sede -- e su una prenotazione vecchia non la dice --
+  // ma c'è un campo, la sede è la nostra. Senza campo resta non indicata, che è la verità.
+  const sedePropria = useMemo(() => sedi.find(s => s.bfm)?.nome || '', [sedi]);
+
+  const sedeDiRipiego = useCallback((p) => (p.campoId && sedePropria) ? sedePropria : 'Non indicata', [sedePropria]);
+
+  const righePerGioco = useMemo(() => {
+    const righe = [];
+    prenotazioni.forEach(p => {
+      if (!p.data) return;
+      if (annoSel && p.data.slice(0, 4) !== annoSel) return;
+      if (annoSel && meseSel && parseInt(p.data.slice(5, 7), 10) !== parseInt(meseSel, 10)) return;
+      const voci = Array.isArray(p.voci) ? p.voci.filter(Boolean) : [];
+      const costoStruttura = nettoCampo(p) + nettoRinf(p);
+      if (voci.length > 0) {
+        const sommaVoci = voci.reduce((t, v) => t + (parseFloat(v.ricavo) || 0), 0);
+        const proporzione = sommaVoci > 0 ? nettoRicavo(p) / sommaVoci : 0;
+        voci.forEach(v => righe.push({
+          pren: p,
+          giocoId: v.giocoId ?? null,
+          nome: v.nome || '',
+          sede: v.sede || 'Non indicata',
+          ricavo: (parseFloat(v.ricavo) || 0) * proporzione,
+          costo: parseFloat(v.costo) || 0,
+        }));
+        if (costoStruttura > 0) righe.push({ pren: p, giocoId: p.giocoId ?? null, nome: '', sede: sedeDiRipiego(p), ricavo: 0, costo: costoStruttura });
+      } else {
+        righe.push({ pren: p, giocoId: p.giocoId ?? null, nome: '', sede: sedeDiRipiego(p), ricavo: nettoRicavo(p), costo: nettoEreditato(p) + costoStruttura });
+      }
+    });
+    return righe;
+  }, [prenotazioni, annoSel, meseSel, sedeDiRipiego]);
+
+  // A che gruppo appartiene una riga, secondo la dimensione scelta. Il nome arriva dal catalogo
+  // per id; un servizio accessorio, che gioco non e', tiene il suo nome quando si guarda per
+  // gioco e resta fuori dalle categorie che non ha.
+  const gruppoDi = useCallback((r) => {
+    const g = r.giocoId != null ? giocoPerId[r.giocoId] : null;
+    if (raggruppaPer === 'famiglia') return g?.famiglia || 'Non assegnata';
+    if (raggruppaPer === 'gioco') return g?.nome || r.nome || 'Non assegnato';
+    if (raggruppaPer === 'sede') return r.sede || 'Non indicata';
+    return g?.centro_ricavo || 'Non assegnato';
+  }, [giocoPerId, raggruppaPer]);
+
+  const gruppiPerGioco = useMemo(() => {
+    const per = {};
+    righePerGioco.forEach(r => {
+      const k = gruppoDi(r);
+      if (!per[k]) per[k] = { nome: k, ricavo: 0, costo: 0, partite: new Set() };
+      per[k].ricavo += r.ricavo;
+      per[k].costo += r.costo;
+      per[k].partite.add(r.pren.id);
+    });
+    return Object.values(per)
+      .map(v => ({ ...v, partite: v.partite.size, margine: v.ricavo - v.costo }))
+      .sort((a, b) => b.ricavo - a.ricavo);
+  }, [righePerGioco, gruppoDi]);
+
+  // Le partite totali si contano sulle prenotazioni, non sommando i gruppi: una prenotazione con
+  // due giochi di centri diversi compare in due gruppi ed e' giusto cosi', ma resta una partita.
+  const partiteTotali = useMemo(() => new Set(righePerGioco.map(r => r.pren.id)).size, [righePerGioco]);
+  const totaliPerGioco = useMemo(() => gruppiPerGioco.reduce(
+    (a, v) => ({ ricavo: a.ricavo + v.ricavo, costo: a.costo + v.costo, margine: a.margine + v.margine }),
+    { ricavo: 0, costo: 0, margine: 0 }
+  ), [gruppiPerGioco]);
+
+  const ETICHETTE_RAGGRUPPAMENTO = { centro: 'Centro di ricavo', famiglia: 'Famiglia', gioco: 'Gioco', sede: 'Sede' };
+
+  const esportaPerGioco = () => {
+    if (gruppiPerGioco.length === 0) return alert("Nessun dato da esportare.");
+    const ws = XLSX.utils.json_to_sheet(gruppiPerGioco.map(v => ({
+      [ETICHETTE_RAGGRUPPAMENTO[raggruppaPer]]: v.nome,
+      Partite: v.partite,
+      Ricavo: +v.ricavo.toFixed(2),
+      Costo: +v.costo.toFixed(2),
+      Margine: +v.margine.toFixed(2),
+    })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "PerGioco");
+    XLSX.writeFile(wb, `Costi_Ricavi_per_${raggruppaPer}.xlsx`);
+  };
 
   const etichettaFetta = ({ nome, percent }) => percent > 0.08 ? `${nome} ${(percent * 100).toFixed(0)}%` : '';
 
@@ -264,6 +377,9 @@ function CostiRicavi({ user }) {
         )}
         {puoVedere(user, 'costiricavi', 'andamento') && (
           <button className={`nav-btn ${currentView === 'andamento' ? 'active' : ''}`} onClick={() => setCurrentView("andamento")}><Icona nome="andamento" />Andamento</button>
+        )}
+        {puoVedere(user, 'costiricavi', 'pergioco') && (
+          <button className={`nav-btn ${currentView === 'pergioco' ? 'active' : ''}`} onClick={() => setCurrentView("pergioco")}><Icona nome="giochi" />Per gioco</button>
         )}
         {puoVedere(user, 'costiricavi', 'completate') && (
           <button className={`nav-btn ${currentView === 'completate' ? 'active' : ''}`} onClick={() => setCurrentView("completate")}><Icona nome="completate" />Completate</button>
@@ -383,6 +499,96 @@ function CostiRicavi({ user }) {
               )}
             </div>
           </div>
+        </div>
+      )}
+      {/* ===================== PER GIOCO ===================== */}
+      {currentView === "pergioco" && puoVedere(user, 'costiricavi', 'pergioco') && (
+        <div className="schermata-storico no-print">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <h2 style={{ margin: 0 }}>Costi / Ricavi per gioco <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(valori senza IVA, per data dell'evento)</span></h2>
+            <button onClick={esportaPerGioco} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
+          </div>
+          <p className="descrizione-pagina">
+            Ogni prenotazione è aperta nei giochi che contiene. Una partita con più giochi compare in più gruppi ma resta una partita sola,
+            quindi le partite dei gruppi possono sommare più del totale. Campo e rinfresco sono attribuiti al gioco della prenotazione.
+          </p>
+
+          <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
+            <div className="filtro-group" style={{ flex: '1 1 140px' }}>
+              <label>Anno:</label>
+              <select value={annoSel} onChange={(e) => { setAnnoSel(e.target.value); setMeseSel(""); }}>
+                <option value="">Tutti gli anni</option>
+                {anniDisponibili.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 140px' }}>
+              <label>Mese:</label>
+              <select value={meseSel} onChange={(e) => setMeseSel(e.target.value)} disabled={!annoSel}>
+                <option value="">Tutti i mesi</option>
+                {MESI.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
+              </select>
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 200px' }}>
+              <label>Raggruppa per:</label>
+              <select value={raggruppaPer} onChange={(e) => setRaggruppaPer(e.target.value)}>
+                {Object.entries(ETICHETTE_RAGGRUPPAMENTO).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+            <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+              <thead>
+                <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                  <th style={{ padding: '10px' }}>{ETICHETTE_RAGGRUPPAMENTO[raggruppaPer]}</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Partite</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Ricavo</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Costo</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Margine</th>
+                </tr>
+              </thead>
+              <tbody>
+                {gruppiPerGioco.length === 0
+                  ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessuna partita nel periodo selezionato.</td></tr>
+                  : gruppiPerGioco.map(v => (
+                    <tr key={v.nome} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: '10px' }}>{v.nome}</td>
+                      <td style={{ padding: '10px', textAlign: 'right' }}>{v.partite}</td>
+                      <td style={{ padding: '10px', textAlign: 'right' }}>{formattaEuro(v.ricavo)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{formattaEuro(v.costo)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: v.margine >= 0 ? '#2e7d32' : '#c62828' }}>{formattaEuro(v.margine)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
+                  <td style={{ padding: '10px' }}>TOTALE</td>
+                  <td style={{ padding: '10px', textAlign: 'right' }}>{partiteTotali}</td>
+                  <td style={{ padding: '10px', textAlign: 'right' }}>{formattaEuro(totaliPerGioco.ricavo)}</td>
+                  <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>{formattaEuro(totaliPerGioco.costo)}</td>
+                  <td style={{ padding: '10px', textAlign: 'right', color: totaliPerGioco.margine >= 0 ? '#2e7d32' : '#c62828' }}>{formattaEuro(totaliPerGioco.margine)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {gruppiPerGioco.length > 0 && (
+            <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '16px 8px' }}>
+              <h3 style={{ margin: '0 0 10px 14px', fontSize: '1rem' }}>Ricavi, costi e margine per {ETICHETTE_RAGGRUPPAMENTO[raggruppaPer].toLowerCase()}</h3>
+              <ResponsiveContainer width="100%" height={340}>
+                <BarChart data={gruppiPerGioco.slice(0, 12)} margin={{ top: 10, right: 20, left: 0, bottom: 0 }} barCategoryGap="20%">
+                  <CartesianGrid vertical={false} stroke={STROKE_GRIGLIA} />
+                  <XAxis dataKey="nome" stroke={STROKE_ASSE} tick={{ fill: INK_MUTED, fontSize: 11 }} axisLine={{ stroke: STROKE_ASSE }} tickLine={false} interval={0} />
+                  <YAxis stroke={STROKE_ASSE} tick={{ fill: INK_MUTED, fontSize: 12 }} axisLine={{ stroke: STROKE_ASSE }} tickLine={false} tickFormatter={(v) => '€' + v} />
+                  <Tooltip formatter={(value) => formattaEuro(value)} contentStyle={{ fontSize: '0.85rem' }} />
+                  <Legend wrapperStyle={{ fontSize: '0.85rem' }} />
+                  <Bar dataKey="ricavo" name="Ricavo" fill={COLORE_RICAVO} radius={[4, 4, 0, 0]} maxBarSize={24} />
+                  <Bar dataKey="costo" name="Costo" fill={COLORE_COSTO} radius={[4, 4, 0, 0]} maxBarSize={24} />
+                  <Bar dataKey="margine" name="Margine" fill={COLORE_MARGINE} radius={[4, 4, 0, 0]} maxBarSize={24} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
       )}
     </>

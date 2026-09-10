@@ -65,6 +65,7 @@ export const SCHEDE_REGISTRY = {
     schede: [
       { id: 'tabella', label: 'Tabella' },
       { id: 'andamento', label: 'Andamento' },
+      { id: 'pergioco', label: 'Per gioco' },
       { id: 'completate', label: 'Completate' },
     ],
   },
