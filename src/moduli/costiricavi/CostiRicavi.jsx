@@ -137,7 +137,10 @@ function CostiRicavi({ user }) {
     ]);
     // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher), non più
     // nella colonna jsonb prenotazioni.pagamenti: vengono agganciati qui a ogni prenotazione.
-    if (pr.data) setPrenotazioni(pr.data.map(p => ({
+    // Una partita annullata non ha prodotto niente, e una posticipata lo produrra' un altro
+    // giorno: contarle qui vorrebbe dire mettere a bilancio ricavi che non ci sono e costi che
+    // non sono stati sostenuti. Restano nel modulo prenotazioni, che e' dove servono.
+    if (pr.data) setPrenotazioni(pr.data.filter(p => p.stato !== 'ANNULLATA' && p.stato !== 'POSTICIPATA').map(p => ({
       ...p,
       pagamenti: (pag.data || []).filter(x => x.riferimento === p.id).map(x => ({ data: x.data, importo: x.importo, nominativo: x.nominativo || "" }))
     })));

@@ -54,7 +54,16 @@ const MESI = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Lug
 const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const addGiorni = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const inizioSettimana = (d) => { const x = new Date(d); const g = x.getDay(); x.setDate(x.getDate() - (g === 0 ? 6 : g - 1)); x.setHours(0, 0, 0, 0); return x; };
-const coloreStato = (s) => s === 'CONF' ? { bg: '#dcfce7', bd: '#16a34a', tx: '#166534' } : { bg: '#fed7aa', bd: '#f59e0b', tx: '#9a3412' };
+// Una partita annullata non si cancella: resta, con il suo colore. Cancellarla toglierebbe la
+// traccia di un impegno che c'e' stato -- il campo prenotato, il cliente avvisato -- e con essa
+// il motivo per cui quel giorno era occupato.
+const COLORI_STATO = {
+  CONF: { bg: '#dcfce7', bd: '#16a34a', tx: '#166534' },
+  ANNULLATA: { bg: '#fee2e2', bd: '#dc2626', tx: '#991b1b' },
+  POSTICIPATA: { bg: '#fef9c3', bd: '#eab308', tx: '#854d0e' },
+};
+const STATO_AMBRA = { bg: '#fed7aa', bd: '#f59e0b', tx: '#9a3412' };
+const coloreStato = (s) => COLORI_STATO[s] || STATO_AMBRA;
 
 // Data breve in italiano, es. "24 luglio" (senza anno)
 const formattaDataBreveIT = (dataStr) => {
@@ -715,12 +724,10 @@ function Prenotazioni({ user }) {
     const conRinfresco = !!rinfresco;
     const eMerenda = /merenda/i.test(rinfresco);
     const nomiGiochi = giochiDi(p);
-    // "10 BOLLE" è il modo in cui il Bubble si conta: sono le bolle in campo. Per gli altri
-    // giochi le persone si contano e basta.
-    const soloBubble = nomiGiochi.length === 1 && /bubble/i.test(nomiGiochi[0] || '');
-    const quantita = p.numeroPartecipanti ? ` (${p.numeroPartecipanti} ${soloBubble ? 'BOLLE' : 'PERSONE'})` : '';
+    // Quante persone sono lo dice già la riga della tariffa, e ripeterlo nel titolo non aggiunge
+    // niente: il titolo dice cosa si gioca e cosa si mangia.
     const titolo = conRinfresco
-      ? `${nomiGiochi.join(' + ').toUpperCase()}${quantita} + ${rinfresco.toUpperCase()}`
+      ? `${nomiGiochi.join(' + ').toUpperCase()} + ${rinfresco.toUpperCase()}`
       : (etichettaDi(p) || '');
 
     const fineGioco = p.oraFine || (p.oraInizio && p.durataOre ? oraPiuOre(p.oraInizio, p.durataOre) : '');
@@ -867,6 +874,25 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
     fetchTutto();
     if (nuovoStato === 'CONF') setTestoConferma(costruisciConferma(p));
   };
+  // Annullare una partita non e' una cosa sola: se non e' entrato niente e' finita li', ma se un
+  // acconto c'e' quel denaro resta del cliente e la partita e' solo da riprogrammare. Sono due
+  // situazioni diverse -- una si archivia, l'altra si insegue -- e l'incasso e' l'unica cosa che
+  // le distingue, quindi lo stato lo decide lui invece di chiederlo a chi clicca.
+  const annullaPrenotazione = async (p) => {
+    const incassato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
+    const nuovoStato = incassato > 0 ? 'POSTICIPATA' : 'ANNULLATA';
+    const spiegazione = incassato > 0
+      ? `Su ${p.id} risultano €${incassato.toFixed(2)} già incassati, quindi non si annulla: passa a POSTICIPATA, da riprogrammare.`
+      : `Su ${p.id} non risulta alcun incasso: passa ad ANNULLATA.`;
+    if (!window.confirm(`${spiegazione}
+
+Procedo?`)) return;
+    const { error } = await supabase.from('prenotazioni').update({ stato: nuovoStato }).eq('id', p.id);
+    if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}`); }
+    setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, stato: nuovoStato } : prev);
+    fetchTutto();
+  };
+
   const toggleCampoPrenotato = async (p) => {
     const nuovo = !p.campoPrenotato;
     await supabase.from('prenotazioni').update({ campoPrenotato: nuovo }).eq('id', p.id);
@@ -911,7 +937,7 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
   const rigaTabellaPren = (p) => {
     const totPagato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
     const totale = parseFloat(p.prezzoVendita) || 0;
-    const coloreStatoRiga = p.stato === 'CONF' ? '#16a34a' : '#f59e0b';
+    const coloreStatoRiga = coloreStato(p.stato).bd;
     const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
     const espansa = rigaEspansaId === p.id;
     const completata = prenotazioneCompletata(p, oggiIso);
@@ -976,6 +1002,12 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
                   )}
                   {p.stato === "CONF" && (
                     <button type="button" className="btn-icon-action" title="Riporta a FORSE" onClick={() => cambiaStatoPren(p, "FORSE")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                  )}
+                  {(p.stato === "FORSE" || p.stato === "CONF") && (
+                    <button type="button" className="btn-icon-action danger" title="Annulla la prenotazione" onClick={() => annullaPrenotazione(p)}><Icona nome="annulla" size={16} style={{ marginRight: 0 }} /></button>
+                  )}
+                  {(p.stato === "ANNULLATA" || p.stato === "POSTICIPATA") && (
+                    <button type="button" className="btn-icon-action" title="Rimetti in FORSE" onClick={() => cambiaStatoPren(p, "FORSE")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => caricaPrenotazione(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
                   {!p.googleCalendarSync && (
@@ -2417,6 +2449,8 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
                 <option value="">Tutti</option>
                 <option value="FORSE">FORSE</option>
                 <option value="CONF">CONF</option>
+                <option value="ANNULLATA">ANNULLATA</option>
+                <option value="POSTICIPATA">POSTICIPATA</option>
               </select>
             </div>
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
@@ -2438,13 +2472,17 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
         const daChiudere = prenotazioni.filter(p => p.stato === 'CONF' && fineEventoDi(p) < oggiIso && !prenotazioneCompletata(p, oggiIso));
         const daCompletare = daChiudere.filter(p => campiFatturazioneMancanti(p).length > 0);
         const daSaldare = daChiudere.filter(p => campiFatturazioneMancanti(p).length === 0);
-        const liste = { inAttesaPagamento, daConfermare, partiteAttive, daCompletare, daSaldare };
+        // Annullate e posticipate non stanno in nessuna delle altre liste, che parlano di FORSE e
+        // CONF: senza una scheda loro sparirebbero da Gestione, e sparire non e' archiviare.
+        const sospese = prenotazioni.filter(p => p.stato === 'ANNULLATA' || p.stato === 'POSTICIPATA');
+        const liste = { inAttesaPagamento, daConfermare, partiteAttive, daCompletare, daSaldare, sospese };
         const messaggiVuoto = {
           inAttesaPagamento: "Nessun cliente in attesa di pagamento.",
           daConfermare: "Nessun cliente pagato in attesa di conferma.",
           partiteAttive: "Nessuna partita confermata in programma.",
           daCompletare: "Nessuna prenotazione con dati da completare.",
           daSaldare: "Nessuna prenotazione in attesa del saldo.",
+          sospese: "Nessuna prenotazione annullata o posticipata.",
         };
         return (
           <div className="schermata-storico no-print">
@@ -2459,6 +2497,7 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
               <button className={`nav-btn ${gestioneTab === 'partiteAttive' ? 'active' : ''}`} onClick={() => setGestioneTab('partiteAttive')}><Icona nome="partiteAttive" />Partite attive ({partiteAttive.length})</button>
               <button className={`nav-btn ${gestioneTab === 'daCompletare' ? 'active' : ''}`} onClick={() => setGestioneTab('daCompletare')} title="Mancano dati di fatturazione (e forse anche il saldo)"><Icona nome="daCompletare" />Da completare ({daCompletare.length})</button>
               <button className={`nav-btn ${gestioneTab === 'daSaldare' ? 'active' : ''}`} onClick={() => setGestioneTab('daSaldare')} title="Anagrafica di fatturazione completa: manca solo l'incasso"><Icona nome="attesaPagamento" />Da saldare ({daSaldare.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'sospese' ? 'active' : ''}`} onClick={() => setGestioneTab('sospese')} title="Annullate senza incasso, posticipate se un acconto c'era"><Icona nome="annulla" />Annullate ({sospese.length})</button>
             </nav>
             {tabellaPren(liste[gestioneTab], messaggiVuoto[gestioneTab])}
           </div>
@@ -2789,6 +2828,8 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
                   <div style={{ display: 'flex', gap: '8px', marginTop: '18px', justifyContent: 'center' }}>
                     <button className="btn-modifica-inline" title="Apri" style={{ padding: '8px 12px' }} onClick={() => { caricaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>📂</button>
                     {prenSelezionata.stato === 'FORSE' && <button className="btn-conferma" disabled={senzaIncasso(prenSelezionata) && !puoConfermareSenzaIncasso} title={senzaIncasso(prenSelezionata) ? (puoConfermareSenzaIncasso ? "Conferma senza incasso (da amministratore)" : "Serve almeno un acconto per confermare") : "Conferma (prepara mail al cliente)"} style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'CONF'); setPrenSelezionata(null); }}>✔️</button>}
+                    {(prenSelezionata.stato === 'FORSE' || prenSelezionata.stato === 'CONF') && <button className="btn-elimina-prev" title="Annulla la prenotazione" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { annullaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>🚫</button>}
+                    {(prenSelezionata.stato === 'ANNULLATA' || prenSelezionata.stato === 'POSTICIPATA') && <button className="btn-ripristina" title="Rimetti in FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'FORSE'); setPrenSelezionata(null); }}>↩️</button>}
                     {prenSelezionata.stato === 'CONF' && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'FORSE'); setPrenSelezionata(null); }}>↩️</button>}
                     <button className="btn-modifica-inline" title={prenSelezionata.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '8px 12px' }} onClick={() => apriGoogleCalendar(prenSelezionata)}>📅</button>
                     {user.isAdmin && <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { eliminaPrenotazione(prenSelezionata.id); setPrenSelezionata(null); }}>🗑️</button>}
