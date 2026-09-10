@@ -1233,9 +1233,17 @@ function Prenotazioni({ user }) {
     // Tutti i campi obbligatori vengono controllati insieme (non uno alla volta) così l'utente
     // li vede evidenziati di rosso tutti insieme invece di scoprirli uno a uno a ogni tentativo.
     const quantiRichiesti = Math.max(1, parseInt(pac?.giochi_richiesti, 10) || 1);
+    // Una partita si gioca in un posto, sempre: o su un nostro campo o a un indirizzo. Senza,
+    // la prenotazione non dice dove mandare gli operatori ne' cosa scrivere al cliente, e i
+    // chilometri non si calcolano. Quale dei due si chieda lo decide il pacchetto, che gia' sa
+    // se la location e' dai campi o libera.
+    const luogoDaCampi = pac?.locationTipo === 'campi';
+    const luogoMancante = luogoDaCampi
+      ? !f.campoId
+      : ![f.locationIndirizzo, f.locationCitta].some(x => (x || '').trim());
     // Tutti i giochi che il pacchetto chiede, non solo il primo.
     const giochiRichiestiMancanti = [f.giocoId, ...(f.giochiAltri || [])].slice(0, quantiRichiesti).filter(Boolean).length < quantiRichiesti;
-    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim() || giochiRichiestiMancanti
+    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim() || giochiRichiestiMancanti || luogoMancante
       || (!senzaOrario && !f.oraInizio) || (!senzaOrario && !durataFissa && !f.oraFine)
       || (!!pac?.prevedeRinfresco && !f.tipoRinfresco);
     if (mancaCampoObbligatorio) {
@@ -1502,6 +1510,10 @@ function Prenotazioni({ user }) {
         const pac = pacchetti.find(p => p.id === formPren.pacchettoId);
         const durataFissa = pac && pac.durataOre != null && pac.durataOre !== "";
         const locationDaCampi = pac?.locationTipo === 'campi';
+        // Lo stesso controllo del salvataggio, per accendere di rosso il campo che manca.
+        const luogoMancanteForm = locationDaCampi
+          ? !formPren.campoId
+          : ![formPren.locationIndirizzo, formPren.locationCitta].some(x => (x || '').trim());
         const campoSel = locationDaCampi ? campi.find(c => c.id === formPren.campoId) : null;
         const durataOre = durataFissa ? parseFloat(pac.durataOre) : oreDaOrari(formPren.oraInizio, formPren.oraFine);
         // Ora fine effettiva anche per i pacchetti a durata fissa (formPren.oraFine resta vuoto in quel caso), per il calcolo disponibilità operatori
@@ -1772,11 +1784,11 @@ function Prenotazioni({ user }) {
 
             {/* Location */}
             <div className="sotto-sezione">
-              <h3>Location</h3>
+              <h3>Location *</h3>
               {locationDaCampi ? (
                 <>
                   <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '10px' }}>Campo
-                    <select className="dropdown-gonfiabili" value={formPren.campoId} onChange={(e) => setF({ campoId: e.target.value })} style={evidenzia('campoId')}>
+                    <select className={`dropdown-gonfiabili ${campoRosso('campoId', luogoMancanteForm).className}`} value={formPren.campoId} onChange={(e) => setF({ campoId: e.target.value })} style={campoRosso('campoId', luogoMancanteForm).style}>
                       <option value="">-- Seleziona campo --</option>
                       {campi.map(c => <option key={c.id} value={c.id}>{c.nome}{c.citta ? ` — ${c.citta}` : ''}{pac?.prevedeRinfresco && c.noRinfresco ? ' 🚫 no rinfresco' : ''}</option>)}
                     </select>
@@ -1814,9 +1826,9 @@ function Prenotazioni({ user }) {
                 <>
                   <RicercaIndirizzo onSelect={(a) => setF({ locationIndirizzo: a.indirizzo, locationCap: a.cap, locationCitta: a.citta, locationProvincia: siglaProvincia(a.provincia) })} />
                   <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '10px' }}>
-                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.locationIndirizzo} onChange={(e) => setF({ locationIndirizzo: e.target.value })} style={evidenzia('locationIndirizzo')} /></label>
+                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.locationIndirizzo} onChange={(e) => setF({ locationIndirizzo: e.target.value })} {...campoRosso('locationIndirizzo', luogoMancanteForm)} /></label>
                     <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.locationCap} onChange={(e) => setF({ locationCap: e.target.value })} style={evidenzia('locationCap')} /></label>
-                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.locationCitta} onChange={(e) => setF({ locationCitta: e.target.value })} style={evidenzia('locationCitta')} /></label>
+                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.locationCitta} onChange={(e) => setF({ locationCitta: e.target.value })} {...campoRosso('locationCitta', luogoMancanteForm)} /></label>
                     <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.locationProvincia} onChange={(e) => setF({ locationProvincia: e.target.value })} onBlur={() => setF({ locationProvincia: siglaProvincia(formPren.locationProvincia) })} style={stileProvincia('locationProvincia')} /></label>
                   </div>
                 </>
@@ -2883,7 +2895,9 @@ function Prenotazioni({ user }) {
         const specificaDi = (p) => {
           const giochi = etichettaGiochiBreve(giochiBreviDi(p)) || 'Prenotazione';
           if (!p.tipoRinfresco) return `solo ${giochi}`;
-          const quante = p.numeroPartecipanti ? ` (${p.numeroPartecipanti} persone)` : '';
+          // "x 20p" invece di "(20 persone)": un promemoria si legge di corsa, e in un messaggio
+          // su WhatsApp ogni parola in meno e' una riga che non va a capo.
+          const quante = p.numeroPartecipanti ? ` x ${p.numeroPartecipanti}p` : '';
           return `${giochi} + ${p.tipoRinfresco}${quante}`;
         };
 
