@@ -870,7 +870,12 @@ function Prenotazioni({ user }) {
 Vuoi creare adesso l'evento su Google Calendar?`)) {
       apriGoogleCalendar(p);
     }
-    await supabase.from('prenotazioni').update({ stato: nuovoStato }).eq('id', p.id);
+    // Tornando fra le partite vive il motivo dell'annullamento se ne va con lo stato: tenerlo
+    // vorrebbe dire raccontare di una cosa che non e' piu' successa.
+    const tornaInGioco = p.stato === 'ANNULLATA' || p.stato === 'POSTICIPATA';
+    await supabase.from('prenotazioni')
+      .update(tornaInGioco ? { stato: nuovoStato, motivoAnnullamento: null } : { stato: nuovoStato })
+      .eq('id', p.id);
     fetchTutto();
     if (nuovoStato === 'CONF') setTestoConferma(costruisciConferma(p));
   };
@@ -884,12 +889,15 @@ Vuoi creare adesso l'evento su Google Calendar?`)) {
     const spiegazione = incassato > 0
       ? `Su ${p.id} risultano €${incassato.toFixed(2)} già incassati, quindi non si annulla: passa a POSTICIPATA, da riprogrammare.`
       : `Su ${p.id} non risulta alcun incasso: passa ad ANNULLATA.`;
-    if (!window.confirm(`${spiegazione}
-
-Procedo?`)) return;
-    const { error } = await supabase.from('prenotazioni').update({ stato: nuovoStato }).eq('id', p.id);
+    // Il motivo non e' un di piu': lo stato dice che la partita non si fa, il motivo dice se il
+    // problema era del cliente, del campo o del tempo. Fra due mesi e' l'unica cosa che serve, e
+    // se non lo si scrive adesso resta nella testa di chi ha cliccato. Per questo si chiede qui e
+    // senza saltarlo: annullare senza dire perche' non e' un'informazione, e' una riga in meno.
+    const motivo = (window.prompt(`${spiegazione}\n\nPerché viene annullata?`, p.motivoAnnullamento || '') || '').trim();
+    if (!motivo) return;
+    const { error } = await supabase.from('prenotazioni').update({ stato: nuovoStato, motivoAnnullamento: motivo }).eq('id', p.id);
     if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}`); }
-    setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, stato: nuovoStato } : prev);
+    setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, stato: nuovoStato, motivoAnnullamento: motivo } : prev);
     fetchTutto();
   };
 
@@ -994,6 +1002,7 @@ Procedo?`)) return;
                     p.voucherCodice ? `voucher ${p.voucherCodice} (€${(parseFloat(p.voucherValore) || 0).toFixed(2)})` : null,
                     ...(p.pagamenti || []).map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${pg.data}`)
                   ].filter(Boolean).join(', ') || 'nessuno'}</div>
+                  {p.motivoAnnullamento && <div><span style={{ color: '#94a3b8' }}>Motivo </span><em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
                   {p.note && <div><span style={{ color: '#94a3b8' }}>Note </span><em>{p.note}</em></div>}
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
@@ -2816,6 +2825,7 @@ Procedo?`)) return;
                     {prenSelezionata.operatori && prenSelezionata.operatori.length > 0 && <>🧑 {prenSelezionata.operatori.map(o => o.nome).join(', ')}<br /></>}
                     {prenSelezionata.tipoRinfresco && <>🍽️ Rinfresco: {prenSelezionata.tipoRinfresco}{prenSelezionata.numeroPartecipanti ? ` · ${prenSelezionata.numeroPartecipanti} pers` : ''}<br /></>}
                     {prenSelezionata.etaMedia && <>🎂 Età media: {prenSelezionata.etaMedia}<br /></>}
+                    {prenSelezionata.motivoAnnullamento && <><span style={{ color: '#991b1b' }}>🚫 <em>{prenSelezionata.motivoAnnullamento}</em></span><br /></>}
                     {prenSelezionata.note && <>📝 <em>{prenSelezionata.note}</em><br /></>}
                     💶 Pagato €{((prenSelezionata.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(prenSelezionata.voucherValore) || 0)).toFixed(2)} / €{(parseFloat(prenSelezionata.prezzoVendita) || 0).toFixed(2)} · <strong>{prenSelezionata.statoPagamento || 'in attesa'}</strong>{prenSelezionata.voucherCodice ? ` · 🎟️ ${prenSelezionata.voucherCodice}` : ''}<br />
                     📅 <button type="button" onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(prenSelezionata); }} title="Clic per correggere a mano lo stato di sincronizzazione" style={{ border: 'none', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: prenSelezionata.googleCalendarSync ? '#dcfce7' : '#fee2e2', color: prenSelezionata.googleCalendarSync ? '#166534' : '#991b1b' }}>{prenSelezionata.googleCalendarSync ? '✅ Sincronizzato con Google Calendar' : '⚠️ Non sincronizzato con Google Calendar'}</button>
