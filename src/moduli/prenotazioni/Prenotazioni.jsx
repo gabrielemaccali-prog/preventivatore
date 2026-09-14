@@ -24,7 +24,7 @@ const fracIva = (v) => (v != null && v !== '' ? parseFloat(v) : 22) / 100;
 const PREN_VUOTA = {
   data: "", altriGiorni: [], piuGiorni: false, senzaOrario: false, pacchettoId: "", giocoId: "", oraInizio: "", oraFine: "",
   nominativo: "", email: "", telefono: "",
-  campoId: "", campoPrenotato: false, locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
+  campoId: "", campoPrenotato: false, locationNome: "", locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
   operatoriIds: [], senzaOperatori: false, sconto: "0", prezzoManuale: "", giochiAltri: [],
   tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "",
   preventivoCollegato: "", ereditaCosti: false, costoEreditato: "", voci: [],
@@ -141,6 +141,12 @@ const dettagliGoogleCalendar = (p, giocoNome) => {
   return righe.join('\n');
 };
 
+// Come si legge una location libera: prima cosa e', poi dove sta. "Oratorio San Luigi — Via Roma 12,
+// Bergamo". Il nome e' quello che l'operatore cerca con gli occhi arrivando e che il cliente
+// riconosce; l'indirizzo e' quello che serve per arrivarci. Uno dei due puo' mancare.
+const luogoLiberoDi = (p) => [p.locationNome, [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ')]
+  .map(x => (x || '').trim()).filter(Boolean).join(' — ');
+
 // Link "Aggiungi a Google Calendar" precompilato con i dati della prenotazione, sul calendario condiviso GOOGLE_CALENDAR_ID.
 // operatoriAnagrafica serve a risolvere l'email corrente degli operatori assegnati (nello snapshot della prenotazione c'è solo id/nome).
 // campiAnagrafica serve a risolvere l'indirizzo corrente del campo (nello snapshot della prenotazione c'è solo id/nome).
@@ -160,7 +166,7 @@ const linkGoogleCalendar = (p, operatoriAnagrafica, campiAnagrafica, giocoNome) 
   // Sui campi registrati il luogo è l'indirizzo del campo (il nome del campo è già nel titolo dell'evento)
   const campoInfo = p.campoId ? (campiAnagrafica || []).find(c => c.id === p.campoId) : null;
   const indirizzoCampo = campoInfo ? [campoInfo.indirizzo, campoInfo.citta].filter(Boolean).join(', ') : '';
-  const luogo = indirizzoCampo || p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '';
+  const luogo = indirizzoCampo || p.campoNome || luogoLiberoDi(p) || '';
   const titolo = [p.nominativo, p.campoNome, etichettaPartita(p.pacchettoNome, giocoNome)].filter(Boolean).join(' - ');
   const emailOperatori = (p.operatori || [])
     .map(op => (operatoriAnagrafica || []).find(o => o.id === op.id)?.email)
@@ -663,7 +669,7 @@ function Prenotazioni({ user }) {
       oraInizio: p.oraInizio || "", oraFine: p.oraFine || "",
       nominativo: p.nominativo || "", email: p.email || "", telefono: p.telefono || "",
       campoId: p.campoId || "", campoPrenotato: !!p.campoPrenotato,
-      locationIndirizzo: p.locationIndirizzo || "", locationCap: p.locationCap || "", locationCitta: p.locationCitta || "", locationProvincia: p.locationProvincia || "",
+      locationNome: p.locationNome || "", locationIndirizzo: p.locationIndirizzo || "", locationCap: p.locationCap || "", locationCitta: p.locationCitta || "", locationProvincia: p.locationProvincia || "",
       operatoriIds: (p.operatori || []).map(o => o.id), senzaOperatori: !!p.senzaOperatori,
       sconto: String(p.sconto ?? "0"), prezzoManuale,
       tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
@@ -709,7 +715,7 @@ function Prenotazioni({ user }) {
     const campoInfo = p.campoId ? campi.find(c => c.id === p.campoId) : null;
     const locationTxt = campoInfo
       ? [campoInfo.nomeCompleto || campoInfo.nome, [campoInfo.indirizzo, campoInfo.citta].filter(Boolean).join(', ')].filter(Boolean).join(' ')
-      : (p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—');
+      : (p.campoNome || luogoLiberoDi(p) || '—');
     const oraTxt = p.oraInizio ? `${p.oraInizio}${p.oraFine ? ` - ${p.oraFine}` : ''}${p.durataOre ? `   (${p.durataOre} ${p.durataOre === 1 ? 'ora' : 'ore'})` : ''}` : '—';
     const prezzoVendita = parseFloat(p.prezzoVendita) || 0;
     const totalePagatoP = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
@@ -1335,6 +1341,7 @@ function Prenotazioni({ user }) {
       durataOre, oraInizio, oraFine: (senzaOrario || durataFissa) ? null : oraFine,
       nominativo: f.nominativo, email: f.email, telefono: f.telefono,
       campoId: campo ? campo.id : null, campoNome: campo ? campo.nome : null, campoPrenotato: f.campoPrenotato,
+      locationNome: campo ? null : ((f.locationNome || '').trim() || null),
       locationIndirizzo: campo ? null : f.locationIndirizzo, locationCap: campo ? null : f.locationCap,
       locationCitta: campo ? null : f.locationCitta, locationProvincia: campo ? null : siglaProvincia(f.locationProvincia),
       operatori: operatoriSnap, senzaOperatori, sconto,
@@ -1832,6 +1839,9 @@ function Prenotazioni({ user }) {
               ) : (
                 <>
                   <RicercaIndirizzo onSelect={(a) => setF({ locationIndirizzo: a.indirizzo, locationCap: a.cap, locationCitta: a.citta, locationProvincia: siglaProvincia(a.provincia) })} />
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', marginTop: '10px' }}>Nominativo location
+                    <input type="text" placeholder="Es. Oratorio San Luigi, Stadio Comunale" value={formPren.locationNome || ''} onChange={(e) => setF({ locationNome: e.target.value })} style={evidenzia('locationNome')} />
+                  </label>
                   <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '10px' }}>
                     <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.locationIndirizzo} onChange={(e) => setF({ locationIndirizzo: e.target.value })} {...campoRosso('locationIndirizzo', luogoMancanteForm)} /></label>
                     <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.locationCap} onChange={(e) => setF({ locationCap: e.target.value })} style={evidenzia('locationCap')} /></label>
@@ -2763,7 +2773,7 @@ function Prenotazioni({ user }) {
             {/* GIORNO (griglia oraria 06:00 -> 00:00, blocchi proporzionali alla durata, una colonna per location; su mobile lista verticale per stare a schermo senza scroll orizzontale) */}
             {calView === 'giorno' && (() => {
               const iso = toISODate(calDate);
-              const locLabel = (p) => p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—';
+              const locLabel = (p) => p.campoNome || luogoLiberoDi(p) || '—';
               const dayPrens = prenDelGiorno(iso);
               if (dayPrens.length === 0) return <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '20px', color: '#777' }}>Nessuna prenotazione in questa giornata.</div>;
               if (calMobile) {
@@ -2848,7 +2858,7 @@ function Prenotazioni({ user }) {
                     📅 {prenSelezionata.data} · {prenSelezionata.oraInizio}{prenSelezionata.oraFine ? `–${prenSelezionata.oraFine}` : ''}{prenSelezionata.durataOre ? ` (${prenSelezionata.durataOre}h)` : ''}<br />
                     👤 <strong>{prenSelezionata.nominativo}</strong>{prenSelezionata.telefono ? ` · 📞 ${prenSelezionata.telefono}` : ''}{prenSelezionata.email ? ` · ✉️ ${prenSelezionata.email}` : ''}<br />
                     {etichettaDi(prenSelezionata) || '—'}<br />
-                    {prenSelezionata.campoNome || [prenSelezionata.locationIndirizzo, prenSelezionata.locationCitta].filter(Boolean).join(', ') || '—'}<br />
+                    {prenSelezionata.campoNome || luogoLiberoDi(prenSelezionata) || '—'}<br />
                     {prenSelezionata.operatori && prenSelezionata.operatori.length > 0 && <>🧑 {prenSelezionata.operatori.map(o => o.nome).join(', ')}<br /></>}
                     {prenSelezionata.tipoRinfresco && <>🍽️ Rinfresco: {prenSelezionata.tipoRinfresco}{prenSelezionata.numeroPartecipanti ? ` · ${prenSelezionata.numeroPartecipanti} pers` : ''}<br /></>}
                     {prenSelezionata.etaMedia && <>🎂 Età media: {prenSelezionata.etaMedia}<br /></>}
@@ -2886,7 +2896,7 @@ function Prenotazioni({ user }) {
         // Stessa regola dei promemoria: a un campo non si annuncia una partita annullata, mentre
         // una posticipata resta sua finche' non la si sposta.
         const righeSettimana = prenotazioni.filter(p => p.stato !== 'ANNULLATA' && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
-        const locLabelRiep = (p) => p.campoNome || [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ') || '—';
+        const locLabelRiep = (p) => p.campoNome || luogoLiberoDi(p) || '—';
 
         // Come si legge un evento in un promemoria: prima cosa si gioca, poi -- se c'è -- il
         // rinfresco e per quante persone. "solo Bubble" oppure "Bubble + merenda (12 persone)".
