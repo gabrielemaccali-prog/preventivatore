@@ -2137,7 +2137,7 @@ function Prenotazioni({ user }) {
                             Il suo valore vale come pagamento, quindi non genera una riga nella tabella pagamenti. */}
                         <select value={formPren.voucherCodice} onChange={(e) => setF({ voucherCodice: e.target.value })} style={evidenzia('voucherCodice')}>
                           <option value="">-- Nessun voucher --</option>
-                          {voucher.filter(v => v.stato === 'emesso').map(v => <option key={v.codice} value={v.codice}>{v.codice} — {v.nominativo} (€{(parseFloat(v.importo) || 0).toFixed(2)})</option>)}
+                          {voucher.filter(v => v.stato === 'emesso').map(v => <option key={v.codice} value={v.codice}>{v.codice} — {v.nominativo} (€{(parseFloat(v.importo) || 0).toFixed(2)}){v.pregresso ? ' · pregresso' : ''}</option>)}
                         </select>
                       </label>
                     </div>

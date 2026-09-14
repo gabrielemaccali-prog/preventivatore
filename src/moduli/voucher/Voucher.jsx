@@ -12,7 +12,31 @@ const FORM_VUOTO = {
   importo: "", nascondiImporto: true, testoOfferta: "",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
   pagamenti: [],
-  stato: "incompleto", dataEmissione: ""
+  stato: "incompleto", dataEmissione: "",
+  // Voucher pregresso: venduto col vecchio sistema, ha già un codice suo scritto sul buono.
+  pregresso: false, codicePregresso: ""
+};
+const FORM_PREGRESSO_VUOTO = { ...FORM_VUOTO, pregresso: true, stato: "emesso" };
+
+// Il codice di un voucher pregresso è quello scritto sul buono: BR + AAAAMMGG, la data in cui è
+// stato venduto. La data di emissione quindi non si chiede, si legge dal codice.
+const normalizzaCodicePregresso = (codiceRaw) => (codiceRaw || "").replace(/\s+/g, "").toUpperCase();
+
+// Ritorna la data AAAA-MM-GG contenuta nel codice, o null se il codice non è un BR valido.
+const dataDaCodicePregresso = (codiceRaw) => {
+  const m = /^BR(\d{4})(\d{2})(\d{2})$/.exec(normalizzaCodicePregresso(codiceRaw));
+  if (!m) return null;
+  const [, anno, mese, giorno] = m;
+  const d = new Date(Date.UTC(+anno, +mese - 1, +giorno));
+  // 20260231 non esiste: Date lo farebbe diventare 3 marzo, e allora non torna.
+  if (d.getUTCFullYear() !== +anno || d.getUTCMonth() !== +mese - 1 || d.getUTCDate() !== +giorno) return null;
+  return `${anno}-${mese}-${giorno}`;
+};
+
+const erroreCodicePregresso = (codiceRaw) => {
+  if (!normalizzaCodicePregresso(codiceRaw)) return "Inserisci il codice scritto sul buono.";
+  if (!dataDaCodicePregresso(codiceRaw)) return "Il codice deve essere BR seguito dalla data AAAAMMGG (es. BR20260312).";
+  return null;
 };
 
 // Stato pagamento derivato dai versamenti rispetto all'importo del voucher (stessa logica delle prenotazioni)
@@ -227,10 +251,12 @@ function Voucher({ user }) {
 
   // Apre il form di nuovo voucher come overlay compatto (richiamato da Gestione)
   const nuovoVoucherOverlay = () => { resetForm(); setShowFormVoucher(true); };
+  // Solo admin: registra un buono del vecchio sistema quando il cliente lo vuole usare.
+  const nuovoVoucherPregressoOverlay = () => { resetForm(); setForm(FORM_PREGRESSO_VUOTO); setShowFormVoucher(true); };
 
   // Chiude l'overlay, chiedendo conferma se ci sono modifiche non salvate.
   const chiudiFormVoucher = () => {
-    const modificato = JSON.stringify(form) !== JSON.stringify(formOriginale ?? FORM_VUOTO);
+    const modificato = JSON.stringify(form) !== JSON.stringify(formOriginale ?? (form.pregresso ? FORM_PREGRESSO_VUOTO : FORM_VUOTO));
     if (modificato && !window.confirm("Ci sono modifiche non salvate. Chiudere comunque?")) return;
     setShowFormVoucher(false);
   };
@@ -345,6 +371,48 @@ function Voucher({ user }) {
     alert(`Voucher ${codiceFinale} salvato (stato: ${stato}).`);
   };
 
+  // Voucher pregresso: il codice è quello del buono, e la data di emissione è scritta dentro il codice.
+  // Nasce "emesso" senza dati di fatturazione e risulta già saldato, perché l'incasso è avvenuto nel
+  // vecchio sistema: non genera righe in pagamenti. Il suo valore vale come pagamento sulla
+  // prenotazione, come ogni voucher.
+  const salvaVoucherPregresso = async () => {
+    const codice = codiceInModifica || normalizzaCodicePregresso(form.codicePregresso);
+    const erroreCodice = codiceInModifica ? null : erroreCodicePregresso(codice);
+    if (erroreCodice || !form.nominativo.trim() || !(parseFloat(form.importo) > 0)) {
+      setMostraErroriValidazione(true);
+      return alert(erroreCodice || "Compila i campi obbligatori evidenziati in rosso.");
+    }
+    setMostraErroriValidazione(false);
+
+    const payload = {
+      pregresso: true,
+      nominativo: form.nominativo.trim(),
+      importo: parseFloat(form.importo),
+      statoPagamento: 'saldato'
+    };
+
+    setSalvataggioVoucher(true);
+    let error;
+    if (!codiceInModifica) {
+      const { data: esistente } = await supabase.from('voucher').select('codice').eq('codice', codice).maybeSingle();
+      if (esistente) { setSalvataggioVoucher(false); return alert(`Esiste già un voucher con codice ${codice}.`); }
+      ({ error } = await supabase.from('voucher').insert([{ codice, ...payload, dataEmissione: dataDaCodicePregresso(codice), stato: 'emesso' }]));
+    } else {
+      // Codice, data e stato non si toccano: emesso/usato lo decide la prenotazione su cui viene scelto.
+      ({ error } = await supabase.from('voucher').update(payload).eq('codice', codice));
+    }
+    setSalvataggioVoucher(false);
+    if (error) { console.error(error); return alert("Errore durante il salvataggio del voucher."); }
+
+    const salvato = { ...form, codicePregresso: codice, dataEmissione: form.dataEmissione || dataDaCodicePregresso(codice) };
+    setForm(salvato);
+    setFormOriginale(salvato);
+    setCodiceInModifica(codice);
+    setCodiceGenerato(codice);
+    fetchVoucher();
+    alert(`Voucher pregresso ${codice} salvato: ora si può scegliere su una prenotazione.`);
+  };
+
   // Apre un voucher esistente nel form overlay (dalle righe di Gestione e Storico)
   const caricaVoucherInForm = (v) => {
     const caricato = {
@@ -366,7 +434,9 @@ function Voucher({ user }) {
       fattCF: v.fattCF || "",
       pagamenti: v.pagamenti || [],
       stato: v.stato || "incompleto",
-      dataEmissione: v.dataEmissione || ""
+      dataEmissione: v.dataEmissione || "",
+      pregresso: !!v.pregresso,
+      codicePregresso: v.pregresso ? v.codice : ""
     };
     setForm(caricato);
     setFormOriginale(caricato);
@@ -445,13 +515,20 @@ function Voucher({ user }) {
           <td style={{ padding: '12px' }}>
             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             <strong>{v.codice}</strong>
+            {v.pregresso && <span className="badge-stato pregresso" style={{ marginLeft: '6px' }}>pregresso</span>}
           </td>
           <td style={{ padding: '12px', color: '#777', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{formattaDataIT(v.dataEmissione)}</td>
           <td style={{ padding: '12px' }}>👤 {v.nominativo}</td>
-          <td style={{ padding: '12px', fontSize: '0.85rem', color: '#555' }}>{v.pacchettoNome} — €{parseFloat(v.importo).toFixed(2)}</td>
+          <td style={{ padding: '12px', fontSize: '0.85rem', color: '#555' }}>{v.pacchettoNome ? `${v.pacchettoNome} — ` : ''}€{(parseFloat(v.importo) || 0).toFixed(2)}</td>
           <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
-            <span title={`pagamento ${statoPag}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
-            €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{(parseFloat(v.importo) || 0).toFixed(2)}</span>
+            {v.pregresso ? (
+              <span style={{ color: '#94a3b8' }}>incassato col vecchio sistema</span>
+            ) : (
+              <>
+                <span title={`pagamento ${statoPag}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
+                €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{(parseFloat(v.importo) || 0).toFixed(2)}</span>
+              </>
+            )}
           </td>
         </tr>
         {espansa && (
@@ -460,10 +537,16 @@ function Voucher({ user }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
                   <div style={{ marginBottom: '2px' }}><span className={`badge-stato ${v.stato}`}>{v.stato}</span></div>
-                  <div><span style={{ color: '#94a3b8' }}>Fatturazione </span>{v.fattNome || v.fattCognome ? `${v.fattNome || ''} ${v.fattCognome || ''}`.trim() : <em style={{ color: '#999' }}>Da completare</em>}</div>
-                  {(v.fattNome || v.fattCognome) && v.fattIndirizzo && <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{v.fattIndirizzo}</div>}
-                  {(v.fattNome || v.fattCognome) && v.fattCF && <div><span style={{ color: '#94a3b8' }}>Codice fiscale </span>{v.fattCF}</div>}
-                  <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(v.pagamenti && v.pagamenti.length > 0) ? v.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${pg.data}`).join(', ') : 'nessuno'} <em style={{ color: '#94a3b8' }}>({statoPag})</em></div>
+                  {v.pregresso ? (
+                    <div><span style={{ color: '#94a3b8' }}>Pregresso </span>venduto col vecchio sistema: fatturazione e incasso sono lì</div>
+                  ) : (
+                    <>
+                      <div><span style={{ color: '#94a3b8' }}>Fatturazione </span>{v.fattNome || v.fattCognome ? `${v.fattNome || ''} ${v.fattCognome || ''}`.trim() : <em style={{ color: '#999' }}>Da completare</em>}</div>
+                      {(v.fattNome || v.fattCognome) && v.fattIndirizzo && <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{v.fattIndirizzo}</div>}
+                      {(v.fattNome || v.fattCognome) && v.fattCF && <div><span style={{ color: '#94a3b8' }}>Codice fiscale </span>{v.fattCF}</div>}
+                      <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(v.pagamenti && v.pagamenti.length > 0) ? v.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${pg.data}`).join(', ') : 'nessuno'} <em style={{ color: '#94a3b8' }}>({statoPag})</em></div>
+                    </>
+                  )}
                   {v.stato === 'usato' && (
                     <div><span style={{ color: '#94a3b8' }}>Usato su </span>{prenUso ? `${prenUso.id} — ${prenUso.nominativo || ''} (${prenUso.data || ''})` : <em style={{ color: '#999' }}>prenotazione non trovata</em>}</div>
                   )}
@@ -699,6 +782,62 @@ function Voucher({ user }) {
     );
   };
 
+  // Form ridotto del voucher pregresso: niente fatturazione, pagamenti né PDF (il buono esiste già).
+  const renderFormPregresso = () => {
+    const formModificato = formOriginale != null && JSON.stringify(form) !== JSON.stringify(formOriginale);
+    const erroreCodice = codiceInModifica ? null : erroreCodicePregresso(form.codicePregresso);
+    const mancante = {
+      codicePregresso: !!erroreCodice,
+      nominativo: !form.nominativo.trim(),
+      importo: !(parseFloat(form.importo) > 0),
+    };
+    const evidenzia = (chiave) => {
+      if (mostraErroriValidazione && mancante[chiave]) return 'campo-errore';
+      const modificato = formOriginale != null && JSON.stringify(form[chiave]) !== JSON.stringify(formOriginale[chiave]);
+      return modificato ? 'campo-modificato' : '';
+    };
+    const setF = (patch) => setForm(prev => ({ ...prev, ...patch }));
+    // Sempre dal codice, anche dopo il salvataggio: la data è scritta lì e il codice non cambia più.
+    const dataEmissione = dataDaCodicePregresso(codiceInModifica || form.codicePregresso);
+    const stileLabel = { display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' };
+
+    return (
+      <div className="schermata-inserimento no-print form-pren form-pren-compatto">
+        <h2 style={{ margin: 0 }}>{codiceInModifica ? `Voucher pregresso ${codiceInModifica}` : "Nuovo voucher pregresso"}</h2>
+        <p className="descrizione-pagina">Un buono venduto con il vecchio sistema, da registrare quando il cliente lo vuole usare. Dopo il salvataggio si può scegliere su una prenotazione e il suo valore vale come pagamento. Fatturazione e incasso restano nel vecchio sistema.</p>
+
+        <div className="sezione">
+          <h2>Dati del buono</h2>
+          <label style={stileLabel}>Codice sul buono *
+            <input type="text" value={form.codicePregresso} disabled={!!codiceInModifica} onChange={(e) => setF({ codicePregresso: e.target.value.toUpperCase() })} placeholder="Es. BR20260312" className={evidenzia('codicePregresso')} />
+          </label>
+          {form.codicePregresso && (dataEmissione
+            ? <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', color: '#777' }}>Emesso il {formattaDataIT(dataEmissione)}</p>
+            : <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', color: '#c62828' }}>⚠️ {erroreCodice}</p>
+          )}
+          <label style={{ ...stileLabel, marginTop: '12px' }}>Nominativo *
+            <input type="text" value={form.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} placeholder="Es. Mario Rossi" className={evidenzia('nominativo')} />
+          </label>
+          <label style={{ ...stileLabel, marginTop: '12px' }}>Importo € *
+            <input type="number" step="any" min="0" value={form.importo} onChange={(e) => setF({ importo: e.target.value })} className={evidenzia('importo')} />
+          </label>
+          {form.stato === 'usato' && (
+            <p className="descrizione-pagina" style={{ margin: '10px 0 0 0' }}>
+              🎟️ Voucher già usato{prenotazioneDelVoucher(codiceInModifica) ? ` sulla prenotazione ${prenotazioneDelVoucher(codiceInModifica).id}` : ''}.
+            </p>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn-preventivo btn-accent" style={{ width: 'auto', flex: '1 1 auto', marginTop: 0 }} onClick={salvaVoucherPregresso} disabled={salvataggioVoucher || !user.isAdmin} title={user.isAdmin ? undefined : "Solo un admin può modificare i voucher pregressi"}>{salvataggioVoucher ? 'Salvataggio…' : (codiceInModifica ? '💾 Salva modifiche' : '💾 Salva voucher pregresso')}</button>
+          {codiceInModifica && formModificato && (
+            <button type="button" className="btn-annulla-inline" disabled={salvataggioVoucher} onClick={() => { if (window.confirm("Annullare le modifiche non salvate?")) setForm(formOriginale); }}>Annulla modifiche</button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
       <nav className="modulo-subnav no-print subnav-segmented">
@@ -803,9 +942,14 @@ function Voucher({ user }) {
           <div className="schermata-storico no-print">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <h2 style={{ margin: 0 }}>Gestione</h2>
-              <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovoVoucherOverlay}>➕ Nuovo</button>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {user.isAdmin && (
+                  <button className="btn-outline-annulla" style={{ padding: '8px 16px', borderRadius: '4px' }} onClick={nuovoVoucherPregressoOverlay} title="Registra un buono venduto con il vecchio sistema">➕ Pregresso</button>
+                )}
+                <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovoVoucherOverlay}>➕ Nuovo</button>
+              </div>
             </div>
-            <p className="descrizione-pagina">Voucher raggruppati per stato: completa i dati di fatturazione e registra i pagamenti. Un voucher passa a <strong>usato</strong> solo quando viene selezionato su una prenotazione.</p>
+            <p className="descrizione-pagina">Voucher raggruppati per stato: completa i dati di fatturazione e registra i pagamenti. Un voucher passa a <strong>usato</strong> solo quando viene selezionato su una prenotazione.{user.isAdmin && <> I buoni del vecchio sistema si registrano con <strong>Pregresso</strong>, quando il cliente li vuole usare.</>}</p>
             <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
               <button className={`nav-btn ${gestioneTab === 'incompleti' ? 'active' : ''}`} onClick={() => setGestioneTab('incompleti')}><Icona nome="daCompletare" />Incompleti ({incompleti.length})</button>
               <button className={`nav-btn ${gestioneTab === 'emessi' ? 'active' : ''}`} onClick={() => setGestioneTab('emessi')}><Icona nome="nuovoVoucher" />Emessi ({emessi.length})</button>
@@ -851,7 +995,7 @@ function Voucher({ user }) {
         <div className="modal-preventivo-backdrop" onClick={chiudiFormVoucher}>
           <div className="modal-form-pren-box" onClick={(e) => e.stopPropagation()}>
             <button className="btn-chiudi" title="Chiudi" onClick={chiudiFormVoucher}>✕</button>
-            {renderFormVoucher(true)}
+            {form.pregresso ? renderFormPregresso() : renderFormVoucher(true)}
           </div>
         </div>
       )}
