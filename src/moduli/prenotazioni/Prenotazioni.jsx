@@ -366,6 +366,10 @@ function Prenotazioni({ user }) {
   const [filtroPrenSettimana, setFiltroPrenSettimana] = useState(""); // lunedì (ISO) della settimana mostrata, "" = nessun filtro
   const [filtroPrenStato, setFiltroPrenStato] = useState("");
   const [filtroPrenNome, setFiltroPrenNome] = useState("");
+  // Nello storico le annullate partono nascoste: di solito si cerca cosa si e' giocato o si
+  // giochera', e le disdette in mezzo sono rumore. Togliendo la spunta tornano, perche' restano
+  // comunque parte dell'archivio.
+  const [nascondiAnnullate, setNascondiAnnullate] = useState(true);
   const [calView, setCalView] = useState("mese");
   const [calDate, setCalDate] = useState(() => new Date());
   // Sotto questa soglia il calendario (mese/settimana/giorno) usa layout compatti pensati per stare
@@ -1137,7 +1141,10 @@ function Prenotazioni({ user }) {
     const mSettimana = !settimanaFiltrata || giorniEvento.some(g => g >= settimanaFiltrata.da && g <= settimanaFiltrata.a);
     const mStato = !filtroPrenStato || p.stato === filtroPrenStato;
     const mNome = (p.nominativo || "").toLowerCase().includes(filtroPrenNome.toLowerCase());
-    return mData && mSettimana && mStato && mNome;
+    // Se lo stato scelto e' proprio ANNULLATA la spunta non le nasconde: vorrebbe dire chiedere una
+    // cosa e toglierla nello stesso momento, e restare con un elenco vuoto senza capire perche'.
+    const mAnnullate = !nascondiAnnullate || filtroPrenStato === 'ANNULLATA' || p.stato !== 'ANNULLATA';
+    return mData && mSettimana && mStato && mNome && mAnnullate;
   });
 
   const selezionaPacchettoPren = (id) => {
@@ -2475,6 +2482,11 @@ function Prenotazioni({ user }) {
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
               <label>Nominativo:</label>
               <input type="text" placeholder="Nome prenotazione" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} />
+            </div>
+            <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                <input type="checkbox" checked={nascondiAnnullate} onChange={(e) => setNascondiAnnullate(e.target.checked)} /> Nascondi annullate
+              </label>
             </div>
           </div>
 
