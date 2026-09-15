@@ -1027,7 +1027,7 @@ function Prenotazioni({ user }) {
                   {p.etaMedia && <div><span style={{ color: '#94a3b8' }}>Età media </span>{p.etaMedia}</div>}
                   <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{[
                     p.voucherCodice ? `voucher ${p.voucherCodice} (€${(parseFloat(p.voucherValore) || 0).toFixed(2)})` : null,
-                    ...(p.pagamenti || []).map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${pg.data}`)
+                    ...(p.pagamenti || []).map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${formattaDataGGMMAAAA(pg.data)}`)
                   ].filter(Boolean).join(', ') || 'nessuno'}</div>
                   {p.motivoAnnullamento && <div><span style={{ color: '#94a3b8' }}>Motivo </span><em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
                   {p.note && <div><span style={{ color: '#94a3b8' }}>Note </span><em>{p.note}</em></div>}
