@@ -46,6 +46,9 @@ function Consuntivazione({ user }) {
 
   const [espansa, setEspansa] = useState(null);
   const [nuova, setNuova] = useState(FATTURA_VUOTA);
+  // La data di oggi e l'importo che resta da fatturare sono proposte, non valori confermati: si
+  // vedono chiare e in corsivo come i segnaposto, e valgono se non si scrive altro.
+  const [dataProposta, setDataProposta] = useState(true);
   const [inCorso, setInCorso] = useState(false);
   const [proposta, setProposta] = useState(null);
   const inputFile = useRef(null);
@@ -118,12 +121,16 @@ function Consuntivazione({ user }) {
   const apriRiga = (x) => {
     if (espansa === chiave(x)) { setEspansa(null); return; }
     setEspansa(chiave(x));
-    setNuova({ data: oggi, numero: '', importo: Math.max(x.dovuto - x.fatturato, 0).toFixed(2) });
+    setNuova({ data: oggi, numero: '', importo: '' });
+    setDataProposta(true);
   };
 
   const aggiungiFattura = async (x) => {
     const numero = nuova.numero.trim();
-    const importo = parseFloat(String(nuova.importo).replace(',', '.'));
+    const residuo = Math.max(x.dovuto - x.fatturato, 0);
+    const importo = String(nuova.importo).trim() === ''
+      ? Math.round(residuo * 100) / 100
+      : parseFloat(String(nuova.importo).replace(',', '.'));
     if (!nuova.data || !numero || !(importo > 0)) return alert('Servono data, numero e importo della fattura.');
     setInCorso(true);
     const { error } = await supabase.from('fatture').insert([{ tipo: x.tipo, riferimento: x.codice, data: nuova.data, numero, importo, origine: 'manuale' }]);
@@ -134,6 +141,7 @@ function Consuntivazione({ user }) {
         : `Errore nel salvataggio della fattura: ${error.message}`);
     }
     setNuova({ data: oggi, numero: '', importo: '' });
+    setDataProposta(true);
     fetchTutto();
   };
 
@@ -310,13 +318,13 @@ function Consuntivazione({ user }) {
                                   non vale per i campi numerici e da' a data e testo misure sue: senza fissarle qui le tre
                                   caselle venivano alte 49, 47 e 21 pixel, ognuna su una riga diversa. */}
                               <label style={stileEtichettaFattura}>Data fattura
-                                <input type="date" value={nuova.data} onChange={(e) => setNuova({ ...nuova, data: e.target.value })} style={stileCampoFattura} />
+                                <input type="date" value={nuova.data} onChange={(e) => { setNuova({ ...nuova, data: e.target.value }); setDataProposta(false); }} className={dataProposta ? 'valore-proposto' : undefined} title={dataProposta ? 'Proposta: la data di oggi' : undefined} style={stileCampoFattura} />
                               </label>
                               <label style={stileEtichettaFattura}>Numero
                                 <input type="text" value={nuova.numero} onChange={(e) => setNuova({ ...nuova, numero: e.target.value })} placeholder="Es. 247" style={stileCampoFattura} />
                               </label>
                               <label style={stileEtichettaFattura}>Importo lordo €
-                                <input type="number" step="0.01" min="0" value={nuova.importo} onChange={(e) => setNuova({ ...nuova, importo: e.target.value })} style={stileCampoFattura} />
+                                <input type="number" step="0.01" min="0" value={nuova.importo} onChange={(e) => setNuova({ ...nuova, importo: e.target.value })} placeholder={Math.max(x.dovuto - x.fatturato, 0).toFixed(2)} style={stileCampoFattura} />
                               </label>
                               <button type="button" className="btn-accent-inline" disabled={inCorso} onClick={() => aggiungiFattura(x)} style={{ height: '38px', padding: '0 16px', whiteSpace: 'nowrap' }}>+ Fattura</button>
                             </div>

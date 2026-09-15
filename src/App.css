@@ -972,3 +972,13 @@ input:disabled {
    ed è da riprogrammare. Il giallo dice "sospesa", non "persa". */
 .badge-stato.annullata { background-color: #fee2e2; color: #991b1b; }
 .badge-stato.posticipata { background-color: #fef9c3; color: #854d0e; }
+
+/* Valore proposto dal sistema e non ancora confermato da chi compila: stesso aspetto dei
+   segnaposto. Serve dove un segnaposto vero non si può usare, come nei campi data nativi, che
+   al posto del testo mostrano sempre gg/mm/aaaa. Gli !important battono la regola generale
+   "input" per la leggibilità su mobile, che forza il colore del testo. */
+input.valore-proposto {
+  color: #94a3b8 !important;
+  -webkit-text-fill-color: #94a3b8 !important;
+  font-style: italic;
+}
