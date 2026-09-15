@@ -147,7 +147,9 @@ const dettagliGoogleCalendar = (p, giocoNome) => {
 // Come si legge una location libera: prima cosa e', poi dove sta. "Oratorio San Luigi — Via Roma 12,
 // Bergamo". Il nome e' quello che l'operatore cerca con gli occhi arrivando e che il cliente
 // riconosce; l'indirizzo e' quello che serve per arrivarci. Uno dei due puo' mancare.
-const luogoLiberoDi = (p) => [p.locationNome, [p.locationIndirizzo, p.locationCitta].filter(Boolean).join(', ')]
+// La provincia accanto al comune: "Beregazzo con Figliaro CO" si colloca subito, un nome di
+// paese da solo spesso no.
+const luogoLiberoDi = (p) => [p.locationNome, [p.locationIndirizzo, [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ')].filter(Boolean).join(', ')]
   .map(x => (x || '').trim()).filter(Boolean).join(' — ');
 
 // Link "Aggiungi a Google Calendar" precompilato con i dati della prenotazione, sul calendario condiviso GOOGLE_CALENDAR_ID.
@@ -231,7 +233,7 @@ const COLONNE_PREN = [
   { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
   // Il valore di ordinamento viene sostituito nel componente, dove il nome del gioco è risolvibile.
   { chiave: 'pacchetto', label: 'Pacchetto · Gioco', valore: (p) => p.pacchettoNome || '' },
-  { chiave: 'location', label: 'Location', valore: (p) => p.campoNome || p.locationCitta || '' },
+  { chiave: 'location', label: 'Location', valore: (p) => p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '' },
   { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') || (p.senzaOperatori ? 'non richiesti' : '') },
   { chiave: 'importo', label: 'Pagato / Totale', valore: (p) => parseFloat(p.prezzoVendita) || 0 },
 ];
@@ -983,7 +985,7 @@ function Prenotazioni({ user }) {
             {etichettaBreveDi(p) || '—'}{p.durataOre ? ` (${p.durataOre}h)` : ''}
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>
-            {p.campoNome || p.locationCitta || '—'}
+            {p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '—'}
             {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'Campo prenotato' : 'Campo da prenotare'} style={{ marginLeft: '6px', verticalAlign: 'middle' }} />}
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#0288d1' }}>
@@ -2608,7 +2610,7 @@ function Prenotazioni({ user }) {
 
         const Chip = ({ p, riempi }) => {
           const c = coloreStato(p.stato);
-          const campoTxt = p.campoNome || p.locationCitta || '—';
+          const campoTxt = p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '—';
           const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
           const hasOp = p.operatori && p.operatori.length > 0;
           return (
@@ -2838,7 +2840,7 @@ function Prenotazioni({ user }) {
                                       <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
                                     </span>
                                   </div>
-                                  <div style={{ fontSize: '0.76rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaBreveDi(p) || '—'} - {p.campoNome || p.locationCitta || '—'}</div>
+                                  <div style={{ fontSize: '0.76rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaBreveDi(p) || '—'} - {p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '—'}</div>
                                 </div>
                               </div>
                             );
