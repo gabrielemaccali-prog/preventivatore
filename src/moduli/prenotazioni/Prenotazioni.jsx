@@ -1168,7 +1168,11 @@ function Prenotazioni({ user }) {
     XLSX.writeFile(wb, `Clienti_${toISODate(new Date())}.xlsx`);
   };
 
-  const prenotazioniFiltrate = prenotazioni.filter(p => {
+  // I filtri di Storico e Gestione sono gli stessi, e lo stato e' condiviso: chi cerca "Rossi"
+  // nello Storico e passa a Gestione continua a vedere Rossi, invece di ricominciare da capo.
+  // `ignoraNascondiAnnullate` serve alla scheda Annullate di Gestione, che con la spunta attiva
+  // resterebbe sempre vuota.
+  const passaFiltriPren = (p, { ignoraNascondiAnnullate = false } = {}) => {
     // Valgono tutti i giorni dell'evento, non solo il primo.
     const giorniEvento = giorniEventoDi(p);
     const mData = !filtroPrenData || giorniEvento.includes(filtroPrenData);
@@ -1177,9 +1181,51 @@ function Prenotazioni({ user }) {
     const mNome = (p.nominativo || "").toLowerCase().includes(filtroPrenNome.toLowerCase());
     // Se lo stato scelto e' proprio ANNULLATA la spunta non le nasconde: vorrebbe dire chiedere una
     // cosa e toglierla nello stesso momento, e restare con un elenco vuoto senza capire perche'.
-    const mAnnullate = !nascondiAnnullate || filtroPrenStato === 'ANNULLATA' || p.stato !== 'ANNULLATA';
+    const mAnnullate = ignoraNascondiAnnullate || !nascondiAnnullate || filtroPrenStato === 'ANNULLATA' || p.stato !== 'ANNULLATA';
     return mData && mSettimana && mStato && mNome && mAnnullate;
-  });
+  };
+  const prenotazioniFiltrate = prenotazioni.filter(p => passaFiltriPren(p));
+
+  const filtriPrenotazioni = () => (
+          <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
+            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
+              <label>Data:</label>
+              <input type="date" value={filtroPrenData} onChange={(e) => setFiltroPrenData(e.target.value)} />
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 250px' }}>
+              <label>Settimana:</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana precedente" onClick={() => spostaSettimana(-1)}>‹</button>
+                <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: settimanaFiltrata ? '#334155' : '#94a3b8' }}>
+                  {settimanaFiltrata ? `${formattaDataGGMMAA(settimanaFiltrata.da)} – ${formattaDataGGMMAA(settimanaFiltrata.a)}` : 'tutte'}
+                </span>
+                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana successiva" onClick={() => spostaSettimana(1)}>›</button>
+                {settimanaFiltrata
+                  ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per settimana" onClick={() => setFiltroPrenSettimana("")}>✕</button>
+                  : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana corrente" onClick={() => spostaSettimana(0)}>Oggi</button>}
+              </div>
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
+              <label>Stato:</label>
+              <select value={filtroPrenStato} onChange={(e) => setFiltroPrenStato(e.target.value)}>
+                <option value="">Tutti</option>
+                <option value="FORSE">FORSE</option>
+                <option value="CONF">CONF</option>
+                <option value="ANNULLATA">ANNULLATA</option>
+                <option value="POSTICIPATA">POSTICIPATA</option>
+              </select>
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
+              <label>Nominativo:</label>
+              <input type="text" placeholder="Nome prenotazione" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} />
+            </div>
+            <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                <input type="checkbox" checked={nascondiAnnullate} onChange={(e) => setNascondiAnnullate(e.target.checked)} /> Nascondi annullate
+              </label>
+            </div>
+          </div>
+  );
 
   const selezionaPacchettoPren = (id) => {
     const p = pacchetti.find(x => x.id === id);
@@ -2488,61 +2534,27 @@ function Prenotazioni({ user }) {
           </div>
           <p className="descrizione-pagina">Consulta, apri, cambia stato o elimina le prenotazioni.</p>
 
-          <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
-            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
-              <label>Data:</label>
-              <input type="date" value={filtroPrenData} onChange={(e) => setFiltroPrenData(e.target.value)} />
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 250px' }}>
-              <label>Settimana:</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana precedente" onClick={() => spostaSettimana(-1)}>‹</button>
-                <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: settimanaFiltrata ? '#334155' : '#94a3b8' }}>
-                  {settimanaFiltrata ? `${formattaDataGGMMAA(settimanaFiltrata.da)} – ${formattaDataGGMMAA(settimanaFiltrata.a)}` : 'tutte'}
-                </span>
-                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana successiva" onClick={() => spostaSettimana(1)}>›</button>
-                {settimanaFiltrata
-                  ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per settimana" onClick={() => setFiltroPrenSettimana("")}>✕</button>
-                  : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana corrente" onClick={() => spostaSettimana(0)}>Oggi</button>}
-              </div>
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
-              <label>Stato:</label>
-              <select value={filtroPrenStato} onChange={(e) => setFiltroPrenStato(e.target.value)}>
-                <option value="">Tutti</option>
-                <option value="FORSE">FORSE</option>
-                <option value="CONF">CONF</option>
-                <option value="ANNULLATA">ANNULLATA</option>
-                <option value="POSTICIPATA">POSTICIPATA</option>
-              </select>
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Nominativo:</label>
-              <input type="text" placeholder="Nome prenotazione" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} />
-            </div>
-            <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                <input type="checkbox" checked={nascondiAnnullate} onChange={(e) => setNascondiAnnullate(e.target.checked)} /> Nascondi annullate
-              </label>
-            </div>
-          </div>
+          {filtriPrenotazioni()}
 
           {tabellaPren(prenotazioniFiltrate, "Nessuna prenotazione trovata.")}
         </div>
       )}
       {currentView === "gestione" && puoVedere(user, 'prenotazioni', 'gestione') && (() => {
-        const inAttesaPagamento = prenotazioni.filter(p => p.stato === 'FORSE' && (!p.statoPagamento || p.statoPagamento === 'in attesa'));
-        const daConfermare = prenotazioni.filter(p => p.stato === 'FORSE' && p.statoPagamento && p.statoPagamento !== 'in attesa');
-        const partiteAttive = prenotazioni.filter(p => p.stato === 'CONF' && fineEventoDi(p) >= oggiIso);
+        // Le liste partono dalle prenotazioni che passano i filtri: i contatori sulle schede dicono
+        // quante ce ne sono fra quelle cercate, non in tutto l'archivio.
+        const base = prenotazioni.filter(p => passaFiltriPren(p));
+        const inAttesaPagamento = base.filter(p => p.stato === 'FORSE' && (!p.statoPagamento || p.statoPagamento === 'in attesa'));
+        const daConfermare = base.filter(p => p.stato === 'FORSE' && p.statoPagamento && p.statoPagamento !== 'in attesa');
+        const partiteAttive = base.filter(p => p.stato === 'CONF' && fineEventoDi(p) >= oggiIso);
         // Partite giocate ma non ancora chiuse, divise per il tipo di lavoro che resta da fare:
         // se l'anagrafica di fatturazione è a posto manca solo l'incasso, altrimenti mancano dati.
         // Le due liste sono complementari: ogni prenotazione non conclusa sta in una sola delle due.
-        const daChiudere = prenotazioni.filter(p => p.stato === 'CONF' && fineEventoDi(p) < oggiIso && !prenotazioneCompletata(p, oggiIso));
+        const daChiudere = base.filter(p => p.stato === 'CONF' && fineEventoDi(p) < oggiIso && !prenotazioneCompletata(p, oggiIso));
         const daCompletare = daChiudere.filter(p => campiFatturazioneMancanti(p).length > 0);
         const daSaldare = daChiudere.filter(p => campiFatturazioneMancanti(p).length === 0);
         // Annullate e posticipate non stanno in nessuna delle altre liste, che parlano di FORSE e
         // CONF: senza una scheda loro sparirebbero da Gestione, e sparire non e' archiviare.
-        const sospese = prenotazioni.filter(p => p.stato === 'ANNULLATA' || p.stato === 'POSTICIPATA');
+        const sospese = prenotazioni.filter(p => (p.stato === 'ANNULLATA' || p.stato === 'POSTICIPATA') && passaFiltriPren(p, { ignoraNascondiAnnullate: true }));
         const liste = { inAttesaPagamento, daConfermare, partiteAttive, daCompletare, daSaldare, sospese };
         const messaggiVuoto = {
           inAttesaPagamento: "Nessun cliente in attesa di pagamento.",
@@ -2567,6 +2579,7 @@ function Prenotazioni({ user }) {
               <button className={`nav-btn ${gestioneTab === 'daSaldare' ? 'active' : ''}`} onClick={() => setGestioneTab('daSaldare')} title="Anagrafica di fatturazione completa: manca solo l'incasso"><Icona nome="attesaPagamento" />Da saldare ({daSaldare.length})</button>
               <button className={`nav-btn ${gestioneTab === 'sospese' ? 'active' : ''}`} onClick={() => setGestioneTab('sospese')} title="Annullate senza incasso, posticipate se un acconto c'era"><Icona nome="annulla" />Annullate ({sospese.length})</button>
             </nav>
+            {filtriPrenotazioni()}
             {tabellaPren(liste[gestioneTab], messaggiVuoto[gestioneTab])}
           </div>
         );
