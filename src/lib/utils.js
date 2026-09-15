@@ -241,3 +241,15 @@ export const righeResidenza = ({ indirizzo, cap, citta, provincia } = {}) => {
     [[cap, citta].filter(Boolean).join(', '), prov].filter(Boolean).join(' '),
   ].filter(Boolean);
 };
+
+// Data per intero "GG/MM/AAAA", per gli elenchi dove l'anno a due cifre si confonde: i pagamenti
+// possono arrivare a cavallo d'anno, e "03/01/27" accanto a "28/12/26" costringe a rileggere.
+// La data pura "YYYY-MM-DD" si formatta a stringa, senza passare da Date, per non farla spostare
+// dal fuso orario. Sta qui perche' la usano prenotazioni e voucher.
+export const formattaDataGGMMAAAA = (valore) => {
+  if (!valore) return '';
+  const soloData = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(valore);
+  if (soloData) return `${soloData[3]}/${soloData[2]}/${soloData[1]}`;
+  const d = new Date(valore);
+  return isNaN(d) ? '' : d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+};

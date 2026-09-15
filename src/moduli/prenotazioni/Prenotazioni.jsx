@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
-import { validaCF, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
+import { validaCF, formattaDataGGMMAAAA, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
 import { puoVedere } from '../../lib/permessi'
 import { STATI_ESTERI, STATO_ITALIA } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
@@ -80,17 +80,6 @@ const formattaDataGGMMAA = (valore) => {
   if (soloData) return `${soloData[3]}/${soloData[2]}/${soloData[1].slice(2)}`;
   const d = new Date(valore);
   return isNaN(d) ? '' : d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' });
-};
-
-// Data per intero "GG/MM/AAAA", per gli elenchi dove l'anno a due cifre si confonde: i pagamenti
-// possono arrivare a cavallo d'anno, e "03/01/27" accanto a "28/12/26" costringe a rileggere.
-// Stessa cura della versione breve sul fuso orario: la data pura non passa da Date.
-const formattaDataGGMMAAAA = (valore) => {
-  if (!valore) return '';
-  const soloData = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(valore);
-  if (soloData) return `${soloData[3]}/${soloData[2]}/${soloData[1]}`;
-  const d = new Date(valore);
-  return isNaN(d) ? '' : d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
 // Ripulisce un numero di telefono per un link wa.me (aggiunge il prefisso 39 ai numeri italiani senza prefisso)

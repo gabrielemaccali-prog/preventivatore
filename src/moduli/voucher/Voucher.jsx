@@ -2,12 +2,18 @@ import { useState, useEffect, Fragment } from 'react'
 import html2pdf from 'html2pdf.js';
 import { supabase } from '../../lib/supabaseClient';
 import { puoVedere } from '../../lib/permessi';
-import { formattaDataIT, formattaIndirizzoPulito } from '../../lib/utils';
+import { formattaDataIT, formattaIndirizzoPulito, formattaDataGGMMAAAA } from '../../lib/utils';
 import Icona from '../../components/Icona';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
 
+// Un'email scritta male si segnala in rosso ma non blocca il salvataggio: il voucher si emette
+// lo stesso, e il contatto si corregge dopo. Vuota non e' un errore.
+const emailNonValida = (e) => !!(e || '').trim() && !/^[^s@]+@[^s@]+.[^s@]+$/.test(e.trim());
+
 const FORM_VUOTO = {
   nominativo: "", dedica: "", pacchettoId: "", pacchettoNome: "",
+  // Contatti di chi compra, che spesso non e' chi usera' il voucher: e' un regalo.
+  telefono: "", email: "",
   // Il valore del buono di norma non si stampa: è un regalo, non una ricevuta.
   importo: "", nascondiImporto: true, testoOfferta: "",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
@@ -323,6 +329,8 @@ function Voucher({ user }) {
 
     const payload = {
       nominativo: form.nominativo,
+      telefono: (form.telefono || '').trim() || null,
+      email: (form.email || '').trim() || null,
       dedica: form.dedica,
       pacchettoNome: form.pacchettoNome,
       importo: parseFloat(form.importo) || 0,
@@ -387,6 +395,8 @@ function Voucher({ user }) {
     const payload = {
       pregresso: true,
       nominativo: form.nominativo.trim(),
+      telefono: (form.telefono || '').trim() || null,
+      email: (form.email || '').trim() || null,
       importo: parseFloat(form.importo),
       statoPagamento: 'saldato'
     };
@@ -417,6 +427,8 @@ function Voucher({ user }) {
   const caricaVoucherInForm = (v) => {
     const caricato = {
       nominativo: v.nominativo || "",
+      telefono: v.telefono || "",
+      email: v.email || "",
       dedica: v.dedica || "",
       // il pacchetto è salvato per nome sul voucher: si risale all'id per riselezionarlo nella tendina
       pacchettoId: pacchetti.find(p => p.nome === v.pacchettoNome)?.id || "",
@@ -537,6 +549,9 @@ function Voucher({ user }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
                   <div style={{ marginBottom: '2px' }}><span className={`badge-stato ${v.stato}`}>{v.stato}</span></div>
+                  {(v.telefono || v.email) && (
+                    <div><span style={{ color: '#94a3b8' }}>Contatti </span>{[v.telefono, v.email].filter(Boolean).join(' · ')}</div>
+                  )}
                   {v.pregresso ? (
                     <div><span style={{ color: '#94a3b8' }}>Pregresso </span>venduto col vecchio sistema: fatturazione e incasso sono lì</div>
                   ) : (
@@ -544,7 +559,7 @@ function Voucher({ user }) {
                       <div><span style={{ color: '#94a3b8' }}>Fatturazione </span>{v.fattNome || v.fattCognome ? `${v.fattNome || ''} ${v.fattCognome || ''}`.trim() : <em style={{ color: '#999' }}>Da completare</em>}</div>
                       {(v.fattNome || v.fattCognome) && v.fattIndirizzo && <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{v.fattIndirizzo}</div>}
                       {(v.fattNome || v.fattCognome) && v.fattCF && <div><span style={{ color: '#94a3b8' }}>Codice fiscale </span>{v.fattCF}</div>}
-                      <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(v.pagamenti && v.pagamenti.length > 0) ? v.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${pg.data}`).join(', ') : 'nessuno'} <em style={{ color: '#94a3b8' }}>({statoPag})</em></div>
+                      <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(v.pagamenti && v.pagamenti.length > 0) ? v.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${formattaDataGGMMAAAA(pg.data)}`).join(', ') : 'nessuno'} <em style={{ color: '#94a3b8' }}>({statoPag})</em></div>
                     </>
                   )}
                   {v.stato === 'usato' && (
@@ -672,6 +687,14 @@ function Voucher({ user }) {
                 <input type="text" value={form.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} className={evidenzia('fattCognome')} />
               </label>
             </div>
+            <div className="date-grid" style={{ marginTop: '12px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Telefono
+                <input type="tel" value={form.telefono} onChange={(e) => setF({ telefono: e.target.value })} placeholder="Es. 333 1234567" className={evidenzia('telefono')} />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Email
+                <input type="email" value={form.email} onChange={(e) => setF({ email: e.target.value })} placeholder="Es. mario.rossi@email.it" className={evidenzia('email')} style={emailNonValida(form.email) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined} />
+              </label>
+            </div>
 
             <div style={{ margin: '12px 0' }}>
               <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '5px' }}>Cerca indirizzo di residenza</label>
@@ -732,7 +755,7 @@ function Voucher({ user }) {
                 <tbody>
                   {pagamentiForm.map((pg, i) => (
                     <tr key={i}>
-                      <td style={{ padding: '4px' }}>{pg.data}</td>
+                      <td style={{ padding: '4px' }}>{formattaDataGGMMAAAA(pg.data)}</td>
                       <td style={{ padding: '4px' }}>€{(parseFloat(pg.importo) || 0).toFixed(2)}</td>
                       <td style={{ padding: '4px' }}>{pg.nominativo || '—'}</td>
                       <td style={{ padding: '4px', textAlign: 'right' }}><button className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => rimuoviPagamento(i)}>🗑</button></td>
@@ -817,6 +840,12 @@ function Voucher({ user }) {
           )}
           <label style={{ ...stileLabel, marginTop: '12px' }}>Nominativo *
             <input type="text" value={form.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} placeholder="Es. Mario Rossi" className={evidenzia('nominativo')} />
+          </label>
+          <label style={{ ...stileLabel, marginTop: '12px' }}>Telefono
+            <input type="tel" value={form.telefono} onChange={(e) => setF({ telefono: e.target.value })} placeholder="Es. 333 1234567" className={evidenzia('telefono')} />
+          </label>
+          <label style={{ ...stileLabel, marginTop: '12px' }}>Email
+            <input type="email" value={form.email} onChange={(e) => setF({ email: e.target.value })} placeholder="Es. mario.rossi@email.it" className={evidenzia('email')} style={emailNonValida(form.email) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined} />
           </label>
           <label style={{ ...stileLabel, marginTop: '12px' }}>Importo € *
             <input type="number" step="any" min="0" value={form.importo} onChange={(e) => setF({ importo: e.target.value })} className={evidenzia('importo')} />
