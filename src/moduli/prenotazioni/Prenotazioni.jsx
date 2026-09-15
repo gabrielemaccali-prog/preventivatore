@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
-import { validaCF, campiFatturazioneMancanti, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
+import { validaCF, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
 import { puoVedere } from '../../lib/permessi'
 import { STATI_ESTERI, STATO_ITALIA } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
@@ -957,12 +957,16 @@ function Prenotazioni({ user }) {
     const coloreStatoRiga = coloreStato(p.stato).bd;
     const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
     const espansa = rigaEspansaId === p.id;
-    const completata = prenotazioneCompletata(p, oggiIso);
+    // Verde vuol dire "da parte nostra non manca niente": confermata, giocata, con i dati per
+    // fatturare. Il saldo non c'entra -- una partita che aspetta solo il pagamento sta in "Da
+    // saldare", non in "Da completare", e non c'e' niente da sistemare nella scheda.
+    const completata = p.stato === 'CONF' && fineEventoDi(p) < oggiIso && fatturazioneCompletaDi(p);
+    const saldata = p.statoPagamento === 'saldato';
     return (
       <Fragment key={p.id}>
         <tr
           onClick={() => setRigaEspansaId(prev => prev === p.id ? null : p.id)}
-          title={completata ? 'Prenotazione completata: confermata, saldata e con fatturazione completa' : undefined}
+          title={completata ? (saldata ? 'Prenotazione completata: confermata, saldata e con fatturazione completa' : 'Dati completi: manca solo il saldo') : undefined}
           style={{ cursor: 'pointer', background: completata ? '#dcfce7' : (espansa ? '#f8fafc' : undefined), borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}
         >
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#64748b', whiteSpace: 'nowrap' }}>
@@ -1585,7 +1589,6 @@ function Prenotazioni({ user }) {
         const daChiudere = !!codicePrenInModifica && formPren.stato === 'CONF' && !!formPren.data && formPren.data < oggiIso;
         const mancanzeCompletamento = daChiudere
           ? [
-              ...(statoPag !== 'saldato' ? [`saldo di €${Math.max(prezzoVendita - totalePagato, 0).toFixed(2)}`] : []),
               ...campiFatturazioneMancanti(formPren)
             ]
           : [];
