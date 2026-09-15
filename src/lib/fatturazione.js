@@ -198,8 +198,11 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
     let pool = trovati.some(c => c.perChiave) ? trovati.filter(c => c.perChiave) : trovati;
     // Il centro di ricavo VOUCHER dice già di che cosa si tratta.
     if (/VOUCHER/i.test(f.centro) && pool.some(c => c.tipo === 'voucher')) pool = pool.filter(c => c.tipo === 'voucher');
-    // L'importo atteso è quanto resta da fatturare; se è già tutto fatturato, il totale.
-    const atteso = (c) => { const resto = c.dovuto - (fatturatoPer[`${c.tipo}|${c.riferimento}`] || 0); return resto > TOLLERANZA ? resto : c.dovuto; };
+    // Quanto resta da fatturare conta anche le fatture gia' proposte come certe in questo stesso
+    // file: due righe dell'export sulla stessa prenotazione non devono sembrare entrambe sicure.
+    const resto = (c) => c.dovuto - (fatturatoPer[`${c.tipo}|${c.riferimento}`] || 0);
+    // L'importo atteso e' quanto resta da fatturare; se e' gia' tutto fatturato, il totale.
+    const atteso = (c) => (resto(c) > TOLLERANZA ? resto(c) : c.dovuto);
     const stessoImporto = pool.filter(c => Math.abs(atteso(c) - f.importo) < 0.02);
     const piuVicino = (lista) => lista.slice().sort((a, b) => giorniFra(a.data, f.data) - giorniFra(b.data, f.data))[0];
     const scelto = piuVicino(stessoImporto.length ? stessoImporto : pool);
@@ -208,9 +211,18 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
     const importoOk = Math.abs(atteso(scelto) - f.importo) < 0.02;
     if (!importoOk) motivi.push(`importo diverso: fattura €${f.importo.toFixed(2)}, da fatturare €${atteso(scelto).toFixed(2)}`);
     if (pool.length > 1) motivi.push(`${pool.length} candidati`);
+    // Una prenotazione gia' fatturata per intero non prende mai da sola un'altra fattura: se c'e'
+    // gia' una fattura scritta a mano con un numero diverso, sarebbe la stessa contata due volte.
+    const giaCoperta = resto(scelto) <= TOLLERANZA;
+    if (giaCoperta) motivi.push('già fatturata per intero');
+    const certa = scelto.perChiave && importoOk && stessoImporto.length === 1 && !giaCoperta;
+    if (certa) {
+      const k = `${scelto.tipo}|${scelto.riferimento}`;
+      fatturatoPer[k] = (fatturatoPer[k] || 0) + f.importo;
+    }
     proposte.push({
       fattura: f, tipo: scelto.tipo, riferimento: scelto.riferimento, nome: scelto.nome, dataRiferimento: scelto.data,
-      daFatturare: atteso(scelto), certa: scelto.perChiave && importoOk && stessoImporto.length === 1, motivi,
+      daFatturare: atteso(scelto), certa, motivi,
     });
   }
   return { proposte, senzaAbbinamento, giaPresenti };
