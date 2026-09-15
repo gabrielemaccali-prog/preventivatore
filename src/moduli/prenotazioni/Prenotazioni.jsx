@@ -1839,7 +1839,7 @@ function Prenotazioni({ user }) {
               ) : (
                 <>
                   <RicercaIndirizzo onSelect={(a) => setF({ locationIndirizzo: a.indirizzo, locationCap: a.cap, locationCitta: a.citta, locationProvincia: siglaProvincia(a.provincia) })} />
-                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', marginTop: '10px' }}>Nominativo location
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', marginTop: '10px' }}>Descrizione location
                     <input type="text" placeholder="Es. Oratorio San Luigi, Stadio Comunale" value={formPren.locationNome || ''} onChange={(e) => setF({ locationNome: e.target.value })} style={evidenzia('locationNome')} />
                   </label>
                   <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '10px' }}>
