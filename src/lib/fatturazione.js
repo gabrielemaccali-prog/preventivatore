@@ -158,10 +158,19 @@ const giorniFra = (a, b) => Math.abs((Date.parse(b) - Date.parse(a)) / 86400000)
 // occhi chiusi. Negli altri casi -- riconosciuta solo per nome, importo diverso, più candidati --
 // la proposta c'è ma va confermata. Le fatture già registrate (stesso numero e data) si saltano,
 // così l'export si può ricaricare senza doppioni.
+//
+// Le prenotazioni e i voucher già fatturati per intero l'import non li tocca proprio: una fattura
+// che finirebbe su di loro si conta a parte e si ignora. Se una fattura era stata scritta a mano con
+// un numero diverso da quello di Fatture in Cloud, sarebbe la stessa contata due volte.
 export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture = [], valoreVoucher = () => 0 } = {}) => {
   const giaRegistrate = new Set(fatture.map(f => `${f.numero}|${f.data}`));
   const fatturatoPer = {};
   fatture.forEach(f => { const k = `${f.tipo}|${f.riferimento}`; fatturatoPer[k] = (fatturatoPer[k] || 0) + (parseFloat(f.importo) || 0); });
+
+  // Quanto resta da fatturare conta anche le fatture proposte come certe in questo stesso file:
+  // due righe dell'export sulla stessa prenotazione non devono coprirla due volte.
+  const resto = (c) => c.dovuto - (fatturatoPer[`${c.tipo}|${c.riferimento}`] || 0);
+  const atteso = (c) => resto(c);
 
   const chiaviPren = (p) => [p.fattCF, p.pIva, p.cfAzienda, p.pIvaCF].map(norm).filter(Boolean);
   const nomiPren = (p) => (p.fattTipo === 'azienda'
@@ -186,6 +195,7 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
   const proposte = [];
   let senzaAbbinamento = 0;
   let giaPresenti = 0;
+  let suGiaFatturate = 0;
   for (const f of lette) {
     if (giaRegistrate.has(`${f.numero}|${f.data}`)) { giaPresenti++; continue; }
     const chiavi = [norm(f.cf), norm(f.piva)].filter(Boolean);
@@ -194,15 +204,13 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
       .map(c => ({ ...c, perChiave: c.chiavi.some(k => chiavi.includes(k)), perNome: !!nome && c.nomi.includes(nome) }))
       .filter(c => c.perChiave || c.perNome);
     if (trovati.length === 0) { senzaAbbinamento++; continue; }
+    const daFatturare = trovati.filter(c => resto(c) > TOLLERANZA);
+    if (daFatturare.length === 0) { suGiaFatturate++; continue; }
 
-    let pool = trovati.some(c => c.perChiave) ? trovati.filter(c => c.perChiave) : trovati;
+    let pool = daFatturare.some(c => c.perChiave) ? daFatturare.filter(c => c.perChiave) : daFatturare;
     // Il centro di ricavo VOUCHER dice già di che cosa si tratta.
     if (/VOUCHER/i.test(f.centro) && pool.some(c => c.tipo === 'voucher')) pool = pool.filter(c => c.tipo === 'voucher');
-    // Quanto resta da fatturare conta anche le fatture gia' proposte come certe in questo stesso
-    // file: due righe dell'export sulla stessa prenotazione non devono sembrare entrambe sicure.
-    const resto = (c) => c.dovuto - (fatturatoPer[`${c.tipo}|${c.riferimento}`] || 0);
-    // L'importo atteso e' quanto resta da fatturare; se e' gia' tutto fatturato, il totale.
-    const atteso = (c) => (resto(c) > TOLLERANZA ? resto(c) : c.dovuto);
+    // L'importo atteso e' quanto resta da fatturare.
     const stessoImporto = pool.filter(c => Math.abs(atteso(c) - f.importo) < 0.02);
     const piuVicino = (lista) => lista.slice().sort((a, b) => giorniFra(a.data, f.data) - giorniFra(b.data, f.data))[0];
     const scelto = piuVicino(stessoImporto.length ? stessoImporto : pool);
@@ -211,11 +219,7 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
     const importoOk = Math.abs(atteso(scelto) - f.importo) < 0.02;
     if (!importoOk) motivi.push(`importo diverso: fattura €${f.importo.toFixed(2)}, da fatturare €${atteso(scelto).toFixed(2)}`);
     if (pool.length > 1) motivi.push(`${pool.length} candidati`);
-    // Una prenotazione gia' fatturata per intero non prende mai da sola un'altra fattura: se c'e'
-    // gia' una fattura scritta a mano con un numero diverso, sarebbe la stessa contata due volte.
-    const giaCoperta = resto(scelto) <= TOLLERANZA;
-    if (giaCoperta) motivi.push('già fatturata per intero');
-    const certa = scelto.perChiave && importoOk && stessoImporto.length === 1 && !giaCoperta;
+    const certa = scelto.perChiave && importoOk && stessoImporto.length === 1;
     if (certa) {
       const k = `${scelto.tipo}|${scelto.riferimento}`;
       fatturatoPer[k] = (fatturatoPer[k] || 0) + f.importo;
@@ -225,5 +229,5 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
       daFatturare: atteso(scelto), certa, motivi,
     });
   }
-  return { proposte, senzaAbbinamento, giaPresenti };
+  return { proposte, senzaAbbinamento, giaPresenti, suGiaFatturate };
 };

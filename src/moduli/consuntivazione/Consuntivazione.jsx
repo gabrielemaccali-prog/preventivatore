@@ -358,6 +358,7 @@ function Consuntivazione({ user }) {
             <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', color: '#475569' }}>
               Lette <strong>{proposta.lette}</strong> fatture: <strong>{proposta.proposte.filter(p => p.certa).length}</strong> abbinate con certezza,{' '}
               <strong>{proposta.proposte.filter(p => !p.certa).length}</strong> da verificare, <strong>{proposta.giaPresenti}</strong> già registrate,{' '}
+              <strong>{proposta.suGiaFatturate}</strong> su prenotazioni o voucher già fatturati per intero (non si toccano),{' '}
               <strong>{proposta.senzaAbbinamento}</strong> senza nessuna prenotazione o voucher (pregresso: si ignorano).
               Quelle certe sono già spuntate; le altre spuntale solo se l'abbinamento è giusto.
             </p>
