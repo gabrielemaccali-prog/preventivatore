@@ -82,6 +82,17 @@ const formattaDataGGMMAA = (valore) => {
   return isNaN(d) ? '' : d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' });
 };
 
+// Data per intero "GG/MM/AAAA", per gli elenchi dove l'anno a due cifre si confonde: i pagamenti
+// possono arrivare a cavallo d'anno, e "03/01/27" accanto a "28/12/26" costringe a rileggere.
+// Stessa cura della versione breve sul fuso orario: la data pura non passa da Date.
+const formattaDataGGMMAAAA = (valore) => {
+  if (!valore) return '';
+  const soloData = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(valore);
+  if (soloData) return `${soloData[3]}/${soloData[2]}/${soloData[1]}`;
+  const d = new Date(valore);
+  return isNaN(d) ? '' : d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+
 // Ripulisce un numero di telefono per un link wa.me (aggiunge il prefisso 39 ai numeri italiani senza prefisso)
 const numeroWhatsApp = (telefono) => {
   const cifre = (telefono || '').replace(/\D/g, '');
@@ -2151,7 +2162,7 @@ function Prenotazioni({ user }) {
                     )}
                     {formPren.pagamenti.map((pg, i) => (
                       <tr key={i}>
-                        <td style={{ padding: '4px' }}>{pg.data}</td>
+                        <td style={{ padding: '4px' }}>{formattaDataGGMMAAAA(pg.data)}</td>
                         <td style={{ padding: '4px' }}>€{(parseFloat(pg.importo) || 0).toFixed(2)}</td>
                         <td style={{ padding: '4px' }}>{pg.nominativo || '—'}</td>
                         <td style={{ padding: '4px', textAlign: 'right' }}><button className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => rimuoviPagamento(i)}>🗑</button></td>
