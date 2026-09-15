@@ -20,6 +20,8 @@ const euro = (n) => `€${(Number(n) || 0).toFixed(2)}`;
 const ETICHETTA_STATO = { daFatturare: 'Da fatturare', parziale: 'Fatturata in parte', fatturata: 'Fatturata', nonDovuta: 'Coperta da voucher' };
 const COLORE_STATO = { daFatturare: '#b91c1c', parziale: '#b45309', fatturata: '#0284c7', nonDovuta: '#64748b' };
 const FATTURA_VUOTA = { data: '', numero: '', importo: '' };
+const stileEtichettaFattura = { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem', fontWeight: 600, color: '#334155' };
+const stileCampoFattura = { width: '100%', height: '38px', boxSizing: 'border-box', padding: '6px 10px', margin: 0, fontSize: '0.9rem', borderRadius: '6px' };
 
 // L'intestatario come comparirà in fattura: ragione sociale, oppure cognome e nome, oppure il
 // nominativo se l'anagrafica non c'è ancora.
@@ -303,17 +305,20 @@ function Consuntivazione({ user }) {
                               </table>
                             )}
                           {!schemaMancante && (
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                              <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.8rem', fontWeight: 600 }}>Data fattura
-                                <input type="date" value={nuova.data} onChange={(e) => setNuova({ ...nuova, data: e.target.value })} />
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(120px, 170px)) auto', gap: '10px', alignItems: 'end', maxWidth: '640px' }}>
+                              {/* Data, numero e importo sulla stessa riga e alla stessa altezza. Lo stile generale degli input
+                                  non vale per i campi numerici e da' a data e testo misure sue: senza fissarle qui le tre
+                                  caselle venivano alte 49, 47 e 21 pixel, ognuna su una riga diversa. */}
+                              <label style={stileEtichettaFattura}>Data fattura
+                                <input type="date" value={nuova.data} onChange={(e) => setNuova({ ...nuova, data: e.target.value })} style={stileCampoFattura} />
                               </label>
-                              <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.8rem', fontWeight: 600 }}>Numero
-                                <input type="text" value={nuova.numero} onChange={(e) => setNuova({ ...nuova, numero: e.target.value })} placeholder="Es. 247" style={{ width: '110px' }} />
+                              <label style={stileEtichettaFattura}>Numero
+                                <input type="text" value={nuova.numero} onChange={(e) => setNuova({ ...nuova, numero: e.target.value })} placeholder="Es. 247" style={stileCampoFattura} />
                               </label>
-                              <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.8rem', fontWeight: 600 }}>Importo lordo €
-                                <input type="number" step="0.01" min="0" value={nuova.importo} onChange={(e) => setNuova({ ...nuova, importo: e.target.value })} style={{ width: '120px' }} />
+                              <label style={stileEtichettaFattura}>Importo lordo €
+                                <input type="number" step="0.01" min="0" value={nuova.importo} onChange={(e) => setNuova({ ...nuova, importo: e.target.value })} style={stileCampoFattura} />
                               </label>
-                              <button type="button" className="btn-accent-inline" disabled={inCorso} onClick={() => aggiungiFattura(x)} style={{ padding: '8px 14px' }}>+ Fattura</button>
+                              <button type="button" className="btn-accent-inline" disabled={inCorso} onClick={() => aggiungiFattura(x)} style={{ height: '38px', padding: '0 16px', whiteSpace: 'nowrap' }}>+ Fattura</button>
                             </div>
                           )}
                         </td>
