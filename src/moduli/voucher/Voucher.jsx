@@ -5,6 +5,7 @@ import { puoVedere } from '../../lib/permessi';
 import { formattaDataIT, formattaIndirizzoPulito, formattaDataGGMMAAAA } from '../../lib/utils';
 import Icona from '../../components/Icona';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
+import { sommaImporti, statoFatturazione, daFatturareVoucher } from '../../lib/fatturazione';
 
 // Un'email scritta male si segnala in rosso ma non blocca il salvataggio: il voucher si emette
 // lo stesso, e il contatto si corregge dopo. Vuota non e' un errore.
@@ -112,7 +113,7 @@ const COLONNE_VOUCHER = [
   { chiave: 'data', label: 'Data', valore: (v) => v.dataEmissione || '' },
   { chiave: 'intestatario', label: 'Intestatario', valore: (v) => v.nominativo || '' },
   { chiave: 'pacchetto', label: 'Pacchetto', valore: (v) => v.pacchettoNome || '' },
-  { chiave: 'importo', label: 'Pagato / Totale', valore: (v) => parseFloat(v.importo) || 0 },
+  { chiave: 'importo', label: 'Pagato / Totale / FT', valore: (v) => parseFloat(v.importo) || 0 },
 ];
 const VALORI_ORDINAMENTO_VOUCHER = Object.fromEntries(COLONNE_VOUCHER.map(c => [c.chiave, c.valore]));
 
@@ -126,6 +127,16 @@ function Voucher({ user }) {
   // --- DATI ---
   const [pacchetti, setPacchetti] = useState([]);
   const [voucherSalvati, setVoucherSalvati] = useState([]);
+  // Le fatture servono solo alla spunta blu FT: si leggono a parte, e di nuovo ogni volta che
+  // l'elenco dei voucher si ricarica, cosi' una fattura aggiunta in Consuntivazione si vede qui.
+  const [fattureVoucher, setFattureVoucher] = useState([]);
+  useEffect(() => {
+    supabase.from('fatture').select('riferimento, importo').eq('tipo', 'voucher')
+      .then(({ data }) => setFattureVoucher(data || []));
+  }, [voucherSalvati]);
+  const fatturatoPerIntero = (v) => statoFatturazione(
+    daFatturareVoucher(v), sommaImporti(fattureVoucher.filter(f => f.riferimento === String(v.codice)))
+  ) === 'fatturata';
   const [prenotazioni, setPrenotazioni] = useState([]); // serve solo per sapere dove è stato usato un voucher
   const [nuovoPagamento, setNuovoPagamento] = useState({ importo: "", data: "", nominativo: "" });
 
@@ -539,6 +550,7 @@ function Voucher({ user }) {
               <>
                 <span title={`pagamento ${statoPag}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
                 €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{(parseFloat(v.importo) || 0).toFixed(2)}</span>
+                {fatturatoPerIntero(v) && <span title="Fatturato per intero" style={{ color: '#0284c7', fontWeight: 'bold', marginLeft: '6px' }}>✓</span>}
               </>
             )}
           </td>

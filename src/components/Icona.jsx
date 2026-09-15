@@ -18,6 +18,7 @@ const REGISTRO_ICONE = {
   costiricavi: IconReportMoney,
   disponibilita: IconUserCheck,
   compensi: IconCoins,
+  consuntivazione: IconFileInvoice,
   impostazioni: IconSettings,
 
   configuratore: IconSettings,

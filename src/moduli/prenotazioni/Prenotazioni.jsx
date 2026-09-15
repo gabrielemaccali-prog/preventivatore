@@ -2,6 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
 import { validaCF, formattaDataGGMMAAAA, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
+import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
 import { STATI_ESTERI, STATO_ITALIA } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
@@ -235,7 +236,7 @@ const COLONNE_PREN = [
   { chiave: 'pacchetto', label: 'Pacchetto · Gioco', valore: (p) => p.pacchettoNome || '' },
   { chiave: 'location', label: 'Location', valore: (p) => p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '' },
   { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') || (p.senzaOperatori ? 'non richiesti' : '') },
-  { chiave: 'importo', label: 'Pagato / Totale', valore: (p) => parseFloat(p.prezzoVendita) || 0 },
+  { chiave: 'importo', label: 'Pagato / Totale / FT', valore: (p) => parseFloat(p.prezzoVendita) || 0 },
 ];
 const VALORI_ORDINAMENTO_PREN = Object.fromEntries(COLONNE_PREN.map(c => [c.chiave, c.valore]));
 
@@ -366,6 +367,13 @@ function Prenotazioni({ user }) {
 
   // --- NUOVA PRENOTAZIONE ---
   const [prenotazioni, setPrenotazioni] = useState([]);
+  // Le fatture servono solo alla spunta blu FT: si leggono a parte, e di nuovo ogni volta che
+  // l'elenco si ricarica, cosi' una fattura aggiunta in Consuntivazione si vede qui.
+  const [fatturePren, setFatturePren] = useState([]);
+  useEffect(() => {
+    supabase.from('fatture').select('riferimento, importo').eq('tipo', 'prenotazione')
+      .then(({ data }) => setFatturePren(data || []));
+  }, [prenotazioni]);
   const [preventivi, setPreventivi] = useState([]);
   const [voucher, setVoucher] = useState([]);
   const [formPren, setFormPren] = useState(PREN_VUOTA);
@@ -951,6 +959,13 @@ function Prenotazioni({ user }) {
 
   // Riga di tabella condivisa da Storico e dalle sotto-schede di Gestione.
   // Il clic sulla riga espande un pannello con i dettagli (telefono, email, note, pagamenti) e sblocca le azioni (apri, conferma, calendario, elimina).
+  // Spunta blu solo quando le fatture coprono tutto quello che c'e' da fatturare: il prezzo meno
+  // l'eventuale voucher, che e' gia' stato fatturato quando e' stato venduto.
+  const fatturataPerIntero = (p) => statoFatturazione(
+    daFatturarePrenotazione(p, p.voucherValore),
+    sommaImporti(fatturePren.filter(f => f.riferimento === String(p.id)))
+  ) === 'fatturata';
+
   const rigaTabellaPren = (p) => {
     const totPagato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
     const totale = parseFloat(p.prezzoVendita) || 0;
@@ -1000,6 +1015,7 @@ function Prenotazioni({ user }) {
           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
             <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
             €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{totale.toFixed(2)}</span>
+            {fatturataPerIntero(p) && <span title="Fatturata per intero" style={{ color: '#0284c7', fontWeight: 'bold', marginLeft: '6px' }}>✓</span>}
           </td>
         </tr>
         {espansa && (
@@ -1103,58 +1119,6 @@ function Prenotazioni({ user }) {
   const spostaSettimana = (delta) => {
     const partenza = filtroPrenSettimana ? dataOraLocale(filtroPrenSettimana) : new Date();
     setFiltroPrenSettimana(toISODate(addGiorni(inizioSettimana(partenza), delta * 7)));
-  };
-
-  // Export "lista clienti" nel formato del gestionale di fatturazione: intestazioni identiche a
-  // quelle del file di riferimento, nello stesso ordine. Le colonne che lì risultano sempre vuote
-  // (Codice interno, Note, PEC, IBAN, FAX...) non vengono esportate, e nemmeno Referente; quelle sempre uguali restano
-  // costanti. A differenza dello storico qui la riga è il cliente, non la prenotazione.
-  const COSTANTI_CLIENTE = { 'Termini di pagamento': '0 giorni', 'Sconto predefinito': 0, "Lettera d'intento abilitata": 'No' };
-
-  const clienteDaPrenotazione = (p) => {
-    const azienda = p.fattTipo === 'azienda';
-    const mai = (v) => (v || '').trim().toUpperCase(); // il gestionale tiene l'anagrafica in maiuscolo
-    return {
-      'Denominazione': azienda
-        ? (mai(p.ragioneSociale) || mai(p.nominativo))
-        : (mai([p.fattCognome, p.fattNome].filter(Boolean).join(' ')) || mai(p.nominativo)),
-      'Indirizzo': mai(azienda ? p.aziIndirizzo : p.fattIndirizzo),
-      'Comune': mai(azienda ? p.aziCitta : p.fattCitta),
-      'CAP': (azienda ? p.aziCap : p.fattCap) || '',
-      'Provincia': siglaProvincia(azienda ? p.aziProvincia : p.fattProvincia),
-      'Paese': azienda ? STATO_ITALIA : (p.fattStato || STATO_ITALIA),
-      'Indirizzo e-mail': (p.email || '').trim(),
-      'Telefono': (p.telefono || '').trim(),
-      'P.IVA/TAX ID': azienda ? (p.pIva || '') : '',
-      'Codice Fiscale': mai(azienda ? p.cfAzienda : p.fattCF),
-      // Sui privati la colonna resta vuota anche se sulla prenotazione l'SDI è salvato come
-      // "0000000": importando i sette zeri il gestionale li riduce a uno solo, mentre col campo
-      // vuoto assegna da sé il codice giusto.
-      'Codice SDI': azienda ? (p.sdi || '') : '',
-      ...COSTANTI_CLIENTE,
-    };
-  };
-
-  const esportaClientiPren = () => {
-    if (prenotazioniFiltrate.length === 0) return alert("Nessuna prenotazione da esportare.");
-    // Chi ha prenotato più volte esce una riga sola: si tiene la versione più completa
-    // dell'anagrafica (a parità, la prenotazione più recente), così l'export non perde dati.
-    const compilati = (riga) => Object.values(riga).filter(v => v !== '' && v != null).length;
-    const perCliente = new Map();
-    [...prenotazioniFiltrate]
-      .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
-      .forEach(p => {
-        const riga = clienteDaPrenotazione(p);
-        const chiave = (riga['P.IVA/TAX ID'] || riga['Codice Fiscale'] || riga['Denominazione'] || '').toUpperCase();
-        if (!chiave) return; // prenotazione senza nemmeno un nominativo: non è un cliente
-        const gia = perCliente.get(chiave);
-        if (!gia || compilati(riga) > compilati(gia)) perCliente.set(chiave, riga);
-      });
-    const righe = [...perCliente.values()].sort((a, b) => a['Denominazione'].localeCompare(b['Denominazione'], 'it'));
-    const ws = XLSX.utils.json_to_sheet(righe);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Export");
-    XLSX.writeFile(wb, `Clienti_${toISODate(new Date())}.xlsx`);
   };
 
   // I filtri di Storico e Gestione sono gli stessi, e lo stato e' condiviso: chi cerca "Rossi"
@@ -2518,7 +2482,6 @@ function Prenotazioni({ user }) {
             <h2 style={{ margin: 0 }}>Storico Prenotazioni</h2>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button onClick={esportaExcelPren} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
-              <button onClick={esportaClientiPren} title="Anagrafica dei clienti delle prenotazioni filtrate, nel formato del gestionale di fatturazione" style={{ padding: '8px 16px', backgroundColor: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>👥 Esporta clienti</button>
             </div>
           </div>
           <p className="descrizione-pagina">Consulta, apri, cambia stato o elimina le prenotazioni.</p>
