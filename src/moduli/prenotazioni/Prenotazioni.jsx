@@ -325,7 +325,7 @@ function Prenotazioni({ user }) {
   const [currentView, setCurrentView] = useState(primaSchedaPren); // config | gestione | calendario
   const primaSottoschedaConfigPren = ['pacchetti', 'campi'].find(s => puoVedere(user, 'prenotazioni', 'config', s)) || 'pacchetti';
   const [configTab, setConfigTab] = useState(primaSottoschedaConfigPren);  // pacchetti | campi
-  const [gestioneTab, setGestioneTab] = useState("inAttesaPagamento"); // inAttesaPagamento | daConfermare | partiteAttive | daCompletare | daSaldare
+  const [gestioneTab, setGestioneTab] = useState("inAttesaPagamento"); // inAttesaPagamento | daAnnullarePosticipare | daConfermare | partiteAttive | daCompletare | daSaldare
   const [showFormGestione, setShowFormGestione] = useState(false); // form Nuova/Modifica prenotazione come overlay, richiamato da Gestione
   const [mostraErroriValidazione, setMostraErroriValidazione] = useState(false); // evidenzia di rosso i campi obbligatori mancanti, solo dopo un tentativo di salvataggio
 
@@ -1170,9 +1170,7 @@ function Prenotazioni({ user }) {
 
   // I filtri di Storico e Gestione sono gli stessi, e lo stato e' condiviso: chi cerca "Rossi"
   // nello Storico e passa a Gestione continua a vedere Rossi, invece di ricominciare da capo.
-  // `ignoraNascondiAnnullate` serve alla scheda Annullate di Gestione, che con la spunta attiva
-  // resterebbe sempre vuota.
-  const passaFiltriPren = (p, { ignoraNascondiAnnullate = false } = {}) => {
+  const passaFiltriPren = (p) => {
     // Valgono tutti i giorni dell'evento, non solo il primo.
     const giorniEvento = giorniEventoDi(p);
     const mData = !filtroPrenData || giorniEvento.includes(filtroPrenData);
@@ -1181,12 +1179,12 @@ function Prenotazioni({ user }) {
     const mNome = (p.nominativo || "").toLowerCase().includes(filtroPrenNome.toLowerCase());
     // Se lo stato scelto e' proprio ANNULLATA la spunta non le nasconde: vorrebbe dire chiedere una
     // cosa e toglierla nello stesso momento, e restare con un elenco vuoto senza capire perche'.
-    const mAnnullate = ignoraNascondiAnnullate || !nascondiAnnullate || filtroPrenStato === 'ANNULLATA' || p.stato !== 'ANNULLATA';
+    const mAnnullate = !nascondiAnnullate || filtroPrenStato === 'ANNULLATA' || p.stato !== 'ANNULLATA';
     return mData && mSettimana && mStato && mNome && mAnnullate;
   };
   const prenotazioniFiltrate = prenotazioni.filter(p => passaFiltriPren(p));
 
-  const filtriPrenotazioni = () => (
+  const filtriPrenotazioni = ({ conNascondiAnnullate = true } = {}) => (
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
             <div className="filtro-group" style={{ flex: '1 1 160px' }}>
               <label>Data:</label>
@@ -1219,11 +1217,13 @@ function Prenotazioni({ user }) {
               <label>Nominativo:</label>
               <input type="text" placeholder="Nome prenotazione" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} />
             </div>
+            {conNascondiAnnullate && (
             <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 <input type="checkbox" checked={nascondiAnnullate} onChange={(e) => setNascondiAnnullate(e.target.checked)} /> Nascondi annullate
               </label>
             </div>
+            )}
           </div>
   );
 
@@ -2543,8 +2543,13 @@ function Prenotazioni({ user }) {
         // Le liste partono dalle prenotazioni che passano i filtri: i contatori sulle schede dicono
         // quante ce ne sono fra quelle cercate, non in tutto l'archivio.
         const base = prenotazioni.filter(p => passaFiltriPren(p));
-        const inAttesaPagamento = base.filter(p => p.stato === 'FORSE' && (!p.statoPagamento || p.statoPagamento === 'in attesa'));
-        const daConfermare = base.filter(p => p.stato === 'FORSE' && p.statoPagamento && p.statoPagamento !== 'in attesa');
+        // Una FORSE con la data gia' passata non aspetta piu' un pagamento ne' una conferma: la
+        // partita non c'e' stata, e va chiusa -- annullata, o posticipata se c'era un acconto. Esce
+        // dalle due liste delle FORSE e sta in una sua, cosi' non si mescola con quelle ancora vive.
+        const daAnnullarePosticipare = base.filter(p => p.stato === 'FORSE' && fineEventoDi(p) < oggiIso);
+        const forseVive = base.filter(p => p.stato === 'FORSE' && fineEventoDi(p) >= oggiIso);
+        const inAttesaPagamento = forseVive.filter(p => !p.statoPagamento || p.statoPagamento === 'in attesa');
+        const daConfermare = forseVive.filter(p => p.statoPagamento && p.statoPagamento !== 'in attesa');
         const partiteAttive = base.filter(p => p.stato === 'CONF' && fineEventoDi(p) >= oggiIso);
         // Partite giocate ma non ancora chiuse, divise per il tipo di lavoro che resta da fare:
         // se l'anagrafica di fatturazione è a posto manca solo l'incasso, altrimenti mancano dati.
@@ -2552,17 +2557,16 @@ function Prenotazioni({ user }) {
         const daChiudere = base.filter(p => p.stato === 'CONF' && fineEventoDi(p) < oggiIso && !prenotazioneCompletata(p, oggiIso));
         const daCompletare = daChiudere.filter(p => campiFatturazioneMancanti(p).length > 0);
         const daSaldare = daChiudere.filter(p => campiFatturazioneMancanti(p).length === 0);
-        // Annullate e posticipate non stanno in nessuna delle altre liste, che parlano di FORSE e
-        // CONF: senza una scheda loro sparirebbero da Gestione, e sparire non e' archiviare.
-        const sospese = prenotazioni.filter(p => (p.stato === 'ANNULLATA' || p.stato === 'POSTICIPATA') && passaFiltriPren(p, { ignoraNascondiAnnullate: true }));
-        const liste = { inAttesaPagamento, daConfermare, partiteAttive, daCompletare, daSaldare, sospese };
+        // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
+        // partita annullata non ce n'e'. Si trovano nello Storico.
+        const liste = { inAttesaPagamento, daAnnullarePosticipare, daConfermare, partiteAttive, daCompletare, daSaldare };
         const messaggiVuoto = {
           inAttesaPagamento: "Nessun cliente in attesa di pagamento.",
           daConfermare: "Nessun cliente pagato in attesa di conferma.",
           partiteAttive: "Nessuna partita confermata in programma.",
           daCompletare: "Nessuna prenotazione con dati da completare.",
           daSaldare: "Nessuna prenotazione in attesa del saldo.",
-          sospese: "Nessuna prenotazione annullata o posticipata.",
+          daAnnullarePosticipare: "Nessuna prenotazione in forse con la data già passata.",
         };
         return (
           <div className="schermata-storico no-print">
@@ -2570,17 +2574,17 @@ function Prenotazioni({ user }) {
               <h2 style={{ margin: 0 }}>Gestione</h2>
               <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovaPrenotazioneOverlay}>➕ Nuovo</button>
             </div>
-            <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento o completamento dati. Una partita già giocata sta in "Da completare" se mancano dati di fatturazione, in "Da saldare" se resta solo da incassare.</p>
+            <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento, chiusura di quelle rimaste in forse o completamento dati. Una partita già giocata sta in "Da completare" se mancano dati di fatturazione, in "Da saldare" se resta solo da incassare.</p>
             <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
               <button className={`nav-btn ${gestioneTab === 'inAttesaPagamento' ? 'active' : ''}`} onClick={() => setGestioneTab('inAttesaPagamento')}><Icona nome="attesaPagamento" />In attesa di pagamento ({inAttesaPagamento.length})</button>
+              <button className={`nav-btn ${gestioneTab === 'daAnnullarePosticipare' ? 'active' : ''}`} onClick={() => setGestioneTab('daAnnullarePosticipare')} title="In forse con la data già passata: da annullare, o da posticipare se c'è un acconto"><Icona nome="annulla" />Da annullare o posticipare ({daAnnullarePosticipare.length})</button>
               <button className={`nav-btn ${gestioneTab === 'daConfermare' ? 'active' : ''}`} onClick={() => setGestioneTab('daConfermare')}><Icona nome="daConfermare" />Da confermare ({daConfermare.length})</button>
               <button className={`nav-btn ${gestioneTab === 'partiteAttive' ? 'active' : ''}`} onClick={() => setGestioneTab('partiteAttive')}><Icona nome="partiteAttive" />Partite attive ({partiteAttive.length})</button>
               <button className={`nav-btn ${gestioneTab === 'daCompletare' ? 'active' : ''}`} onClick={() => setGestioneTab('daCompletare')} title="Mancano dati di fatturazione (e forse anche il saldo)"><Icona nome="daCompletare" />Da completare ({daCompletare.length})</button>
               <button className={`nav-btn ${gestioneTab === 'daSaldare' ? 'active' : ''}`} onClick={() => setGestioneTab('daSaldare')} title="Anagrafica di fatturazione completa: manca solo l'incasso"><Icona nome="attesaPagamento" />Da saldare ({daSaldare.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'sospese' ? 'active' : ''}`} onClick={() => setGestioneTab('sospese')} title="Annullate senza incasso, posticipate se un acconto c'era"><Icona nome="annulla" />Annullate ({sospese.length})</button>
             </nav>
-            {filtriPrenotazioni()}
-            {tabellaPren(liste[gestioneTab], messaggiVuoto[gestioneTab])}
+            {filtriPrenotazioni({ conNascondiAnnullate: false })}
+            {tabellaPren(liste[gestioneTab] || [], messaggiVuoto[gestioneTab] || '')}
           </div>
         );
       })()}
