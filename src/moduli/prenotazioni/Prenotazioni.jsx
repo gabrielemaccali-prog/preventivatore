@@ -1003,6 +1003,9 @@ function Prenotazioni({ user }) {
             <td colSpan={7} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
+                  {/* Lo stato in testa, come nel dettaglio dei preventivi: aprendo una riga e' la prima
+                      cosa che si vuole sapere, prima di chi e' il cliente. */}
+                  <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${(p.stato || '').toLowerCase()}`}>{p.stato || '—'}</span></div>
                   <div><span style={{ color: '#94a3b8' }}>Telefono </span>{p.telefono || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Email </span>{p.email || '—'}</div>
                   {p.tipoRinfresco && <div><span style={{ color: '#94a3b8' }}>Rinfresco </span>{p.tipoRinfresco}{p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} pers` : ''}</div>}
