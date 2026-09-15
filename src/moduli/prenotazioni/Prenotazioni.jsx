@@ -2559,15 +2559,23 @@ function Prenotazioni({ user }) {
         const daSaldare = daChiudere.filter(p => campiFatturazioneMancanti(p).length === 0);
         // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
         // partita annullata non ce n'e'. Si trovano nello Storico.
-        const liste = { inAttesaPagamento, daAnnullarePosticipare, daConfermare, partiteAttive, daCompletare, daSaldare };
-        const messaggiVuoto = {
-          inAttesaPagamento: "Nessun cliente in attesa di pagamento.",
-          daConfermare: "Nessun cliente pagato in attesa di conferma.",
-          partiteAttive: "Nessuna partita confermata in programma.",
-          daCompletare: "Nessuna prenotazione con dati da completare.",
-          daSaldare: "Nessuna prenotazione in attesa del saldo.",
-          daAnnullarePosticipare: "Nessuna prenotazione in forse con la data già passata.",
-        };
+        // Le schede in ordine, ognuna con la sua lista. Si mostrano solo quelle che hanno qualcosa:
+        // Gestione e' il lavoro da fare, e una scheda con zero prenotazioni non chiede niente ma
+        // occupa posto e costringe a leggerla per scoprirlo.
+        const schede = [
+          { chiave: 'inAttesaPagamento', etichetta: 'In attesa di pagamento', icona: 'attesaPagamento', lista: inAttesaPagamento },
+          { chiave: 'daAnnullarePosticipare', etichetta: 'Da annullare o posticipare', icona: 'annulla', lista: daAnnullarePosticipare, titolo: "In forse con la data già passata: da annullare, o da posticipare se c'è un acconto" },
+          { chiave: 'daConfermare', etichetta: 'Da confermare', icona: 'daConfermare', lista: daConfermare },
+          { chiave: 'partiteAttive', etichetta: 'Partite attive', icona: 'partiteAttive', lista: partiteAttive },
+          { chiave: 'daCompletare', etichetta: 'Da completare', icona: 'daCompletare', lista: daCompletare, titolo: 'Mancano dati di fatturazione (e forse anche il saldo)' },
+          { chiave: 'daSaldare', etichetta: 'Da saldare', icona: 'attesaPagamento', lista: daSaldare, titolo: "Anagrafica di fatturazione completa: manca solo l'incasso" },
+        ];
+        const visibili = schede.filter(sc => sc.lista.length > 0);
+        // Se la scheda scelta si e' svuotata -- l'ultima prenotazione e' stata confermata, o un filtro
+        // la esclude -- si passa alla prima che ha ancora qualcosa, invece di restare su una lista vuota
+        // che nel menu non c'e' piu'.
+        const attiva = visibili.find(sc => sc.chiave === gestioneTab) || visibili[0];
+        const filtriAttivi = !!(filtroPrenData || filtroPrenSettimana || filtroPrenStato || filtroPrenNome);
         return (
           <div className="schermata-storico no-print">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -2575,16 +2583,19 @@ function Prenotazioni({ user }) {
               <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovaPrenotazioneOverlay}>➕ Nuovo</button>
             </div>
             <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento, chiusura di quelle rimaste in forse o completamento dati. Una partita già giocata sta in "Da completare" se mancano dati di fatturazione, in "Da saldare" se resta solo da incassare.</p>
-            <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
-              <button className={`nav-btn ${gestioneTab === 'inAttesaPagamento' ? 'active' : ''}`} onClick={() => setGestioneTab('inAttesaPagamento')}><Icona nome="attesaPagamento" />In attesa di pagamento ({inAttesaPagamento.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'daAnnullarePosticipare' ? 'active' : ''}`} onClick={() => setGestioneTab('daAnnullarePosticipare')} title="In forse con la data già passata: da annullare, o da posticipare se c'è un acconto"><Icona nome="annulla" />Da annullare o posticipare ({daAnnullarePosticipare.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'daConfermare' ? 'active' : ''}`} onClick={() => setGestioneTab('daConfermare')}><Icona nome="daConfermare" />Da confermare ({daConfermare.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'partiteAttive' ? 'active' : ''}`} onClick={() => setGestioneTab('partiteAttive')}><Icona nome="partiteAttive" />Partite attive ({partiteAttive.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'daCompletare' ? 'active' : ''}`} onClick={() => setGestioneTab('daCompletare')} title="Mancano dati di fatturazione (e forse anche il saldo)"><Icona nome="daCompletare" />Da completare ({daCompletare.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'daSaldare' ? 'active' : ''}`} onClick={() => setGestioneTab('daSaldare')} title="Anagrafica di fatturazione completa: manca solo l'incasso"><Icona nome="attesaPagamento" />Da saldare ({daSaldare.length})</button>
-            </nav>
+            {visibili.length > 0 && (
+              <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
+                {visibili.map(sc => (
+                  <button key={sc.chiave} className={`nav-btn ${attiva?.chiave === sc.chiave ? 'active' : ''}`} onClick={() => setGestioneTab(sc.chiave)} title={sc.titolo}>
+                    <Icona nome={sc.icona} />{sc.etichetta} ({sc.lista.length})
+                  </button>
+                ))}
+              </nav>
+            )}
             {filtriPrenotazioni({ conNascondiAnnullate: false })}
-            {tabellaPren(liste[gestioneTab] || [], messaggiVuoto[gestioneTab] || '')}
+            {attiva
+              ? tabellaPren(attiva.lista, '')
+              : <p style={{ color: '#666', padding: '20px 0' }}>{filtriAttivi ? 'Nessuna attività fra le prenotazioni filtrate.' : 'Nessuna attività da fare: tutto in ordine.'}</p>}
           </div>
         );
       })()}
