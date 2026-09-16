@@ -6,6 +6,7 @@ import { fineEventoDi, fatturazioneCompletaDi, etichettaPartita, etichettaGiochi
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { preventiviPerOperatore, lordizza } from '../compensi/calcolo'
+import { risolutoreSedi } from '../../lib/fornitori'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell
@@ -168,7 +169,8 @@ function CostiRicavi({ user }) {
   // si dicono tutte e due invece di sceglierne una.
   const statoPratica = (p) => {
     const manca = [];
-    if (p.statoPagamento !== 'saldato') manca.push('da saldare');
+    // Una partita commissionata da un fornitore non si incassa: si compensa nella sua consuntivazione.
+    if (p.statoPagamento !== 'saldato' && p.statoPagamento !== 'compensazione') manca.push('da saldare');
     if (!fatturazioneCompletaDi(p)) manca.push('da completare');
     if (manca.length === 0) return 'Completata';
     return manca.join(' e ').replace(/^./, c => c.toUpperCase());
@@ -220,60 +222,19 @@ function CostiRicavi({ user }) {
     return totale;
   }, [opPeriodi, prenotazioni, opVoci, parametriCompensi]);
 
-  // Una partita giocata su un nostro campo parte per forza dalla nostra sede: i pacchetti da
-  // campo si vendono con la nostra attrezzatura, non ne esistono con quella di un fornitore.
-  // Quindi dove il dettaglio non dice la sede -- e su una prenotazione vecchia non la dice --
-  // ma c'è un campo, la sede è la nostra. Senza campo resta non indicata, che è la verità.
-  const sedePropria = useMemo(() => sedi.find(s => s.bfm)?.nome || '', [sedi]);
-
-  // Da quale sede e' partito il gioco di una prenotazione che non ha il dettaglio. Non e' una
-  // resa: la risposta esiste quasi sempre, basta seguire gli id.
-  //
-  //   1. se la partita e' stata giocata su un nostro campo, il gioco e' partito da casa nostra:
-  //      i pacchetti da campo si vendono con la nostra attrezzatura, non con quella di un altro;
-  //   2. se c'e' un preventivo collegato, la sede sta nelle sue righe -- non scritta, ma
-  //      raggiungibile: riga di offerta -> riga di listino -> sede. Vale quando tutte le righe
-  //      partono dalla stessa, che e' il caso di un noleggio da un fornitore solo;
-  //   3. se il gioco esiste a listino presso la nostra sede, e' nostro. E' il caso dei noleggi
-  //      senza preventivo, che l'app permette solo sui giochi nostri proprio perche' non c'e'
-  //      nessun fornitore da pagare.
-  //
-  // Resta "Non indicata" solo cio' che davvero non si sa.
-  const sedeDelGonfiabile = useMemo(() => {
-    const nomeSede = Object.fromEntries(sedi.map(s => [s.id, s.nome]));
-    return Object.fromEntries(listino.map(g => [g.id, nomeSede[g.locationId]]).filter(([, n]) => !!n));
-  }, [listino, sedi]);
-
-  const sedeDelPreventivo = useMemo(() => {
-    const per = {};
-    preventivi.forEach(pv => {
-      const trovate = [...new Set((pv.gonfiabili || []).map(g => sedeDelGonfiabile[g.gonfiabileId]).filter(Boolean))];
-      if (trovate.length === 1) per[pv.codice] = trovate[0];
-    });
-    return per;
-  }, [preventivi, sedeDelGonfiabile]);
-
-  const sedeDiRipiego = useCallback((p) => {
-    if (p.campoId && sedePropria) return sedePropria;
-    const dalPreventivo = p.preventivoCollegato ? sedeDelPreventivo[p.preventivoCollegato] : null;
-    if (dalPreventivo) return dalPreventivo;
-    if (p.giocoId != null && giochiNostri.has(p.giocoId) && sedePropria) return sedePropria;
-    return 'Non indicata';
-  }, [sedePropria, sedeDelPreventivo, giochiNostri]);
-  const nostra = useCallback((sede) => !!sedePropria && String(sede || '') === String(sedePropria), [sedePropria]);
+  // Da quale sede e' partito il gioco di una prenotazione, e quanto costa ogni fornitore. La regola
+  // sta in lib/fornitori perche' la usa anche la consuntivazione dei fornitori: le due pagine
+  // devono attribuire lo stesso costo alla stessa sede, o chi paga e chi guarda il margine
+  // leggerebbero due cifre diverse sulla stessa partita.
+  const risolutore = useMemo(() => risolutoreSedi({ sedi, listino, preventivi }), [sedi, listino, preventivi]);
+  const { sedeDiRipiego, nostra } = risolutore;
 
   // Il costo ereditato di una partita, contato come lo conta la scheda "Per gioco": la logistica
   // di un gioco che parte da una nostra sede non e' un costo. Il prezzo a listino serve a
   // calcolare la vendita, e l'uscita vera e' il rimborso all'operatore, che arriva dal compenso.
   // Contarla qui e non di la' faceva dire alle due schede due margini diversi sulla stessa
   // prenotazione -- e chi apre un modulo di costi non deve scegliere a quale delle due credere.
-  const ereditatoDi = (p) => {
-    const voci = Array.isArray(p.voci) ? p.voci.filter(Boolean) : [];
-    if (voci.length > 0) {
-      return voci.reduce((t, v) => t + (nostra(v.sede || sedeDiRipiego(p)) ? 0 : (parseFloat(v.costo) || 0)), 0);
-    }
-    return nostra(sedeDiRipiego(p)) ? 0 : nettoEreditato(p);
-  };
+  const ereditatoDi = (p) => Object.values(risolutore.costiPerSede(p)).reduce((t, c) => t + c.costo, 0);
   const costoDirettoDi = (p) => nettoCampo(p) + nettoRinf(p) + ereditatoDi(p);
 
   // ====================== TABELLA (dettaglio partite, filtri e export) ======================

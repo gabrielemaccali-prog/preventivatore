@@ -8,11 +8,12 @@ import {
   sommaImporti, statoFatturazione, daFatturarePrenotazione, daFatturareVoucher,
   righeClientiExport, leggiExportFatture, abbinaFatture,
 } from '../../lib/fatturazione'
+import Controparti from './Controparti'
 
 // ============================================================
 // Consuntivazione: quello che è davvero successo, dopo il preventivo.
-// Per ora c'è la scheda Fatture -- i ricavi fatturati di prenotazioni e voucher. Qui dentro
-// arriveranno anche compensi, campi e servizi.
+// Tre schede: Fatture, i ricavi fatturati di prenotazioni e voucher; Fornitori e Campi, i costi
+// pagati a chi ci noleggia i giochi e ai centri sportivi. Qui dentro arriveranno anche i servizi.
 // ============================================================
 
 const oggiIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -28,9 +29,16 @@ const stileCampoFattura = { width: '100%', height: '38px', boxSizing: 'border-bo
 const intestatarioPren = (p) => (p.fattTipo === 'azienda'
   ? (p.ragioneSociale || p.nominativo)
   : ([p.fattCognome, p.fattNome].filter(Boolean).join(' ') || p.nominativo)) || '—';
+const SCHEDE = [
+  { id: 'fatture', label: 'Fatture', icona: 'fatture' },
+  { id: 'fornitori', label: 'Fornitori', icona: 'fornitori' },
+  { id: 'campi', label: 'Campi', icona: 'campi' },
+];
+
 const intestatarioVoucher = (v) => [v.fattCognome, v.fattNome].filter(Boolean).join(' ') || v.nominativo || '—';
 
 function Consuntivazione({ user }) {
+  const [scheda, setScheda] = useState('fatture');
   const [prenotazioni, setPrenotazioni] = useState([]);
   const [voucher, setVoucher] = useState([]);
   const [fatture, setFatture] = useState([]);
@@ -78,9 +86,12 @@ function Consuntivazione({ user }) {
   }, [fatture]);
 
   // Tutto ciò che si può fatturare: le prenotazioni confermate e i voucher venduti con l'app.
+  // Una partita commissionata da un fornitore o da un campo no: non si fattura, si compensa nella
+  // sua scheda di consuntivazione.
+  const fatturabili = useMemo(() => prenotazioni.filter(p => p.stato === 'CONF' && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
   const voci = useMemo(() => {
     const valore = (codice) => parseFloat(voucherPerCodice[String(codice)]?.importo) || 0;
-    const daPrenotazioni = prenotazioni.filter(p => p.stato === 'CONF').map(p => {
+    const daPrenotazioni = fatturabili.map(p => {
       const lista = fatturePer[`prenotazione|${p.id}`] || [];
       const dovuto = daFatturarePrenotazione(p, p.voucherCodice ? valore(p.voucherCodice) : 0);
       const fatturato = sommaImporti(lista);
@@ -103,7 +114,7 @@ function Consuntivazione({ user }) {
       };
     });
     return [...daPrenotazioni, ...daVoucher].sort((a, b) => String(b.data).localeCompare(String(a.data)));
-  }, [prenotazioni, voucher, fatturePer, voucherPerCodice]);
+  }, [fatturabili, voucher, fatturePer, voucherPerCodice]);
 
   const visibili = voci.filter(x => {
     if (filtroTipo && x.tipo !== filtroTipo) return false;
@@ -160,7 +171,7 @@ function Consuntivazione({ user }) {
     try {
       const lette = leggiExportFatture(XLSX, await file.arrayBuffer());
       const esito = abbinaFatture(lette, {
-        prenotazioni: prenotazioni.filter(p => p.stato === 'CONF'),
+        prenotazioni: fatturabili,
         voucher: voucher.filter(v => !v.pregresso),
         fatture,
         valoreVoucher,
@@ -197,16 +208,30 @@ function Consuntivazione({ user }) {
     XLSX.writeFile(wb, `Clienti_${oggi}.xlsx`);
   };
 
-  if (!puoVedere(user, 'consuntivazione', 'fatture')) return null;
+  const schedeVisibili = SCHEDE.filter(s => puoVedere(user, 'consuntivazione', s.id));
+  if (schedeVisibili.length === 0) return null;
+  // Chi non vede la scheda scelta per ultima atterra sulla prima che vede.
+  const attiva = (schedeVisibili.find(s => s.id === scheda) || schedeVisibili[0]).id;
 
   const cella = { padding: '8px 10px' };
   const destra = { ...cella, textAlign: 'right', whiteSpace: 'nowrap' };
 
+  const barraSchede = (
+    <nav className="modulo-subnav no-print subnav-segmented">
+      {schedeVisibili.map(s => (
+        <button key={s.id} className={`nav-btn ${attiva === s.id ? 'active' : ''}`} onClick={() => setScheda(s.id)}><Icona nome={s.icona} />{s.label}</button>
+      ))}
+    </nav>
+  );
+
+  // Fornitori e campi sono la stessa pagina con due controparti diverse. La chiave la rimonta
+  // passando dall'una all'altra, così filtri e righe aperte non si trascinano da una scheda all'altra.
+  if (attiva === 'fornitori') return <>{barraSchede}<Controparti key="fornitore" tipo="fornitore" /></>;
+  if (attiva === 'campi') return <>{barraSchede}<Controparti key="campo" tipo="campo" /></>;
+
   return (
     <>
-      <nav className="modulo-subnav no-print subnav-segmented">
-        <button className="nav-btn active"><Icona nome="consuntivazione" />Fatture</button>
-      </nav>
+      {barraSchede}
 
       <div className="schermata-storico no-print">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>

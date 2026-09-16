@@ -20,6 +20,8 @@ export const SCHEDE_REGISTRY = {
   consuntivazione: {
     schede: [
       { id: 'fatture', label: 'Fatture' },
+      { id: 'fornitori', label: 'Fornitori' },
+      { id: 'campi', label: 'Campi' },
     ],
   },
   catalogo: {

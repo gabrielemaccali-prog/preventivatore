@@ -27,7 +27,7 @@ const PREN_VUOTA = {
   nominativo: "", email: "", telefono: "",
   campoId: "", campoPrenotato: false, locationNome: "", locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
   operatoriIds: [], senzaOperatori: false, sconto: "0", prezzoManuale: "", giochiAltri: [],
-  tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "",
+  tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "", clienteSedeId: "", clienteCampoId: "",
   preventivoCollegato: "", ereditaCosti: false, costoEreditato: "", voci: [],
   fattTipo: "privato",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
@@ -218,12 +218,18 @@ const validaEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e || "").trim());
 // Stato pagamento derivato dai versamenti rispetto al prezzo di vendita.
 // `valoreVoucher` è il valore dell'eventuale voucher usato sulla prenotazione: vale come pagamento
 // pur non essendo una riga della tabella pagamenti.
-const statoPagamentoDi = (pagamenti, prezzoVendita, valoreVoucher = 0) => {
+// Una partita commissionata da un fornitore non si incassa affatto: si compensa con quello che gli
+// dobbiamo, nella consuntivazione dei fornitori. Il suo stato è "compensazione" fin dall'inizio,
+// così non finisce fra quelle in attesa di pagamento né fra quelle da saldare.
+const statoPagamentoDi = (pagamenti, prezzoVendita, valoreVoucher = 0, clienteFornitore = null) => {
+  if (clienteFornitore) return 'compensazione';
   const tot = (pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0) + (parseFloat(valoreVoucher) || 0);
   if (tot <= 0) return 'in attesa';
   if (tot + 0.001 >= (prezzoVendita || 0)) return 'saldato';
   return 'acconto';
 };
+// Il colore del pallino del pagamento, uguale in tabella, calendario e riepiloghi.
+const colorePagamento = (stato) => ({ saldato: '#16a34a', acconto: '#ca8a04', compensazione: '#7c3aed' }[stato] || '#dc2626');
 
 // Colonne della tabella prenotazioni (Storico e Gestione): etichetta mostrata e valore su cui ordinare.
 // Le colonne composite ordinano sul dato che conta: la data evento tiene conto anche dell'ora, e
@@ -406,7 +412,8 @@ function Prenotazioni({ user }) {
     return () => mq.removeEventListener('change', onChange);
   }, []);
   const [prenSelezionata, setPrenSelezionata] = useState(null);
-  const [testoConferma, setTestoConferma] = useState(null); // testo mail di conferma pronto da copiare
+  const [prenConferma, setPrenConferma] = useState(null); // prenotazione di cui preparare la mail di conferma da copiare
+  const [confermaInglese, setConfermaInglese] = useState(false);
   const [confermaCopiata, setConfermaCopiata] = useState(false);
   const [riepilogoData, setRiepilogoData] = useState(() => new Date());
   const [riepilogoTab, setRiepilogoTab] = useState("operatori"); // operatori | campi
@@ -433,7 +440,8 @@ function Prenotazioni({ user }) {
       // Solo per risalire dal "gonfiabileId" scritto in una riga di preventivo al gioco a
       // catalogo: serve a proporre il gioco quando si collega un preventivo a un noleggio.
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
-      supabase.from('sedi').select('id, bfm'),
+      // Il nome serve a scegliere il fornitore che ci commissiona una partita.
+      supabase.from('sedi').select('id, nome, bfm').order('nome'),
       // Servizi accessori: si aggiungono a mano al dettaglio di un noleggio.
       supabase.from('extras').select('*').order('nome'),
     ]);
@@ -505,6 +513,22 @@ function Prenotazioni({ user }) {
   // è nostro ma non lo vendi come pacchetto da campo, e deve restare noleggiabile lo stesso.
   const idSediProprie = new Set(sedi.filter(s => s.bfm).map(s => s.id));
   const giochiPropri = new Set(listino.filter(l => idSediProprie.has(l.locationId)).map(l => l.giocoId));
+
+  // --- IL CLIENTE CHE È ANCHE FORNITORE ---
+  // Le sedi che possono commissionarci una partita: tutte tranne le nostre.
+  const sediFornitori = sedi.filter(s => !s.bfm);
+  // La colonna nasce con sql/consuntivazione_fornitori.sql. Finché manca la scelta non si mostra e
+  // non si salva: scriverla su una tabella che non la conosce farebbe fallire ogni salvataggio.
+  const colonnaClienteSede = prenotazioni.length > 0 && 'clienteSedeId' in prenotazioni[0];
+  // Anche un campo può commissionarci una partita. La colonna nasce con sql/consuntivazione_campi.sql.
+  const colonnaClienteCampo = prenotazioni.length > 0 && 'clienteCampoId' in prenotazioni[0];
+  // Chi ha commissionato la partita, detto in un valore solo per la tendina: "sede:id" o "campo:id".
+  const clienteFornitoreDi = (f) => (f.clienteSedeId ? `sede:${f.clienteSedeId}` : f.clienteCampoId ? `campo:${f.clienteCampoId}` : '');
+  const clienteFornitoreDa = (valore) => {
+    const [tipo, ...resto] = String(valore || '').split(':');
+    const id = resto.join(':');
+    return { clienteSedeId: tipo === 'sede' ? id : '', clienteCampoId: tipo === 'campo' ? id : '' };
+  };
 
   // L'etichetta corta, per tabelle e calendario. I giochi nostri si vedono sempre uno per uno --
   // dicono cosa esce dal magazzino -- mentre quelli di un fornitore, se sono piu' d'uno,
@@ -691,7 +715,7 @@ function Prenotazioni({ user }) {
       operatoriIds: (p.operatori || []).map(o => o.id), senzaOperatori: !!p.senzaOperatori,
       sconto: String(p.sconto ?? "0"), prezzoManuale,
       tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
-      pagamenti: p.pagamenti || [], voucherCodice: p.voucherCodice || "",
+      pagamenti: p.pagamenti || [], voucherCodice: p.voucherCodice || "", clienteSedeId: p.clienteSedeId || "", clienteCampoId: p.clienteCampoId || "",
       preventivoCollegato: p.preventivoCollegato || "", ereditaCosti: !!p.ereditaCosti, costoEreditato: p.costoEreditato ?? "", voci: p.voci || [],
       // I giochi oltre il primo si rileggono dalle righe: e' li' che erano stati scritti.
       giochiAltri: (p.voci || []).map(v => v.giocoId).filter(Boolean).slice(1),
@@ -729,19 +753,32 @@ function Prenotazioni({ user }) {
   const LINK_INVITO_FESTA = 'https://bubblefootballmi.it/doc/InvitoFestaBubbleFootball.zip';
 
   // Costruisce la mail di conferma (testo semplice + HTML con tabella, come nel formato usato oggi via Gmail)
-  const costruisciConferma = (p) => {
+  // In inglese per i clienti stranieri: stessa struttura, cambiano solo le frasi. I nomi di
+  // pacchetti, giochi e centri sportivi restano quelli che sono.
+  const costruisciConferma = (p, inglese = false) => {
+    const t = (it, en) => (inglese ? en : it);
+    const formattaData = (dataStr) => {
+      if (!inglese) return formattaDataEstesaIT(dataStr);
+      if (!dataStr) return '';
+      return new Date(dataStr).toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+    };
+    const ore = (n) => (n === 1 ? t('ora', 'hour') : t('ore', 'hours'));
     const campoInfo = p.campoId ? campi.find(c => c.id === p.campoId) : null;
     const locationTxt = campoInfo
       ? [campoInfo.nomeCompleto || campoInfo.nome, [campoInfo.indirizzo, campoInfo.citta].filter(Boolean).join(', ')].filter(Boolean).join(' ')
       : (p.campoNome || luogoLiberoDi(p) || '—');
-    const oraTxt = p.oraInizio ? `${p.oraInizio}${p.oraFine ? ` - ${p.oraFine}` : ''}${p.durataOre ? `   (${p.durataOre} ${p.durataOre === 1 ? 'ora' : 'ore'})` : ''}` : '—';
+    const oraTxt = p.oraInizio ? `${p.oraInizio}${p.oraFine ? ` - ${p.oraFine}` : ''}${p.durataOre ? `   (${p.durataOre} ${ore(p.durataOre)})` : ''}` : '—';
     const prezzoVendita = parseFloat(p.prezzoVendita) || 0;
     const totalePagatoP = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
     const residuo = Math.max(prezzoVendita - totalePagatoP, 0);
     const statoPag = p.statoPagamento || statoPagamentoDi(p.pagamenti, prezzoVendita, p.voucherValore);
-    const rigaPagamentoLabel = statoPag === 'saldato' ? 'Pagamento:' : 'Modalità di pagamento:';
+    const rigaPagamentoLabel = statoPag === 'saldato' || statoPag === 'compensazione' ? t('Pagamento:', 'Payment:') : t('Modalità di pagamento:', 'Payment method:');
     const rigaPagamentoValore = statoPag === 'saldato'
-      ? 'SALDATO ✅'
+      ? t('SALDATO ✅', 'PAID IN FULL ✅')
+      : statoPag === 'compensazione'
+      ? t('In compensazione', 'Offset against our account')
+      : inglese
+      ? `Bank transfer — Amount due: €${residuo.toFixed(2)}${totalePagatoP > 0 ? ` (already paid €${totalePagatoP.toFixed(2)} of €${prezzoVendita.toFixed(2)})` : ''}`
       : `Con Bonifico — Importo da versare: €${residuo.toFixed(2)}${totalePagatoP > 0 ? ` (già versato €${totalePagatoP.toFixed(2)} su €${prezzoVendita.toFixed(2)})` : ''}`;
 
     // --- LA PARTITA CON MERENDA O APERITIVO ---
@@ -754,44 +791,72 @@ function Prenotazioni({ user }) {
     const nomiGiochi = giochiDi(p);
     // Quante persone sono lo dice già la riga della tariffa, e ripeterlo nel titolo non aggiunge
     // niente: il titolo dice cosa si gioca e cosa si mangia.
+    const rinfrescoTxt = !inglese ? rinfresco
+      : eMerenda ? 'Snack'
+      : /aperitivo/i.test(rinfresco) ? 'Aperitif'
+      : rinfresco;
     const titolo = conRinfresco
-      ? `${nomiGiochi.join(' + ').toUpperCase()} + ${rinfresco.toUpperCase()}`
+      ? `${nomiGiochi.join(' + ').toUpperCase()} + ${rinfrescoTxt.toUpperCase()}`
       : (etichettaDi(p) || '');
 
     const fineGioco = p.oraFine || (p.oraInizio && p.durataOre ? oraPiuOre(p.oraInizio, p.durataOre) : '');
-    const oraRinfresco = fineGioco ? `${fineGioco} - ${oraPiuOre(fineGioco, 1)}   (1 ora)` : '—';
+    const oraRinfresco = fineGioco ? `${fineGioco} - ${oraPiuOre(fineGioco, 1)}   (1 ${ore(1)})` : '—';
+    const etichettaOrarioRinfresco = t(`Orario ${rinfresco}:`, `${rinfrescoTxt} time:`);
     // Quando c'e' il rinfresco l'orario di gioco si scrive per intero, dall'inizio alla fine:
     // serve a far vedere che la merenda comincia dove il gioco finisce, e a non far pensare che
     // si sovrappongano. Un pacchetto a durata fissa l'ora di fine non la salva, quindi si calcola.
     const oraGiocoTxt = (conRinfresco && p.oraInizio && fineGioco)
-      ? `${p.oraInizio} - ${fineGioco}${p.durataOre ? `   (${p.durataOre} ${p.durataOre === 1 ? 'ora' : 'ore'})` : ''}`
+      ? `${p.oraInizio} - ${fineGioco}${p.durataOre ? `   (${p.durataOre} ${ore(p.durataOre)})` : ''}`
       : oraTxt;
-    const etichettaOrario = conRinfresco ? 'Orario gioco:' : 'Orario:';
-    const tariffaLabel = conRinfresco ? 'Tariffa:' : 'Tariffa di gioco:';
+    const etichettaOrario = conRinfresco ? t('Orario gioco:', 'Game time:') : t('Orario:', 'Time:');
+    const tariffaLabel = conRinfresco ? t('Tariffa:', 'Rate:') : t('Tariffa di gioco:', 'Game rate:');
     const tariffaValore = conRinfresco
-      ? `${p.pacchettoNome || ''} €${prezzoVendita.toFixed(2)}${p.numeroPartecipanti ? ` (fino a ${p.numeroPartecipanti} partecipanti)` : ''}`.trim()
+      ? `${p.pacchettoNome || ''} €${prezzoVendita.toFixed(2)}${p.numeroPartecipanti ? t(` (fino a ${p.numeroPartecipanti} partecipanti)`, ` (up to ${p.numeroPartecipanti} participants)`) : ''}`.trim()
       : `${prezzoVendita.toFixed(2)}€`;
 
     // Stoviglie e sorveglianza dei bambini riguardano la merenda, non l'aperitivo.
     const disdetta = conRinfresco
-      ? "In caso di disdetta o qualsiasi altra modifica, ti chiedo gentilmente di comunicarlo entro 48 ore dalla data dell'evento."
-      : "In caso di disdetta ti chiedo gentilmente di comunicarlo entro 30 ore dalla data dell'evento.";
-    const notaTorta = 'Servizio Torta (stoviglie e bicchieri) NON INCLUSO.';
-    const notaBambini = 'I bambini dovranno rimanere all’interno dello spazio merenda loro assegnato; i genitori o accompagnatori restano responsabili della loro sorveglianza per tutta la durata della permanenza. Non è consentito circolare liberamente all’interno del centro sportivo senza supervisione: eventuali danni a cose o persone, o a sé stessi, in aree non autorizzate saranno sotto la responsabilità dei genitori o accompagnatori.';
+      ? t("In caso di disdetta o qualsiasi altra modifica, ti chiedo gentilmente di comunicarlo entro 48 ore dalla data dell'evento.",
+          'In case of cancellation or any other change, please kindly let us know at least 48 hours before the event.')
+      : t("In caso di disdetta ti chiedo gentilmente di comunicarlo entro 30 ore dalla data dell'evento.",
+          'In case of cancellation, please kindly let us know at least 30 hours before the event.');
+    const notaTorta = t('Servizio Torta (stoviglie e bicchieri) NON INCLUSO.', 'Cake service (plates, cutlery and cups) NOT INCLUDED.');
+    const notaBambini = t(
+      'I bambini dovranno rimanere all’interno dello spazio merenda loro assegnato; i genitori o accompagnatori restano responsabili della loro sorveglianza per tutta la durata della permanenza. Non è consentito circolare liberamente all’interno del centro sportivo senza supervisione: eventuali danni a cose o persone, o a sé stessi, in aree non autorizzate saranno sotto la responsabilità dei genitori o accompagnatori.',
+      'Children must stay within the snack area assigned to them; parents or accompanying adults remain responsible for supervising them for the whole duration of their stay. Moving freely around the sports centre without supervision is not allowed: any damage to property or people, or to themselves, in unauthorised areas will be the responsibility of the parents or accompanying adults.'
+    );
+    const txtCibo = t("Ricordiamo inoltre che E' VIETATO introdurre all'interno del Centro Sportivo cibi e bevande acquistati altrove.",
+      'Please also note that it is FORBIDDEN to bring food and drinks purchased elsewhere into the Sports Centre.');
+    const txtIntro = t("di seguito puoi trovare l'avvenuta conferma della tua prenotazione:", 'please find below the confirmation of your booking:');
+    const txtModulo = t("Compilare il modulo di registrazione all'evento che trovi al link", 'Fill in the event registration form at the link');
+    const txtModuloNota = t(
+      "Tutti i giocatori dovranno compilare il modulo online, stampare o conservare sul telefono la mail di conferma e mostrarla al nostro staff PRIMA DI GIOCARE. Eventuali giocatori sprovvisti di tale conferma non potranno prendere parte all'attività.",
+      'All players must fill in the online form, print or keep the confirmation email on their phone and show it to our staff BEFORE PLAYING. Players without this confirmation will not be allowed to take part in the activity.'
+    );
+    const txtAnticipoB = t('Presentatevi al campo 20 minuti in anticipo', 'Please arrive at the pitch 20 minutes early');
+    const txtAnticipo = t('per la verifica della documentazione.', 'for the document check.');
+    const txtFaq = [t('Consigliamo di consultare la pagina FAQ', 'We recommend checking our FAQ page'), t('dove troverete ulteriori informazioni utili.', 'for further useful information.')];
+    const txtInvito = [t('Scarica', 'Download'), t('QUI', 'HERE'), t("l'invito alla festa personalizzabile ed invialo a tutti gli invitati.", 'the customisable party invitation and send it to all your guests.')];
+    const txtRegolamento = t("Si informa che, in caso di comportamenti scorretti o non conformi al regolamento, l'attività potrà essere sospesa definitivamente, con la conseguente perdita di qualsiasi diritto al rimborso",
+      'Please note that, in case of improper behaviour or behaviour not compliant with the rules, the activity may be permanently suspended, with the consequent loss of any right to a refund');
+    const txtPresaVisione = t('Resto in attesa di conferma presa visione e in caso di eventuali errori ti prego di segnalarli rispondendo a questa email.',
+      'Please confirm you have read this email, and if you notice any errors let us know by replying to it.');
+    const txtSaluti = t('Saluti', 'Best regards');
+    const txtSito = t('Sito web:', 'Website:');
 
     const testo = [
-      `Ciao ${p.nominativo || ''},`,
+      `${t('Ciao', 'Hi')} ${p.nominativo || ''},`,
       '',
-      `di seguito puoi trovare l'avvenuta conferma della tua prenotazione:`,
+      txtIntro,
       '',
-      'PRENOTAZIONE',
+      t('PRENOTAZIONE', 'BOOKING'),
       titolo,
-      'Data:',
-      formattaDataEstesaIT(p.data),
+      t('Data:', 'Date:'),
+      formattaData(p.data),
       etichettaOrario,
       oraGiocoTxt,
-      ...(conRinfresco ? [`Orario ${rinfresco}:`, oraRinfresco] : []),
-      'Centro Sportivo:',
+      ...(conRinfresco ? [etichettaOrarioRinfresco, oraRinfresco] : []),
+      t('Centro Sportivo:', 'Sports Centre:'),
       locationTxt,
       tariffaLabel,
       tariffaValore,
@@ -799,33 +864,33 @@ function Prenotazioni({ user }) {
       rigaPagamentoLabel,
       rigaPagamentoValore,
       '',
-      "Ricordiamo inoltre che E' VIETATO introdurre all'interno del Centro Sportivo cibi e bevande acquistati altrove.",
+      txtCibo,
       ...(eMerenda ? [notaTorta, '', notaBambini] : []),
       '',
       disdetta,
       '',
-      'Cosa fare adesso?',
-      "- Compilare il modulo di registrazione all'evento che trovi al link https://forms.gle/mmVKZW81XEvkVU4A6",
-      "  Tutti i giocatori dovranno compilare il modulo online, stampare o conservare sul telefono la mail di conferma e mostrarla al nostro staff PRIMA DI GIOCARE. Eventuali giocatori sprovvisti di tale conferma non potranno prendere parte all'attività.",
+      t('Cosa fare adesso?', 'What to do now?'),
+      `- ${txtModulo} https://forms.gle/mmVKZW81XEvkVU4A6`,
+      `  ${txtModuloNota}`,
       '',
-      '- Presentatevi al campo 20 minuti in anticipo per la verifica della documentazione.',
+      `- ${txtAnticipoB} ${txtAnticipo}`,
       '',
-      '- Consigliamo di consultare la pagina FAQ https://www.bubblefootballmi.it/faq/ dove troverete ulteriori informazioni utili.',
-      ...(eMerenda ? ['', `- Scarica QUI ${LINK_INVITO_FESTA} l'invito alla festa personalizzabile ed invialo a tutti gli invitati.`] : []),
+      `- ${txtFaq[0]} https://www.bubblefootballmi.it/faq/ ${txtFaq[1]}`,
+      ...(eMerenda ? ['', `- ${txtInvito[0]} ${txtInvito[1]} ${LINK_INVITO_FESTA} ${txtInvito[2]}`] : []),
       '',
-      "Si informa che, in caso di comportamenti scorretti o non conformi al regolamento, l'attività potrà essere sospesa definitivamente, con la conseguente perdita di qualsiasi diritto al rimborso.",
+      `${txtRegolamento}.`,
       '',
       '',
-      'Resto in attesa di conferma presa visione e in caso di eventuali errori ti prego di segnalarli rispondendo a questa email.',
+      txtPresaVisione,
       '',
-      'Saluti',
+      txtSaluti,
       'Karin',
       '',
       '',
       'Bubble Football Milano | Calcio al Buio | Ideeinfesta',
       'Tel. (0039) 351 67 59 881',
       'E-mail: bubblefootballmi@gmail.com',
-      'Sito web: www.bubblefootballitalia.it | www.calcioalbuio.it | www.ideeinfesta.it/',
+      `${txtSito} www.bubblefootballitalia.it | www.calcioalbuio.it | www.ideeinfesta.it/`,
       'BFM S.R.L. (C.F./P.IVA 14418440963)'
     ].join('\n');
 
@@ -835,39 +900,39 @@ function Prenotazioni({ user }) {
 
     const html = `
       <div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#000;line-height:1.5;">
-        <p>Ciao ${escapeHtml(p.nominativo || '')},</p>
-        <p>di seguito puoi trovare l'avvenuta conferma della tua prenotazione:</p>
+        <p>${t('Ciao', 'Hi')} ${escapeHtml(p.nominativo || '')},</p>
+        <p>${escapeHtml(txtIntro)}</p>
         <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:12px 0;">
           <tbody>
-            ${rigaTabella('PRENOTAZIONE', titolo, true)}
-            ${rigaTabella('Data:', formattaDataEstesaIT(p.data))}
+            ${rigaTabella(t('PRENOTAZIONE', 'BOOKING'), titolo, true)}
+            ${rigaTabella(t('Data:', 'Date:'), formattaData(p.data))}
             ${rigaTabella(etichettaOrario, oraGiocoTxt)}
-            ${conRinfresco ? rigaTabella(`Orario ${rinfresco}:`, oraRinfresco) : ''}
-            ${rigaTabella('Centro Sportivo:', locationTxt)}
+            ${conRinfresco ? rigaTabella(etichettaOrarioRinfresco, oraRinfresco) : ''}
+            ${rigaTabella(t('Centro Sportivo:', 'Sports Centre:'), locationTxt)}
             ${rigaTabella(tariffaLabel, tariffaValore)}
             ${rigaTabella(rigaPagamentoLabel, rigaPagamentoValore)}
           </tbody>
         </table>
-        <p><b>Ricordiamo inoltre che E' VIETATO introdurre all'interno del Centro Sportivo cibi e bevande acquistati altrove.</b></p>
+        <p><b>${escapeHtml(txtCibo)}</b></p>
         ${eMerenda ? `<p><b>${escapeHtml(notaTorta)}</b></p><p><b><i>${escapeHtml(notaBambini)}</i></b></p>` : ''}
         <p><b><u>${escapeHtml(disdetta)}</u></b></p>
-        <p>Cosa fare adesso?</p>
+        <p>${t('Cosa fare adesso?', 'What to do now?')}</p>
         <ul style="margin:0 0 12px;padding-left:20px;">
-          <li style="margin-bottom:10px;"><b>Compilare il modulo di registrazione all'evento che trovi al link</b> <a href="https://forms.gle/mmVKZW81XEvkVU4A6">https://forms.gle/mmVKZW81XEvkVU4A6</a><br>
-            <u>Tutti i giocatori dovranno compilare il modulo online, stampare o conservare sul telefono la mail di conferma e mostrarla al nostro staff PRIMA DI GIOCARE. Eventuali giocatori sprovvisti di tale conferma non potranno prendere parte all'attività.</u>
+          <li style="margin-bottom:10px;"><b>${escapeHtml(txtModulo)}</b> <a href="https://forms.gle/mmVKZW81XEvkVU4A6">https://forms.gle/mmVKZW81XEvkVU4A6</a><br>
+            <u>${escapeHtml(txtModuloNota)}</u>
           </li>
-          <li style="margin-bottom:10px;"><b>Presentatevi al campo 20 minuti in anticipo</b> per la verifica della documentazione.</li>
-          <li style="margin-bottom:10px;">Consigliamo di consultare la pagina FAQ <a href="https://www.bubblefootballmi.it/faq/">https://www.bubblefootballmi.it/faq/</a> dove troverete ulteriori informazioni utili.</li>
-          ${eMerenda ? `<li>Scarica <a href="${LINK_INVITO_FESTA}"><b>QUI</b></a> l'invito alla festa personalizzabile ed invialo a tutti gli invitati.</li>` : ''}
+          <li style="margin-bottom:10px;"><b>${escapeHtml(txtAnticipoB)}</b> ${escapeHtml(txtAnticipo)}</li>
+          <li style="margin-bottom:10px;">${escapeHtml(txtFaq[0])} <a href="https://www.bubblefootballmi.it/faq/">https://www.bubblefootballmi.it/faq/</a> ${escapeHtml(txtFaq[1])}</li>
+          ${eMerenda ? `<li>${escapeHtml(txtInvito[0])} <a href="${LINK_INVITO_FESTA}"><b>${escapeHtml(txtInvito[1])}</b></a> ${escapeHtml(txtInvito[2])}</li>` : ''}
         </ul>
-        <p style="background:#ff9900;padding:6px;display:inline-block;"><u><b><i>Si informa che, in caso di comportamenti scorretti o non conformi al regolamento, l'attività potrà essere sospesa definitivamente, con la conseguente perdita di qualsiasi diritto al rimborso</i></b></u>.</p>
-        <p>Resto in attesa di conferma presa visione e in caso di eventuali errori ti prego di segnalarli rispondendo a questa email.</p>
-        <p>Saluti<br>Karin</p>
+        <p style="background:#ff9900;padding:6px;display:inline-block;"><u><b><i>${escapeHtml(txtRegolamento)}</i></b></u>.</p>
+        <p>${escapeHtml(txtPresaVisione)}</p>
+        <p>${txtSaluti}<br>Karin</p>
         <p style="color:#444;font-size:13px;">
           Bubble Football Milano | Calcio al Buio | Ideeinfesta<br>
           Tel. (0039) 351 67 59 881<br>
           E-mail: <a href="mailto:bubblefootballmi@gmail.com">bubblefootballmi@gmail.com</a><br>
-          Sito web: <a href="https://www.bubblefootballitalia.it">www.bubblefootballitalia.it</a> | <a href="http://www.calcioalbuio.it">www.calcioalbuio.it</a> | <a href="http://www.ideeinfesta.it/">www.ideeinfesta.it/</a><br>
+          ${txtSito} <a href="https://www.bubblefootballitalia.it">www.bubblefootballitalia.it</a> | <a href="http://www.calcioalbuio.it">www.calcioalbuio.it</a> | <a href="http://www.ideeinfesta.it/">www.ideeinfesta.it/</a><br>
           BFM S.R.L. (C.F./P.IVA 14418440963)
         </p>
       </div>
@@ -894,7 +959,7 @@ function Prenotazioni({ user }) {
       .update(tornaInGioco ? { stato: nuovoStato, motivoAnnullamento: null } : { stato: nuovoStato })
       .eq('id', p.id);
     fetchTutto();
-    if (nuovoStato === 'CONF') setTestoConferma(costruisciConferma(p));
+    if (nuovoStato === 'CONF') { setPrenConferma(p); setConfermaInglese(false); }
   };
   // Annullare una partita non e' una cosa sola: se non e' entrato niente e' finita li', ma se un
   // acconto c'e' quel denaro resta del cliente e la partita e' solo da riprogrammare. Sono due
@@ -970,7 +1035,7 @@ function Prenotazioni({ user }) {
     const totPagato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
     const totale = parseFloat(p.prezzoVendita) || 0;
     const coloreStatoRiga = coloreStato(p.stato).bd;
-    const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
+    const pagColore = colorePagamento(p.statoPagamento);
     const espansa = rigaEspansaId === p.id;
     // Verde vuol dire "da parte nostra non manca niente": confermata, giocata, con i dati per
     // fatturare. Il saldo non c'entra -- una partita che aspetta solo il pagamento sta in "Da
@@ -1386,7 +1451,10 @@ function Prenotazioni({ user }) {
       ereditaCosti: conVoci || !!f.ereditaCosti,
       costoEreditato: conVoci ? totVoci.costo : (f.ereditaCosti ? (parseFloat(f.costoEreditato) || 0) : null),
       voucherCodice: f.voucherCodice || null,
-      statoPagamento: statoPagamentoDi(f.pagamenti, prezzoVenditaLordo, valoreVoucherDi(f.voucherCodice)),
+      statoPagamento: statoPagamentoDi(f.pagamenti, prezzoVenditaLordo, valoreVoucherDi(f.voucherCodice), f.clienteSedeId || f.clienteCampoId),
+      // Solo se la colonna c'è: prima di sql/consuntivazione_fornitori.sql scriverla farebbe fallire ogni salvataggio.
+      ...(colonnaClienteSede ? { clienteSedeId: f.clienteSedeId || null } : {}),
+      ...(colonnaClienteCampo ? { clienteCampoId: f.clienteCampoId || null } : {}),
       stato: f.stato || "FORSE",
       fattTipo: f.fattTipo,
       fattNome: f.fattNome, fattCognome: f.fattCognome, fattIndirizzo: f.fattIndirizzo,
@@ -1590,7 +1658,7 @@ function Prenotazioni({ user }) {
         const voucherUsato = voucher.find(v => String(v.codice) === String(formPren.voucherCodice));
         const valoreVoucher = voucherUsato ? (parseFloat(voucherUsato.importo) || 0) : 0;
         const totalePagato = (formPren.pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0) + valoreVoucher;
-        const statoPag = statoPagamentoDi(formPren.pagamenti, prezzoVendita, valoreVoucher);
+        const statoPag = statoPagamentoDi(formPren.pagamenti, prezzoVendita, valoreVoucher, formPren.clienteSedeId || formPren.clienteCampoId);
         const setF = (patch) => setFormPren(prev => ({ ...prev, ...patch }));
 
         // Cosa manca perché la prenotazione risulti completata (stessa regola di prenotazioneCompletata, ma sui
@@ -1915,6 +1983,36 @@ function Prenotazioni({ user }) {
               <label style={{ flex: '2 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nominativo *
                 <input type="text" value={formPren.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} {...campoRosso('nominativo', nominativoMancante)} />
               </label>
+              {/* Un fornitore o un campo che ci commissiona una partita non la paga: il prezzo si compensa
+                  con quello che gli dobbiamo, in Consuntivazione > Fornitori o > Campi. Sta accanto al
+                  nominativo perché dice chi è il cliente, e da questo dipende tutto il resto: niente
+                  incasso, niente fattura. */}
+              {colonnaClienteSede && (() => {
+                const valore = clienteFornitoreDi(formPren);
+                const bloccata = !valore && (formPren.pagamenti.length > 0 || !!voucherUsato);
+                return (
+                  <label style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <input
+                        type="checkbox" checked={!!valore} style={{ margin: 0 }} disabled={bloccata}
+                        title={bloccata ? 'Ci sono già pagamenti o un voucher: toglili prima di compensare' : 'Il cliente è un nostro fornitore o un campo: si compensa, non si incassa'}
+                        onChange={(e) => setF(clienteFornitoreDa(e.target.checked && sediFornitori[0] ? `sede:${sediFornitori[0].id}` : ''))}
+                      /> Cliente fornitore
+                    </span>
+                    <select value={valore} disabled={!valore} onChange={(e) => setF(clienteFornitoreDa(e.target.value))}>
+                      {!valore && <option value="">—</option>}
+                      <optgroup label="Fornitori">
+                        {sediFornitori.map(s => <option key={s.id} value={`sede:${s.id}`}>{s.nome}</option>)}
+                      </optgroup>
+                      {colonnaClienteCampo && (
+                        <optgroup label="Campi">
+                          {campi.map(c => <option key={c.id} value={`campo:${c.id}`}>{c.nome}</option>)}
+                        </optgroup>
+                      )}
+                    </select>
+                  </label>
+                );
+              })()}
               <label className="span2" style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Email
                 <input type="email" value={formPren.email} onChange={(e) => setF({ email: e.target.value })} style={emailNonValida ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('email')} />
               </label>
@@ -2146,7 +2244,15 @@ function Prenotazioni({ user }) {
 
             {/* Pagamenti */}
             <div className="sotto-sezione">
-              <h3>Stato pagamento: <span style={{ fontSize: '0.8rem', fontWeight: 'bold', padding: '3px 10px', borderRadius: '10px', textTransform: 'none', letterSpacing: 0, background: statoPag === 'saldato' ? '#dcfce7' : statoPag === 'acconto' ? '#fef9c3' : '#fee2e2', color: statoPag === 'saldato' ? '#166534' : statoPag === 'acconto' ? '#854d0e' : '#991b1b' }}>{statoPag}</span></h3>
+              <h3>Stato pagamento: <span style={{ fontSize: '0.8rem', fontWeight: 'bold', padding: '3px 10px', borderRadius: '10px', textTransform: 'none', letterSpacing: 0, background: statoPag === 'saldato' ? '#dcfce7' : statoPag === 'acconto' ? '#fef9c3' : statoPag === 'compensazione' ? '#ede9fe' : '#fee2e2', color: statoPag === 'saldato' ? '#166534' : statoPag === 'acconto' ? '#854d0e' : statoPag === 'compensazione' ? '#5b21b6' : '#991b1b' }}>{statoPag}</span></h3>
+              {/* Un fornitore che ci commissiona una partita non la paga: il prezzo si compensa con
+                  quello che gli dobbiamo, nella consuntivazione dei fornitori. Da qui la partita non
+                  aspetta incassi e non va fatturata. */}
+              {(formPren.clienteSedeId || formPren.clienteCampoId) && (
+                <p style={{ margin: '0 0 10px 0', fontSize: '0.8rem', color: '#5b21b6' }}>
+                  Niente incasso e niente fattura: il prezzo netto si scala da quello che dobbiamo {formPren.clienteCampoId ? 'al campo, in Consuntivazione › Campi' : 'al fornitore, in Consuntivazione › Fornitori'}.
+                </p>
+              )}
               {(formPren.pagamenti.length > 0 || voucherUsato) && (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', marginBottom: '10px' }}>
                   <thead><tr style={{ color: '#666', textAlign: 'left' }}><th style={{ padding: '4px' }}>Data</th><th style={{ padding: '4px' }}>Importo</th><th style={{ padding: '4px' }}>Da</th><th></th></tr></thead>
@@ -2171,7 +2277,7 @@ function Prenotazioni({ user }) {
                   </tbody>
                 </table>
               )}
-              {statoPag !== 'saldato' && (
+              {statoPag !== 'saldato' && statoPag !== 'compensazione' && (
                 <>
                   {!voucherUsato && (
                     <div className="pren-row" style={{ marginBottom: '8px' }}>
@@ -2608,7 +2714,7 @@ function Prenotazioni({ user }) {
         const Chip = ({ p, riempi }) => {
           const c = coloreStato(p.stato);
           const campoTxt = p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '—';
-          const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
+          const pagColore = colorePagamento(p.statoPagamento);
           const hasOp = p.operatori && p.operatori.length > 0;
           return (
             <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${p.stato} · ${p.nominativo} · ${campoTxt} · ${etichettaDi(p)} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
@@ -2822,7 +2928,7 @@ function Prenotazioni({ user }) {
                           {eventi.map(ev => {
                             const p = ev.p;
                             const c = coloreStato(p.stato);
-                            const pagColore = p.statoPagamento === 'saldato' ? '#16a34a' : p.statoPagamento === 'acconto' ? '#ca8a04' : '#dc2626';
+                            const pagColore = colorePagamento(p.statoPagamento);
                             const hasOp = p.operatori && p.operatori.length > 0;
                             return (
                               <div key={p.id} style={{ position: 'absolute', top: `${(ev.inizioMin / 60) * ROW_H}px`, height: `${(ev.durataMin / 60) * ROW_H}px`, left: `${(ev.corsia / ev.numCorsie) * 100}%`, width: `${(1 / ev.numCorsie) * 100}%`, boxSizing: 'border-box', padding: '0 3px 3px 3px' }}>
@@ -3096,17 +3202,25 @@ function Prenotazioni({ user }) {
       )}
 
       {/* ANTEPRIMA CONFERMA DA COPIARE (invio manuale via Gmail, con formattazione HTML) */}
-      {testoConferma !== null && (
-        <div className="modal-preventivo-backdrop no-print" onClick={() => { setTestoConferma(null); setConfermaCopiata(false); }}>
+      {prenConferma !== null && (() => {
+        const testoConferma = costruisciConferma(prenConferma, confermaInglese);
+        return (
+        <div className="modal-preventivo-backdrop no-print" onClick={() => { setPrenConferma(null); setConfermaCopiata(false); }}>
           <div style={{ background: '#fff', maxWidth: '600px', margin: '60px auto', borderRadius: '10px', padding: '22px' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0 }}>✉️ Conferma prenotazione</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+              <h3 style={{ marginTop: 0 }}>✉️ Conferma prenotazione</h3>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer', marginBottom: '1em' }}>
+                <input type="checkbox" checked={confermaInglese} onChange={(e) => { setConfermaInglese(e.target.checked); setConfermaCopiata(false); }} />
+                Inglese
+              </label>
+            </div>
             <p className="descrizione-pagina" style={{ marginTop: 0 }}>Copia il messaggio e incollalo in una nuova mail Gmail: la formattazione (tabella, grassetti) viene mantenuta.</p>
             <div
               style={{ maxHeight: '360px', overflowY: 'auto', padding: '14px', border: '1px solid #cbd5e1', borderRadius: '6px', background: '#f9f9f9' }}
               dangerouslySetInnerHTML={{ __html: testoConferma.html }}
             />
             <div style={{ display: 'flex', gap: '10px', marginTop: '14px', justifyContent: 'flex-end' }}>
-              <button type="button" className="btn-chiudi" style={{ float: 'none' }} onClick={() => { setTestoConferma(null); setConfermaCopiata(false); }}>Chiudi</button>
+              <button type="button" className="btn-chiudi" style={{ float: 'none' }} onClick={() => { setPrenConferma(null); setConfermaCopiata(false); }}>Chiudi</button>
               <button
                 type="button"
                 className="btn-preventivo"
@@ -3139,7 +3253,8 @@ function Prenotazioni({ user }) {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* FORM NUOVA/MODIFICA PRENOTAZIONE (overlay compatto): raggiungibile da qualunque scheda (Gestione, Storico, Calendario) */}
       {showFormGestione && (

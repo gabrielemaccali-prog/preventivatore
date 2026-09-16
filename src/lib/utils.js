@@ -199,8 +199,11 @@ export const fineEventoDi = (p) => giorniEventoDi(p).slice(-1)[0] || p.data;
 // Non è uno stato salvato: si ricava ogni volta dai dati della prenotazione e dalla data odierna
 // (passata da fuori, così la funzione resta pura e testabile). Vive qui perché la usano sia il modulo
 // prenotazioni sia costi/ricavi: una definizione sola, altrimenti le due schede si contraddicono.
+// Una partita commissionata da un fornitore conta come saldata: non si incassa, si compensa con
+// quello che gli dobbiamo, e quel lavoro sta nella consuntivazione dei fornitori.
 export const prenotazioneCompletata = (p, oggiIso) =>
-  p.stato === 'CONF' && fineEventoDi(p) < oggiIso && p.statoPagamento === 'saldato' && fatturazioneCompletaDi(p);
+  p.stato === 'CONF' && fineEventoDi(p) < oggiIso
+  && (p.statoPagamento === 'saldato' || p.statoPagamento === 'compensazione') && fatturazioneCompletaDi(p);
 
 // Scompone un risultato Nominatim nei singoli campi indirizzo
 export const parseIndirizzo = (luogo) => {
