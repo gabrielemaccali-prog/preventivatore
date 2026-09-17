@@ -801,11 +801,14 @@ td { padding: 8px 12px; vertical-align: middle; }
   color: #01579b;
 }
 
-/* Stato derivato: preventivo non confermato oltre la validità dell'offerta */
-.badge-stato.scaduto {
-  background-color: #e2e8f0;
-  color: #475569;
+/* Stato derivato: preventivo non confermato oltre la validità dell'offerta, su cui va fatto qualcosa */
+.badge-stato.azione-richiesta {
+  background-color: #ffedd5;
+  color: #9a3412;
 }
+
+/* Preventivo annullato: resta nello Storico con il suo motivo */
+.badge-stato.annullato { background-color: #fee2e2; color: #991b1b; }
 
 /* Stati prenotazioni */
 .badge-stato.forse { background-color: #fed7aa; color: #9a3412; }

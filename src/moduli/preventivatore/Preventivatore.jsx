@@ -18,19 +18,24 @@ import {
 } from '../../lib/utils';
 
 // Colore della banda laterale nelle righe di tabella, uno per stato.
-const COLORE_STATO_PREVENTIVO = { Prenotato: '#0288d1', Confermato: '#16a34a', Scaduto: '#94a3b8', Registrato: '#f59e0b' };
+const COLORE_STATO_PREVENTIVO = { Prenotato: '#0288d1', Confermato: '#16a34a', 'Azione richiesta': '#ea580c', Registrato: '#f59e0b', Annullato: '#dc2626' };
 
-// Stato effettivo di un preventivo. A database esistono "Registrato", "Confermato" e "Prenotato":
-// "Scaduto" è derivato dalla data di emissione secondo la validità dichiarata sul documento.
-// Un preventivo già confermato non scade mai, e "Prenotato" (collegato a una prenotazione, quindi
-// non più selezionabile) lo decide il modulo prenotazioni: qui si legge soltanto.
+// Stato effettivo di un preventivo. A database esistono "Registrato", "Confermato", "Prenotato" e
+// "Annullato": "Azione richiesta" è derivato dalla data di emissione secondo la validità dichiarata
+// sul documento. Un preventivo registrato oltre la validità non è "scaduto" e basta: è un cliente
+// che non ha risposto, e qualcuno deve fare qualcosa — sentirlo (e scriverlo nelle note interne)
+// oppure annullare il preventivo. Un preventivo già confermato non scade mai, e "Prenotato"
+// (collegato a una prenotazione, quindi non più selezionabile) lo decide il modulo prenotazioni.
 const statoPreventivo = (p) => {
   if (p?.stato === "Prenotato") return "Prenotato";
   if (p?.stato === "Confermato") return "Confermato";
+  if (p?.stato === "Annullato") return "Annullato";
   if (!p?.dataEmissione) return p?.stato || "Registrato";
   const scadenza = new Date(p.dataEmissione).getTime() + GIORNI_VALIDITA_PREVENTIVO * 24 * 60 * 60 * 1000;
-  return Date.now() > scadenza ? "Scaduto" : "Registrato";
+  return Date.now() > scadenza ? "Azione richiesta" : "Registrato";
 };
+// Classe CSS del badge: "Azione richiesta" ha uno spazio, che farebbe due classi.
+const classeStatoPreventivo = (stato) => stato.toLowerCase().replace(/\s+/g, '-');
 
 // Le schede "Preventivatore" e "Vendita" sono superate dal form overlay di Gestione, che fa
 // entrambe le cose in un unico passaggio. Restano nel codice ma nascoste, in attesa di essere
@@ -93,9 +98,19 @@ function SelettoreGioco({ giochi, valore, onChange, onCrea, stile }) {
   );
 }
 
+// Converte il testo "Dal gg/mm/aaaa al gg/mm/aaaa" nelle due date ISO (yyyy-mm-dd).
+// Sta fuori dal componente perché serve anche all'ordinamento della colonna "Evento".
+const estraiDateDaPeriodo = (periodo) => {
+  const m = (periodo || "").match(/(\d{2})\/(\d{2})\/(\d{4}).*?(\d{2})\/(\d{2})\/(\d{4})/);
+  if (!m) return { inizio: "", fine: "" };
+  return { inizio: `${m[3]}-${m[2]}-${m[1]}`, fine: `${m[6]}-${m[5]}-${m[4]}` };
+};
+
 const COLONNE_PREVENTIVI = [
-  { chiave: 'id', label: 'ID', stile: { width: '18%' }, valore: (p) => (typeof p.id === 'object' ? p.id.codice : p.id) || '' },
-  { chiave: 'data', label: 'Data', stile: { width: '10%' }, valore: (p) => p.dataEmissione || '' },
+  { chiave: 'id', label: 'ID', stile: { width: '16%' }, valore: (p) => (typeof p.id === 'object' ? p.id.codice : p.id) || '' },
+  { chiave: 'data', label: 'Emissione', stile: { width: '10%' }, valore: (p) => p.dataEmissione || '' },
+  // La data dell'evento non ha una colonna sua a database: vive nel testo del periodo stampato sul documento.
+  { chiave: 'evento', label: 'Evento', stile: { width: '10%' }, valore: (p) => estraiDateDaPeriodo(p.periodo).inizio },
   { chiave: 'destinazione', label: 'Destinazione', valore: (p) => (p.destinazione || '').split(',').pop().trim() },
   { chiave: 'referente', label: 'Referente', valore: (p) => p.nomeReferente || '' },
   { chiave: 'vendita', label: 'Vendita', valore: (p) => parseFloat(p.totaleVendita) || 0 },
@@ -109,7 +124,7 @@ function Preventivatore({ user }) {
   // --- NAVIGAZIONE INTERNA AL MODULO ---
   const primaSchedaVisibile = ['admin', 'gestione', 'storico'].find(s => puoVedere(user, 'preventivatore', s)) || 'gestione';
   const [currentView, setCurrentView] = useState(primaSchedaVisibile);
-  const [gestioneTab, setGestioneTab] = useState("registrati"); // registrati | confermati | prenotati | scaduti
+  const [gestioneTab, setGestioneTab] = useState("registrati"); // registrati | azioneRichiesta | confermati
   const [showFormPreventivo, setShowFormPreventivo] = useState(false); // form Nuovo/Modifica preventivo come overlay
 
   // --- STATI DEI DATI ---
@@ -176,6 +191,9 @@ function Preventivatore({ user }) {
   const [soluzioniMigliori, setSoluzioniMigliori] = useState({});
   const [modalitaModifica, setModalitaModifica] = useState(false); // true quando si sta modificando/ristampando un preventivo salvato
   const [notePreventivo, setNotePreventivo] = useState("");
+  // Note interne: il diario di chi segue il preventivo (cliente chiamato, email inviata...). Non
+  // finiscono sul PDF, che è il documento del cliente.
+  const [noteInterne, setNoteInterne] = useState("");
   const [idPreventivo, setIdPreventivo] = useState({ codice: "", dettagliLogistici: null });
   // Data di emissione del preventivo aperto: il PDF ristampato deve riportare la data originale, non quella odierna
   const [dataEmissionePreventivo, setDataEmissionePreventivo] = useState(null);
@@ -209,6 +227,7 @@ function Preventivatore({ user }) {
   const [filtroStato, setFiltroStato] = useState("");
   const [filtroReferente, setFiltroReferente] = useState("");
   const [filtroEmail, setFiltroEmail] = useState("");
+  const [filtroMese, setFiltroMese] = useState(""); // mese dell'evento (aaaa-mm), "" = nessun filtro
   const [rigaEspansaId, setRigaEspansaId] = useState(null); // id preventivo con riga dettaglio espansa (Storico)
 
   // --- 🔄 CARICAMENTO DATI DA SUPABASE AL LOGIN ---
@@ -260,7 +279,9 @@ function Preventivatore({ user }) {
         mostraComeOpzioni: p.mostraComeOpzioni,
         prezzoConcordato: p.prezzoConcordato,
         mostraGiocoOfferta: p.mostraGiocoOfferta,
-        giocoOfferta: p.giocoOfferta
+        giocoOfferta: p.giocoOfferta,
+        noteInterne: p.noteInterne,
+        motivoAnnullamento: p.motivoAnnullamento
       }));
       setPreventiviSalvati(prevFormattati);
     }
@@ -296,6 +317,7 @@ function Preventivatore({ user }) {
     setDestinazione(null);
     setSoluzioniMigliori({});
     setNotePreventivo("");
+    setNoteInterne("");
     setIdPreventivo({ codice: "", dettagliLogistici: null });
     setDataEmissionePreventivo(null);
     setStatoDocumento("Registrato");
@@ -324,7 +346,7 @@ function Preventivatore({ user }) {
     venditaGonfiabili, venditaExtras, mostraComeOpzioni, mostraGiocoOfferta,
     giocoOffertaSelezionato, soluzioneGiocoOfferta, venditaGiocoOfferta,
     prezzoConcordato, sediConcordate, costiConcordati,
-    nomeRiferimento, indirizzoEmail, telefonoRiferimento, notePreventivo
+    nomeRiferimento, indirizzoEmail, telefonoRiferimento, notePreventivo, noteInterne
   });
 
   // Costi e chilometraggi sono ricalcolati da OSRM: variano da soli e non sono modifiche dell'utente,
@@ -380,6 +402,7 @@ function Preventivatore({ user }) {
     setIndirizzoEmail(snap.indirizzoEmail);
     setTelefonoRiferimento(snap.telefonoRiferimento);
     setNotePreventivo(snap.notePreventivo);
+    setNoteInterne(snap.noteInterne || "");
   };
 
   const preventivoModificato = statoOriginale != null && impronta(snapshotPreventivo()) !== impronta(statoOriginale);
@@ -399,13 +422,6 @@ function Preventivatore({ user }) {
     const nuovoNonSalvato = !idPreventivo.codice && (serviziSelezionati.length > 0 || !!destinazione);
     if ((nuovoNonSalvato || preventivoModificato) && !window.confirm("Ci sono modifiche non salvate. Chiudere comunque?")) return;
     setShowFormPreventivo(false);
-  };
-
-  // Converte il testo "Dal gg/mm/aaaa al gg/mm/aaaa" nelle due date ISO (yyyy-mm-dd)
-  const estraiDateDaPeriodo = (periodo) => {
-    const m = (periodo || "").match(/(\d{2})\/(\d{2})\/(\d{4}).*?(\d{2})\/(\d{2})\/(\d{4})/);
-    if (!m) return { inizio: "", fine: "" };
-    return { inizio: `${m[3]}-${m[2]}-${m[1]}`, fine: `${m[6]}-${m[5]}-${m[4]}` };
   };
 
   // Ricostruisce lo stato di lavoro a partire da un preventivo salvato (per modifica o ristampa)
@@ -522,16 +538,17 @@ function Preventivatore({ user }) {
       nomeRiferimento: p.nomeReferente || "",
       indirizzoEmail: p.emailReferente || "",
       telefonoRiferimento: p.telefonoReferente || "",
-      notePreventivo: p.note || ""
+      notePreventivo: p.note || "",
+      noteInterne: p.noteInterne || ""
     };
 
     setModalitaModifica(true);
     ripristinaSnapshot(snap);
     setStatoOriginale(snap);
     setDataEmissionePreventivo(p.dataEmissione || null);
-    // "Scaduto" è derivato e non va risalvato; "Confermato" e "Prenotato" invece vanno conservati,
-    // altrimenti salvando un preventivo già collegato a una prenotazione lo si riporterebbe indietro.
-    setStatoDocumento(p.stato === "Confermato" || p.stato === "Prenotato" ? p.stato : "Registrato");
+    // "Azione richiesta" è derivato e non va risalvato; "Confermato", "Prenotato" e "Annullato" invece
+    // vanno conservati, altrimenti salvando (anche solo una nota interna) lo si riporterebbe indietro.
+    setStatoDocumento(["Confermato", "Prenotato", "Annullato"].includes(p.stato) ? p.stato : "Registrato");
     setIdPreventivo({ codice, dettagliLogistici: (typeof p.id === 'object' ? p.id.dettagliLogistici : null) });
     return codice;
   };
@@ -1006,6 +1023,7 @@ function Preventivatore({ user }) {
       extras: dettagliExtra,
       totaleVendita: totaleVenditaComplessivo,
       note: notePreventivo,
+      noteInterne: noteInterne.trim() || null,
       stato: statoDocumento,
       nomeReferente: nomeRiferimento,
       emailReferente: indirizzoEmail,
@@ -1088,16 +1106,56 @@ function Preventivatore({ user }) {
     if (!error) fetchData();
   };
 
-  // --- FILTRAGGIO STORICO PREVENTIVI ---
-  const preventiviFiltrati = preventiviSalvati.filter(p => {
+  // Come per le prenotazioni: un preventivo annullato non si cancella, resta nello Storico con il
+  // suo motivo. Il motivo si chiede sempre, perché "annullato" da solo non dice se il cliente ha
+  // scelto un altro, non ha più risposto o ha rinunciato alla festa.
+  const annullaPreventivo = async (p) => {
+    const codice = typeof p.id === 'object' ? p.id.codice : p.id;
+    const risposta = window.prompt(`Il preventivo ${codice} passa ad ANNULLATO ed esce da Gestione (resta nello Storico).\n\nPerché viene annullato?`, p.motivoAnnullamento || '');
+    if (risposta === null) return;
+    const motivo = risposta.trim();
+    if (!motivo) return alert("Serve un motivo per annullare il preventivo.");
+    const { error } = await supabase.from('preventivi').update({ stato: 'Annullato', motivoAnnullamento: motivo }).eq('codice', codice);
+    if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}`); }
+    setRigaEspansaId(null);
+    fetchData();
+  };
+
+  // Tornando in gioco il motivo dell'annullamento se ne va con lo stato. Riparte da Registrato:
+  // se la validità è passata ricade da sé in "Azione richiesta".
+  const ripristinaPreventivo = async (codice) => {
+    const { error } = await supabase.from('preventivi').update({ stato: 'Registrato', motivoAnnullamento: null }).eq('codice', codice);
+    if (error) { console.error(error); return alert(`Errore nel ripristino: ${error.message}`); }
+    fetchData();
+  };
+
+  // --- FILTRAGGIO PREVENTIVI (Gestione e Storico) ---
+  // I filtri sono gli stessi nelle due schede, e restano impostati passando dall'una all'altra.
+  // Lo stato vale solo nello Storico: in Gestione lo stato sono le sotto-schede.
+  // Il mese è quello in cui l'evento comincia, la stessa data della colonna "Evento".
+  const passaFiltri = (p, { conStato }) => {
     const idDaConfrontare = (typeof p.id === 'object' ? p.id.codice : p.id) || "";
     const matchId = idDaConfrontare.toLowerCase().includes(filtroId.toLowerCase());
     const matchDest = (p.destinazione?.toLowerCase() || "").includes(filtroDestinazione.toLowerCase());
-    const matchStato = filtroStato === "" || statoPreventivo(p) === filtroStato;
+    const matchStato = !conStato || filtroStato === "" || statoPreventivo(p) === filtroStato;
     const matchReferente = (p.nomeReferente?.toLowerCase() || "").includes(filtroReferente.toLowerCase());
     const matchEmail = (p.emailReferente?.toLowerCase() || "").includes(filtroEmail.toLowerCase());
-    return matchId && matchDest && matchStato && matchReferente && matchEmail;
-  });
+    const matchMese = !filtroMese || estraiDateDaPeriodo(p.periodo).inizio.startsWith(filtroMese);
+    return matchId && matchDest && matchStato && matchReferente && matchEmail && matchMese;
+  };
+  const preventiviFiltrati = preventiviSalvati.filter(p => passaFiltri(p, { conStato: true }));
+
+  // Scorre il filtro mese di delta mesi; senza filtro parte dal mese corrente (delta 0 = oggi)
+  const spostaMese = (delta) => {
+    const [a, m] = filtroMese ? filtroMese.split('-').map(Number) : [new Date().getFullYear(), new Date().getMonth() + 1];
+    const d = new Date(a, m - 1 + delta, 1);
+    setFiltroMese(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
+  const etichettaMese = (mese) => {
+    const [a, m] = mese.split('-').map(Number);
+    const testo = new Date(a, m - 1, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+    return testo.charAt(0).toUpperCase() + testo.slice(1);
+  };
 
   // --- ESPORTAZIONE EXCEL ---
   const esportaExcel = () => {
@@ -1122,7 +1180,9 @@ function Preventivatore({ user }) {
         DettaglioCostiVivi: dettaglioCostiVivi,
         CostoVivoTotale: (item.costoVivoTotale || 0).toFixed(2),
         KmAndata: (item.kmAndata || 0).toFixed(1),
-        Stato: statoPreventivo(item)
+        Stato: statoPreventivo(item),
+        MotivoAnnullamento: item.motivoAnnullamento || "",
+        NoteInterne: item.noteInterne || ""
       };
     });
     
@@ -1718,6 +1778,9 @@ function Preventivatore({ user }) {
       <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Note al preventivo
         <textarea value={notePreventivo} onChange={(e) => setNotePreventivo(e.target.value)} rows="3" style={{ marginTop: '5px', fontFamily: 'inherit' }} placeholder="Dettagli, sconti particolari o messaggi per il cliente..." />
       </label>
+      <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Note interne <span style={{ fontWeight: 400, color: '#94a3b8' }}>(non vanno sul PDF)</span>
+        <textarea value={noteInterne} onChange={(e) => setNoteInterne(e.target.value)} rows="3" style={{ marginTop: '5px', fontFamily: 'inherit', background: '#f8fafc' }} placeholder="Es. 18/09 chiamato il cliente, richiama la settimana prossima · 22/09 inviata email di sollecito" />
+      </label>
     </>
   );
 
@@ -1882,6 +1945,12 @@ function Preventivatore({ user }) {
           <td style={{ padding: '8px 10px', color: '#777', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
             {formattaDataIT(p.dataEmissione)}
           </td>
+          <td style={{ padding: '8px 10px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+            {(() => {
+              const { inizio } = estraiDateDaPeriodo(p.periodo);
+              return inizio ? <strong style={{ color: '#111' }}>{formattaDataIT(inizio)}</strong> : <span style={{ color: '#999' }}>—</span>;
+            })()}
+          </td>
           <td style={{ padding: '8px 10px', color: '#444', fontSize: '0.82rem' }}>
             {(p.destinazione || '').split(',').pop().trim()} <span style={{ color: '#94a3b8' }}>
               - {p.giorni ? `${p.giorni} g` : '—'}
@@ -1899,16 +1968,18 @@ function Preventivatore({ user }) {
             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', color: '#64748b' }}>
               {p.mostraGiocoOfferta && <Icona nome="offerta" size={16} style={{ marginRight: 0 }} title="Gioco in offerta" />}
               {p.mostraComeOpzioni && <Icona nome="opzioni" size={16} style={{ marginRight: 0 }} title="Proposto a opzioni" />}
-              {!p.mostraGiocoOfferta && !p.mostraComeOpzioni && <span style={{ color: '#ccc' }}>—</span>}
+              {p.noteInterne && <Icona nome="noteInterne" size={16} style={{ marginRight: 0 }} title="Ha note interne" />}
+              {!p.mostraGiocoOfferta && !p.mostraComeOpzioni && !p.noteInterne && <span style={{ color: '#ccc' }}>—</span>}
             </div>
           </td>
         </tr>
         {espansa && (
           <tr className="riga-espandibile-dettaglio">
-            <td colSpan={6} onClick={(e) => e.stopPropagation()}>
+            <td colSpan={COLONNE_PREVENTIVI.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155', minWidth: 0, flex: 1 }}>
-                  <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${stato.toLowerCase()}`}>{stato}</span></div>
+                  <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${classeStatoPreventivo(stato)}`}>{stato}</span></div>
+                  {p.motivoAnnullamento && <div><span style={{ color: '#94a3b8' }}>Motivo annullamento </span><em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
                   <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{p.destinazione || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Periodo </span>{p.periodo || '—'}</div>
                   {p.oraInizio && p.oraFine && (
@@ -1951,6 +2022,12 @@ function Preventivatore({ user }) {
                   )}
 
                   <div><span style={{ color: '#94a3b8' }}>Note </span>{p.note ? <em>{p.note}</em> : '—'}</div>
+                  <div>
+                    <span style={{ color: '#94a3b8' }}>Note interne </span>
+                    {p.noteInterne
+                      ? <div style={{ whiteSpace: 'pre-wrap', marginTop: '3px', padding: '6px 10px', background: '#fff7ed', borderLeft: '3px solid #ea580c', borderRadius: '3px' }}>{p.noteInterne}</div>
+                      : '—'}
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                   {p.stato === "Registrato" && (
@@ -1968,6 +2045,12 @@ function Preventivatore({ user }) {
                   {p.stato === "Prenotato" && !codiciPrenotati.has(String(codice)) && (
                     <button type="button" className="btn-icon-action" title="Nessuna prenotazione lo sta usando: riportalo a Confermato" onClick={() => cambiaStatoPreventivo(codice, "Confermato")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
+                  {(p.stato === "Registrato" || p.stato === "Confermato") && (
+                    <button type="button" className="btn-icon-action danger" title="Annulla il preventivo" onClick={() => annullaPreventivo(p)}><Icona nome="annulla" size={16} style={{ marginRight: 0 }} /></button>
+                  )}
+                  {p.stato === "Annullato" && (
+                    <button type="button" className="btn-icon-action" title="Ripristina: torna fra i registrati" onClick={() => ripristinaPreventivo(codice)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                  )}
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => onApri(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
                   {user.isAdmin && (
                     <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => eliminaPreventivo(codice)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
@@ -1980,6 +2063,54 @@ function Preventivatore({ user }) {
       </Fragment>
     );
   };
+
+  // Filtri condivisi da Gestione e Storico (stesso schema del filtro settimana delle prenotazioni)
+  const filtriPreventivi = ({ conStato }) => (
+    <div className="filtri-storico" style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
+      <div className="filtro-group" style={{ flex: '1 1 250px' }}>
+        <label>Mese evento:</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese precedente" onClick={() => spostaMese(-1)}>‹</button>
+          <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: filtroMese ? '#334155' : '#94a3b8' }}>
+            {filtroMese ? etichettaMese(filtroMese) : 'tutti'}
+          </span>
+          <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese successivo" onClick={() => spostaMese(1)}>›</button>
+          {filtroMese
+            ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per mese" onClick={() => setFiltroMese("")}>✕</button>
+            : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese corrente" onClick={() => spostaMese(0)}>Oggi</button>}
+        </div>
+      </div>
+      <div className="filtro-group" style={{ flex: '1 1 180px' }}>
+        <label>Cerca per ID:</label>
+        <input type="text" placeholder="Es. PRV-2026-1001" value={filtroId} onChange={(e) => setFiltroId(e.target.value)} />
+      </div>
+      <div className="filtro-group" style={{ flex: '1 1 180px' }}>
+        <label>Filtra per Referente:</label>
+        <input type="text" placeholder="Nome referente" value={filtroReferente} onChange={(e) => setFiltroReferente(e.target.value)} />
+      </div>
+      <div className="filtro-group" style={{ flex: '1 1 180px' }}>
+        <label>Filtra per Email:</label>
+        <input type="text" placeholder="Indirizzo e-mail" value={filtroEmail} onChange={(e) => setFiltroEmail(e.target.value)} />
+      </div>
+      <div className="filtro-group" style={{ flex: '1 1 180px' }}>
+        <label>Filtra per Destinazione:</label>
+        <input type="text" placeholder="Es. Milano" value={filtroDestinazione} onChange={(e) => setFiltroDestinazione(e.target.value)} />
+      </div>
+      {conStato && (
+        <div className="filtro-group" style={{ flex: '1 1 180px' }}>
+          <label>Stato Documento:</label>
+          <select value={filtroStato} onChange={(e) => setFiltroStato(e.target.value)}>
+            <option value="">Tutti gli stati</option>
+            <option value="Registrato">Registrato</option>
+            <option value="Azione richiesta">Azione richiesta</option>
+            <option value="Confermato">Confermato</option>
+            <option value="Prenotato">Prenotato</option>
+            <option value="Annullato">Annullato</option>
+          </select>
+        </div>
+      )}
+    </div>
+  );
 
   const tabellaPreventivi = (righe, messaggioVuoto, onApri) => (
     <div className="admin-table-box-full" style={{ marginTop: '20px' }}>
@@ -1998,7 +2129,7 @@ function Preventivatore({ user }) {
         </thead>
         <tbody>
           {righe.length === 0
-            ? <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            ? <tr><td colSpan={COLONNE_PREVENTIVI.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
             : ordina(righe).map((p, index) => rigaTabellaPreventivo(p, index, onApri))}
         </tbody>
       </table>
@@ -2432,17 +2563,21 @@ function Preventivatore({ user }) {
 
       {/* VIEW: GESTIONE (sotto-schede per stato) */}
       {currentView === "gestione" && puoVedere(user, 'preventivatore', 'gestione') && (() => {
-        const registrati = preventiviSalvati.filter(p => statoPreventivo(p) === 'Registrato');
-        const confermati = preventiviSalvati.filter(p => statoPreventivo(p) === 'Confermato');
-        const scaduti = preventiviSalvati.filter(p => statoPreventivo(p) === 'Scaduto');
-        const prenotati = preventiviSalvati.filter(p => statoPreventivo(p) === 'Prenotato');
-        const liste = { registrati, confermati, prenotati, scaduti };
-        const messaggiVuoto = {
-          registrati: "Nessun preventivo in attesa di conferma.",
-          confermati: "Nessun preventivo confermato.",
-          prenotati: "Nessun preventivo collegato a una prenotazione.",
-          scaduti: "Nessun preventivo scaduto.",
-        };
+        // I conteggi delle sotto-schede tengono conto dei filtri: dicono quanti se ne vedono
+        const filtrati = preventiviSalvati.filter(p => passaFiltri(p, { conStato: false }));
+        // Gestione è il lavoro da fare. Gli annullati non ne hanno, e nemmeno i prenotati: da lì in
+        // avanti se ne occupa il modulo Prenotazioni. Entrambi si trovano nello Storico.
+        const schede = [
+          { chiave: 'registrati', etichetta: 'Registrati', icona: 'daConfermare', lista: filtrati.filter(p => statoPreventivo(p) === 'Registrato'), titolo: 'In attesa di risposta dal cliente, entro la validità dell\'offerta' },
+          { chiave: 'azioneRichiesta', etichetta: 'Azione richiesta', icona: 'attesaPagamento', lista: filtrati.filter(p => statoPreventivo(p) === 'Azione richiesta'), titolo: 'Validità scaduta senza conferma: da sentire il cliente o da annullare' },
+          { chiave: 'confermati', etichetta: 'Confermati', icona: 'completate', lista: filtrati.filter(p => statoPreventivo(p) === 'Confermato'), titolo: 'Confermati dal cliente, da collegare a una prenotazione' },
+        ];
+        // Come nelle prenotazioni: una sotto-scheda senza niente dentro non compare, e se quella
+        // scelta si svuota (l'ultimo preventivo confermato, o escluso da un filtro) si passa alla
+        // prima che ha ancora qualcosa.
+        const visibili = schede.filter(sc => sc.lista.length > 0);
+        const attiva = visibili.find(sc => sc.chiave === gestioneTab) || visibili[0];
+        const filtriAttivi = !!(filtroId || filtroDestinazione || filtroReferente || filtroEmail || filtroMese);
         return (
           <div className="schermata-storico no-print">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -2450,17 +2585,23 @@ function Preventivatore({ user }) {
               <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovoPreventivoOverlay}><Icona nome="nuovo" size={16} />Nuovo</button>
             </div>
             <p className="descrizione-pagina">
-              Preventivi raggruppati per stato. Un preventivo non confermato entro {GIORNI_VALIDITA_PREVENTIVO} giorni dall'emissione risulta scaduto,
-              in linea con la validità dichiarata sul documento di offerta. "Prenotato" significa collegato a una prenotazione:
-              lo si libera togliendolo dalla prenotazione, e allora torna confermato.
+              Preventivi su cui c'è qualcosa da fare. Un preventivo non confermato entro {GIORNI_VALIDITA_PREVENTIVO} giorni dall'emissione (la validità dichiarata
+              sul documento di offerta) richiede un'azione: sentire il cliente e annotarlo nelle note interne, oppure annullarlo.
+              Una volta collegati a una prenotazione, i preventivi passano nello Storico.
             </p>
-            <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
-              <button className={`nav-btn ${gestioneTab === 'registrati' ? 'active' : ''}`} onClick={() => setGestioneTab('registrati')}><Icona nome="daConfermare" />Registrati ({registrati.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'confermati' ? 'active' : ''}`} onClick={() => setGestioneTab('confermati')}><Icona nome="completate" />Confermati ({confermati.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'prenotati' ? 'active' : ''}`} onClick={() => setGestioneTab('prenotati')}><Icona nome="prenotazioni" />Prenotati ({prenotati.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'scaduti' ? 'active' : ''}`} onClick={() => setGestioneTab('scaduti')}><Icona nome="attesaPagamento" />Scaduti ({scaduti.length})</button>
-            </nav>
-            {tabellaPreventivi(liste[gestioneTab], messaggiVuoto[gestioneTab], apriPreventivoOverlay)}
+            {visibili.length > 0 && (
+              <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
+                {visibili.map(sc => (
+                  <button key={sc.chiave} className={`nav-btn ${attiva?.chiave === sc.chiave ? 'active' : ''}`} onClick={() => setGestioneTab(sc.chiave)} title={sc.titolo}>
+                    <Icona nome={sc.icona} />{sc.etichetta} ({sc.lista.length})
+                  </button>
+                ))}
+              </nav>
+            )}
+            {filtriPreventivi({ conStato: false })}
+            {attiva
+              ? tabellaPreventivi(attiva.lista, '', apriPreventivoOverlay)
+              : <p style={{ color: '#666', padding: '20px 0' }}>{filtriAttivi ? 'Nessuna attività fra i preventivi filtrati.' : 'Nessuna attività da fare: tutto in ordine.'}</p>}
           </div>
         );
       })()}
@@ -2476,34 +2617,7 @@ function Preventivatore({ user }) {
           </div>
           <p className="descrizione-pagina">Consulta, filtra e gestisci lo stato dei preventivi emessi.</p>
           
-          <div className="filtri-storico" style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Cerca per ID:</label>
-              <input type="text" placeholder="Es. PRV-2026-1001" value={filtroId} onChange={(e) => setFiltroId(e.target.value)} />
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Filtra per Referente:</label>
-              <input type="text" placeholder="Nome referente" value={filtroReferente} onChange={(e) => setFiltroReferente(e.target.value)} />
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Filtra per Email:</label>
-              <input type="text" placeholder="Indirizzo e-mail" value={filtroEmail} onChange={(e) => setFiltroEmail(e.target.value)} />
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Filtra per Destinazione:</label>
-              <input type="text" placeholder="Es. Milano" value={filtroDestinazione} onChange={(e) => setFiltroDestinazione(e.target.value)} />
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Stato Documento:</label>
-              <select value={filtroStato} onChange={(e) => setFiltroStato(e.target.value)}>
-                <option value="">Tutti gli stati</option>
-                <option value="Registrato">Registrato</option>
-                <option value="Confermato">Confermato</option>
-                <option value="Prenotato">Prenotato</option>
-                <option value="Scaduto">Scaduto</option>
-              </select>
-            </div>
-          </div>
+          {filtriPreventivi({ conStato: true })}
 
           {/* Stessa apertura di Gestione: l'overlay. Prima si passava alla scheda "Vendita", che
               da quando SCHEDE_LEGACY_VISIBILI è false non viene più renderizzata — la vista
