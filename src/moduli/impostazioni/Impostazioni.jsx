@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient';
 import { MODULI_REGISTRY, SCHEDE_REGISTRY } from '../../lib/permessi';
 import Icona from '../../components/Icona';
+import { haAccesso } from '../../lib/utils';
 
 const permessiVuoti = () => {
   const base = {};
@@ -11,6 +12,8 @@ const permessiVuoti = () => {
 
 const RUOLO_VUOTO = { nome: "", permessi: permessiVuoti() };
 const UTENTE_VUOTO = { username: "", nome: "", cognome: "", email: "", password: "", ruolo_id: "", bubbler: false, cambio_password: false };
+// Abilitando un account la password la sceglie l'amministratore: il cambio al primo accesso parte già spuntato.
+const ABILITAZIONE_VUOTA = { password: "", ruolo_id: "", cambio_password: true };
 
 function MatricePermessi({ permessi, onToggleScheda, onToggleSottoscheda }) {
   return (
@@ -67,6 +70,9 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
   // Vero finché sql/cambio_password.sql non è stato eseguito: senza la colonna il flag non si può
   // né leggere né scrivere, e senza avviso il salvataggio fallirebbe senza dire perché.
   const [mancaCambioPassword, setMancaCambioPassword] = useState(false);
+  // L'utente senza accesso a cui si stanno dando ruolo e password (vedi abilitaUtente).
+  const [utenteDaAbilitare, setUtenteDaAbilitare] = useState(null);
+  const [datiAbilitazione, setDatiAbilitazione] = useState(ABILITAZIONE_VUOTA);
 
   // --- RUOLI ---
   const [ruoli, setRuoli] = useState([]);
@@ -103,8 +109,14 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
   //
   // Nome e cognome restano facoltativi: gli account di servizio non sono persone e non ne hanno
   // uno. Chi ne è privo compare col suo username, come è sempre stato.
-  const utenteIncompleto = (u) => !u.email || !u.password || !u.ruolo_id;
-  const AVVISO_INCOMPLETO = "Compila email, password e ruolo";
+  //
+  // L'email, una volta scritta, non si cambia più da qui: è la credenziale con cui la persona entra
+  // e il riferimento con cui la si riconosce. Se proprio va corretta si interviene sul database.
+  // Si può solo dare a chi non l'ha mai avuta (gli account di servizio).
+  //
+  // Chi è senza accesso (vedi haAccesso) si modifica senza password e ruolo: glieli dà "Abilita".
+  const utenteIncompleto = (u, conAccesso = true) => !u.email || (conAccesso && (!u.password || !u.ruolo_id));
+  const avvisoIncompleto = (conAccesso = true) => conAccesso ? "Compila email, password e ruolo" : "Compila l'email";
 
   // Un nome lasciato in bianco si scrive nullo, non stringa vuota: è così che stanno a database
   // gli account che non l'hanno mai avuto, e mescolare le due cose renderebbe le ricerche bugiarde.
@@ -122,7 +134,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
 
   const addUtente = async (e) => {
     e.preventDefault();
-    if (utenteIncompleto(nuovoUtente)) return alert(AVVISO_INCOMPLETO);
+    if (utenteIncompleto(nuovoUtente)) return alert(avvisoIncompleto());
     const { ruolo_id, cambio_password, ...resto } = nuovoUtente;
     const { error } = await supabase.from('utenti')
       .insert([{
@@ -136,15 +148,20 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
   };
 
   const salvaModificaUtente = async () => {
-    if (utenteIncompleto(datiUtenteInModifica)) return alert(AVVISO_INCOMPLETO);
+    const originale = utenti.find(u => u.id === idUtenteInModifica);
+    const conAccesso = haAccesso(originale);
+    if (utenteIncompleto(datiUtenteInModifica, conAccesso)) return alert(avvisoIncompleto(conAccesso));
     const { error } = await supabase.from('utenti').update({
       nome: testoONullo(datiUtenteInModifica.nome),
       cognome: testoONullo(datiUtenteInModifica.cognome),
-      email: datiUtenteInModifica.email,
-      password: datiUtenteInModifica.password,
-      ...campiRuolo(datiUtenteInModifica.ruolo_id),
+      // L'email si scrive solo se prima non c'era: quella esistente non si tocca.
+      ...(originale?.email ? {} : { email: datiUtenteInModifica.email.trim() }),
+      ...(conAccesso ? {
+        password: datiUtenteInModifica.password,
+        ...campiRuolo(datiUtenteInModifica.ruolo_id),
+        ...campoCambioPassword(datiUtenteInModifica.cambio_password),
+      } : {}),
       bubbler: datiUtenteInModifica.bubbler,
-      ...campoCambioPassword(datiUtenteInModifica.cambio_password),
     }).eq('id', idUtenteInModifica);
     if (!error) { setIdUtenteInModifica(null); fetchUtenti(); }
     else { console.error(error); alert("Errore salvataggio utente: email già usata da un altro account?"); }
@@ -162,6 +179,34 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
       return alert(`Impossibile eliminare ${nome}: ha disponibilità o compensi collegati.\n\nPer togliergli l'accesso senza perdere lo storico, cambiagli la password o il ruolo.`);
     }
     fetchUtenti();
+  };
+
+  // Dare l'accesso a chi non ce l'ha: tipicamente un bubbler creato dal configuratore di
+  // Disponibilità, con l'anagrafica già completa e senza ancora ruolo né password.
+  const apriAbilitazione = (u) => { setUtenteDaAbilitare(u); setDatiAbilitazione({ ...ABILITAZIONE_VUOTA, cambio_password: !mancaCambioPassword }); };
+  const abilitaUtente = async (e) => {
+    e.preventDefault();
+    if (!datiAbilitazione.password || !datiAbilitazione.ruolo_id) return alert("Scegli ruolo e password");
+    const { error } = await supabase.from('utenti').update({
+      password: datiAbilitazione.password,
+      ...campiRuolo(datiAbilitazione.ruolo_id),
+      ...campoCambioPassword(datiAbilitazione.cambio_password),
+    }).eq('id', utenteDaAbilitare.id);
+    if (!error) { setUtenteDaAbilitare(null); fetchUtenti(); }
+    else { console.error(error); alert("Errore abilitazione utente"); }
+  };
+
+  // Revocare l'accesso invece di eliminare: la persona resta, con le sue disponibilità e i suoi
+  // compensi, ma non entra più. Se è un bubbler resta anche selezionabile come operatore.
+  const revocaAccesso = async (u) => {
+    if (u.id === user.id) return alert("Non puoi revocare l'accesso all'utente con cui hai effettuato l'accesso.");
+    const nome = [u.nome, u.cognome].filter(Boolean).join(' ') || u.username;
+    if (!window.confirm(`Revocare l'accesso a ${nome}?\n\nPassword e ruolo vengono tolti, i suoi dati restano.`)) return;
+    const { error } = await supabase.from('utenti').update({
+      password: null, ruolo_id: null, ruolo: null, ...campoCambioPassword(false),
+    }).eq('id', u.id);
+    if (!error) fetchUtenti();
+    else { console.error(error); alert("Errore revoca accesso: è stato eseguito sql/bubbler_senza_accesso.sql?"); }
   };
 
   const toggleBubbler = async (u) => {
@@ -246,7 +291,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
       {currentView === "utenti" && (
         <div className="schermata-admin no-print" style={{ padding: '20px' }}>
           <h2>Utenti</h2>
-          <p className="descrizione-pagina">Gestisci gli utenti dell'applicazione e assegna loro un ruolo. Spuntando <strong>Cambio psw</strong> l'utente, al primo accesso, dovrà scegliere una password nuova prima di entrare.</p>
+          <p className="descrizione-pagina">Gestisci gli utenti dell'applicazione e assegna loro un ruolo. Spuntando <strong>Cambio psw</strong> l'utente, al primo accesso, dovrà scegliere una password nuova prima di entrare. I bubbler creati da Disponibilità &gt; Configuratore compaiono qui <strong>senza accesso</strong>: con <strong>Abilita</strong> gli si assegnano ruolo e password. L'email, una volta salvata, non si modifica più.</p>
 
           {mancaCambioPassword && (
             <div style={{ margin: '14px 0', padding: '14px 18px', background: '#fff8e1', border: '1px solid #f0d999', borderLeft: '4px solid #f0a000', borderRadius: '4px' }}>
@@ -294,6 +339,29 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
             </div>
           )}
 
+          {utenteDaAbilitare && (
+            <div className="modal-form-backdrop" onClick={() => setUtenteDaAbilitare(null)}>
+              <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
+                <button type="button" className="modal-form-close" onClick={() => setUtenteDaAbilitare(null)} aria-label="Chiudi">✕</button>
+                <h3 style={{ margin: '0 0 6px 0', fontSize: '1.1rem', color: '#0288d1' }}>Abilita accesso</h3>
+                <p style={{ margin: '0 0 15px 0', fontSize: '0.85rem', color: '#555' }}>
+                  <strong>{[utenteDaAbilitare.nome, utenteDaAbilitare.cognome].filter(Boolean).join(' ') || utenteDaAbilitare.username}</strong> entrerà con <strong>{utenteDaAbilitare.email}</strong>.
+                </p>
+                <form onSubmit={abilitaUtente} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <input type="text" placeholder="Password" autoFocus value={datiAbilitazione.password} onChange={(e) => setDatiAbilitazione({ ...datiAbilitazione, password: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <select value={datiAbilitazione.ruolo_id} onChange={(e) => setDatiAbilitazione({ ...datiAbilitazione, ruolo_id: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                    <option value="">Seleziona ruolo...</option>
+                    {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                  </select>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: mancaCambioPassword ? '#aaa' : 'inherit' }}>
+                    <input type="checkbox" disabled={mancaCambioPassword} checked={!!datiAbilitazione.cambio_password} onChange={(e) => setDatiAbilitazione({ ...datiAbilitazione, cambio_password: e.target.checked })} /> Deve cambiare la password al primo accesso
+                  </label>
+                  <button type="submit" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Abilita</button>
+                </form>
+              </div>
+            </div>
+          )}
+
           <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible', overflowX: 'auto' }}>
             <table style={{ width: '100%', minWidth: '900px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead>
@@ -305,7 +373,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                   <th style={{ padding: '10px 12px', width: '130px' }}>Ruolo</th>
                   <th style={{ padding: '10px 12px', textAlign: 'center', width: '80px' }}>Bubbler</th>
                   <th style={{ padding: '10px 12px', textAlign: 'center', width: '100px' }} title="Al primo accesso l'utente deve scegliere una password nuova">Cambio psw</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', width: '120px' }}>Azioni</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', width: '170px' }}>Azioni</th>
                 </tr>
               </thead>
               <tbody>
@@ -315,18 +383,28 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                       <>
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" placeholder="Nome" value={datiUtenteInModifica.nome} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, nome: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
                         <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" placeholder="Cognome" value={datiUtenteInModifica.cognome} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, cognome: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
-                        <td style={{ padding: '10px 12px' }}><input type="email" className="table-input" placeholder="Email" value={datiUtenteInModifica.email} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, email: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
-                        <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiUtenteInModifica.password} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, password: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
-                        <td style={{ padding: '10px 12px' }}>
-                          <select className="table-input" value={datiUtenteInModifica.ruolo_id} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, ruolo_id: e.target.value })} style={{ width: '100%', height: '30px' }}>
-                            {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
-                          </select>
+                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>
+                          {u.email
+                            ? <span style={{ color: '#64748b' }} title="L'email non si modifica: se va corretta si interviene sul database">{u.email}</span>
+                            : <input type="email" className="table-input" placeholder="Email" value={datiUtenteInModifica.email} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, email: e.target.value })} style={{ width: '100%', height: '30px' }} />}
                         </td>
+                        {haAccesso(u) ? (
+                          <>
+                            <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiUtenteInModifica.password} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, password: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <select className="table-input" value={datiUtenteInModifica.ruolo_id} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, ruolo_id: e.target.value })} style={{ width: '100%', height: '30px' }}>
+                                {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                              </select>
+                            </td>
+                          </>
+                        ) : (
+                          <td colSpan="2" style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#94a3b8', fontSize: '0.78rem' }}>Senza accesso: si dà con Abilita</td>
+                        )}
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <input type="checkbox" checked={!!datiUtenteInModifica.bubbler} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, bubbler: e.target.checked })} />
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          <input type="checkbox" disabled={mancaCambioPassword} checked={!!datiUtenteInModifica.cambio_password} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, cambio_password: e.target.checked })} />
+                          <input type="checkbox" disabled={mancaCambioPassword || !haAccesso(u)} checked={!!datiUtenteInModifica.cambio_password} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, cambio_password: e.target.checked })} />
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
@@ -346,21 +424,32 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#555' }}>
                           {u.email || <span style={{ fontSize: '0.78rem', color: '#888' }}>nessuna email: entra ancora con l&apos;username</span>}
                         </td>
-                        <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#888' }}>••••••••</td>
-                        <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{ruoloDaId(u.ruolo_id)?.nome || u.ruolo || "—"}</td>
+                        {haAccesso(u) ? (
+                          <>
+                            <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#888' }}>••••••••</td>
+                            <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{ruoloDaId(u.ruolo_id)?.nome || u.ruolo || "—"}</td>
+                          </>
+                        ) : (
+                          <td colSpan="2" style={{ padding: '10px 12px', verticalAlign: 'middle' }}>
+                            <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '10px', background: '#fff8e1', border: '1px solid #f0d999', color: '#8a6d00', fontSize: '0.75rem', fontWeight: 600 }}>Senza accesso</span>
+                          </td>
+                        )}
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <input type="checkbox" checked={!!u.bubbler} onChange={() => toggleBubbler(u)} />
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <input
-                            type="checkbox" disabled={mancaCambioPassword} checked={!!u.cambio_password}
+                            type="checkbox" disabled={mancaCambioPassword || !haAccesso(u)} checked={!!u.cambio_password}
                             onChange={() => toggleCambioPassword(u)}
                             title={u.cambio_password ? "Al prossimo accesso dovrà scegliere una password nuova" : "Chiedi il cambio password al prossimo accesso"}
                           />
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                            <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, nome: u.nome || "", cognome: u.cognome || "", email: u.email || "", password: u.password, ruolo_id: u.ruolo_id ?? "", bubbler: !!u.bubbler, cambio_password: !!u.cambio_password }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                            <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, nome: u.nome || "", cognome: u.cognome || "", email: u.email || "", password: u.password || "", ruolo_id: u.ruolo_id ?? "", bubbler: !!u.bubbler, cambio_password: !!u.cambio_password }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                            {haAccesso(u)
+                              ? <button className="btn-outline-annulla" title="Toglie password e ruolo, i dati dell'utente restano" onClick={() => revocaAccesso(u)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px' }}>Revoca</button>
+                              : <button className="btn-accent-inline" title="Assegna ruolo e password" onClick={() => apriAbilitazione(u)} style={{ fontSize: '0.75rem', padding: '3px 8px' }}>Abilita</button>}
                             <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviUtente(u)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                           </div>
                         </td>

@@ -256,3 +256,9 @@ export const formattaDataGGMMAAAA = (valore) => {
   const d = new Date(valore);
   return isNaN(d) ? '' : d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
+
+// Un utente può esistere senza poter entrare: è il bubbler creato dal configuratore di
+// Disponibilità, a cui un amministratore non ha ancora dato password e ruolo, o quello a cui
+// l'accesso è stato revocato. Servono entrambi: una password senza ruolo aprirebbe una sessione
+// senza permessi, un ruolo senza password non corrisponde a nessuna credenziale.
+export const haAccesso = (u) => !!u?.password && u?.ruolo_id != null && u?.ruolo_id !== '';

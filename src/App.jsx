@@ -11,6 +11,7 @@ import Compensi from './moduli/compensi/Compensi';
 import Consuntivazione from './moduli/consuntivazione/Consuntivazione';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
 import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
+import { haAccesso } from './lib/utils';
 import Icona from './components/Icona';
 
 // Sessione conservata per sopravvivere a un aggiornamento della pagina (F5). Contiene solo
@@ -71,7 +72,7 @@ function App() {
   const [utentiDev, setUtentiDev] = useState([]);
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    supabase.from('utenti').select('*').order('username').then(({ data }) => { if (data) setUtentiDev(data); });
+    supabase.from('utenti').select('*').order('username').then(({ data }) => { if (data) setUtentiDev(data.filter(haAccesso)); });
   }, []);
 
   // Evita che la rotella del mouse modifichi per sbaglio un campo numerico (prezzi, costi, sconti):
@@ -154,7 +155,10 @@ function App() {
         const query = supabase.from('utenti').select('*');
         const { data } = await (id ? query.eq('id', id) : query.eq('username', username)).maybeSingle();
         if (annullato) return;
-        if (data?.cambio_password) {
+        // L'accesso revocato mentre la scheda era aperta vale dal ricaricamento successivo.
+        if (data && !haAccesso(data)) {
+          sessionStorage.removeItem(CHIAVE_SESSIONE);
+        } else if (data?.cambio_password) {
           // Il cambio password chiesto mentre la scheda era aperta vale dal ricaricamento
           // successivo: la sessione si chiude e si riparte dalla scelta della password.
           sessionStorage.removeItem(CHIAVE_SESSIONE);
@@ -211,6 +215,9 @@ function App() {
           .from('utenti').select('*')
           .eq('username', credenziale).eq('password', loginPass).maybeSingle());
       }
+      // Chi è senza accesso — bubbler creato dal configuratore e non ancora abilitato, o accesso
+      // revocato — non entra, anche se per qualche via le credenziali corrispondessero.
+      if (data && !haAccesso(data)) data = null;
 
       if (data?.cambio_password) {
         // Le credenziali sono giuste, ma la password è ancora quella scritta dall'amministratore:
