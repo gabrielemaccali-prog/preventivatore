@@ -209,14 +209,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
     else { console.error(error); alert("Errore revoca accesso: è stato eseguito sql/bubbler_senza_accesso.sql?"); }
   };
 
-  const toggleBubbler = async (u) => {
-    const { error } = await supabase.from('utenti').update({ bubbler: !u.bubbler }).eq('id', u.id);
-    if (!error) fetchUtenti();
-    else { console.error(error); alert("Errore salvataggio bubbler"); }
-  };
-
   // Chiedere il cambio password è la cosa che si fa subito dopo aver scritto una password a un
-  // utente, quindi si spunta al volo dall'elenco come il flag Bubbler, senza entrare in modifica.
+  // utente, quindi si spunta al volo dall'elenco, senza entrare in modifica.
   // Il flag si spegne da solo quando l'utente sceglie la sua password: qui si può solo chiedere,
   // o revocare la richiesta se era stata fatta per sbaglio.
   const toggleCambioPassword = async (u) => {
@@ -291,7 +285,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
       {currentView === "utenti" && (
         <div className="schermata-admin no-print" style={{ padding: '20px' }}>
           <h2>Utenti</h2>
-          <p className="descrizione-pagina">Gestisci gli utenti dell'applicazione e assegna loro un ruolo. Spuntando <strong>Cambio psw</strong> l'utente, al primo accesso, dovrà scegliere una password nuova prima di entrare. I bubbler creati da Disponibilità &gt; Configuratore compaiono qui <strong>senza accesso</strong>: con <strong>Abilita</strong> gli si assegnano ruolo e password. L'email, una volta salvata, non si modifica più.</p>
+          <p className="descrizione-pagina">Gestisci gli utenti dell'applicazione e assegna loro un ruolo. Spuntando <strong>Cambio psw</strong> l'utente, al primo accesso, dovrà scegliere una password nuova prima di entrare. I bubbler si creano da Disponibilità &gt; Configuratore e compaiono qui <strong>senza accesso</strong>: con <strong>Abilita</strong> gli si assegnano ruolo e password. L'email, una volta salvata, non si modifica più.</p>
 
           {mancaCambioPassword && (
             <div style={{ margin: '14px 0', padding: '14px 18px', background: '#fff8e1', border: '1px solid #f0d999', borderLeft: '4px solid #f0a000', borderRadius: '4px' }}>
@@ -325,9 +319,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                     <option value="">Seleziona ruolo...</option>
                     {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
                   </select>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
-                    <input type="checkbox" checked={!!nuovoUtente.bubbler} onChange={(e) => setNuovoUtente({ ...nuovoUtente, bubbler: e.target.checked })} /> Bubbler
-                  </label>
+                  {/* Niente flag Bubbler qui: i bubbler nascono in Disponibilità > Configuratore, con
+                      l'anagrafica completa. Su un utente esistente il flag si cambia in modifica. */}
                   {/* La password qui sopra la sceglie l'amministratore, quindi la conoscono in due:
                       spuntando questo l'utente se ne dà una sua al primo accesso. */}
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: mancaCambioPassword ? '#aaa' : 'inherit' }}>
@@ -435,7 +428,9 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                           </td>
                         )}
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
-                          <input type="checkbox" checked={!!u.bubbler} onChange={() => toggleBubbler(u)} />
+                          {/* Solo indicazione: cambiarlo con un clic dall'elenco è troppo facile per sbaglio,
+                              si fa entrando in modifica. */}
+                          <input type="checkbox" checked={!!u.bubbler} disabled title="Si cambia entrando in modifica" />
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <input

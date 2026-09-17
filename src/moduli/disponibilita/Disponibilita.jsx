@@ -589,7 +589,7 @@ function Disponibilita({ user }) {
                     )}
                   </tr>
                 ))}
-                {bubblers.length === 0 && <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun bubbler. Crealo con Nuovo, oppure attiva il flag "Bubbler" su un utente esistente in Impostazioni &gt; Utenti.</td></tr>}
+                {bubblers.length === 0 && <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun bubbler. Crealo con Nuovo, oppure attiva il flag "Bubbler" modificando un utente esistente in Impostazioni &gt; Utenti.</td></tr>}
               </tbody>
             </table>
           </div>
