@@ -1,4 +1,4 @@
-import { MOLTIPLICATORE_TARGET, SIGLE_PROVINCE } from './costanti.js';
+import { MOLTIPLICATORE_TARGET, SIGLE_PROVINCE, STATO_PREN } from './costanti.js';
 
 // Confronto "morbido" fra nomi di provincia: senza accenti, spazi, trattini e apostrofi, così
 // "Forlì-Cesena", "forli cesena" e "FORLI-CESENA" finiscono tutti sulla stessa chiave.
@@ -119,8 +119,9 @@ export const validaCF = (cfRaw) => {
 // CAP e provincia sono richiesti come il resto dell'indirizzo: senza non si emette la fattura elettronica.
 // È la fonte unica del "cosa manca": `fatturazioneCompletaDi` ne è solo la lettura in sì/no.
 export const campiFatturazioneMancanti = (p) => (p.fattTipo === 'azienda'
+  // Per un'azienda serve anche il codice SDI: è l'indirizzo a cui arriva la fattura elettronica.
   ? [[p.ragioneSociale, 'Ragione sociale'], [p.aziIndirizzo, 'Indirizzo'], [p.aziCap, 'CAP'], [p.aziCitta, 'Città'],
-     [p.aziProvincia, 'Provincia'], [p.pIva, 'P. IVA']]
+     [p.aziProvincia, 'Provincia'], [p.pIva, 'P. IVA'], [(p.sdi || '').trim(), 'Codice SDI']]
   : p.fattStraniero
     // Cliente straniero: CAP e provincia non si chiedono (valgono sempre 00000 e EE, scritti al
     // salvataggio) e il codice fiscale italiano non si applica; serve invece lo stato di appartenenza.
@@ -202,7 +203,7 @@ export const fineEventoDi = (p) => giorniEventoDi(p).slice(-1)[0] || p.data;
 // Una partita commissionata da un fornitore conta come saldata: non si incassa, si compensa con
 // quello che gli dobbiamo, e quel lavoro sta nella consuntivazione dei fornitori.
 export const prenotazioneCompletata = (p, oggiIso) =>
-  p.stato === 'CONF' && fineEventoDi(p) < oggiIso
+  p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso
   && (p.statoPagamento === 'saldato' || p.statoPagamento === 'compensazione') && fatturazioneCompletaDi(p);
 
 // Scompone un risultato Nominatim nei singoli campi indirizzo

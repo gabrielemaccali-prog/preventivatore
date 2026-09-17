@@ -812,7 +812,7 @@ td { padding: 8px 12px; vertical-align: middle; }
 
 /* Stati prenotazioni */
 .badge-stato.forse { background-color: #fed7aa; color: #9a3412; }
-.badge-stato.conf { background-color: #bbf7d0; color: #166534; }
+/* CONFERMATO usa .badge-stato.confermato, la stessa classe (e gli stessi colori) dei preventivi confermati */
 .badge-stato.chiusa { background-color: #e2e8f0; color: #475569; }
 
 /* Stati voucher */

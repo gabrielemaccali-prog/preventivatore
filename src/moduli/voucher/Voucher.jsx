@@ -3,6 +3,7 @@ import html2pdf from 'html2pdf.js';
 import { supabase } from '../../lib/supabaseClient';
 import { puoVedere } from '../../lib/permessi';
 import { formattaDataIT, formattaIndirizzoPulito, formattaDataGGMMAAAA } from '../../lib/utils';
+import { STATO_VOUCHER, etichettaStatoVoucher, classeBadgeStato } from '../../lib/costanti';
 import Icona from '../../components/Icona';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
 import { sommaImporti, statoFatturazione, daFatturareVoucher } from '../../lib/fatturazione';
@@ -19,11 +20,11 @@ const FORM_VUOTO = {
   importo: "", nascondiImporto: true, testoOfferta: "",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
   pagamenti: [],
-  stato: "incompleto", dataEmissione: "",
+  stato: STATO_VOUCHER.INCOMPLETO, dataEmissione: "",
   // Voucher pregresso: venduto col vecchio sistema, ha già un codice suo scritto sul buono.
   pregresso: false, codicePregresso: ""
 };
-const FORM_PREGRESSO_VUOTO = { ...FORM_VUOTO, pregresso: true, stato: "emesso" };
+const FORM_PREGRESSO_VUOTO = { ...FORM_VUOTO, pregresso: true, stato: STATO_VOUCHER.EMESSO };
 
 // Il codice di un voucher pregresso è quello scritto sul buono: BR + AAAAMMGG, la data in cui è
 // stato venduto. La data di emissione quindi non si chiede, si legge dal codice.
@@ -95,8 +96,8 @@ const fatturazioneCompletaDi = (f) =>
 
 // Lo stato dipende dalla presenza dei dati di fatturazione (a meno che sia già "usato")
 const calcolaStato = (f, statoPrecedente) => {
-  if (statoPrecedente === "usato") return "usato";
-  return fatturazioneCompletaDi(f) ? "emesso" : "incompleto";
+  if (statoPrecedente === STATO_VOUCHER.USATO) return STATO_VOUCHER.USATO;
+  return fatturazioneCompletaDi(f) ? STATO_VOUCHER.EMESSO : STATO_VOUCHER.INCOMPLETO;
 };
 
 // Validità: 1 anno solare dalla data di emissione
@@ -336,7 +337,7 @@ function Voucher({ user }) {
     if (erroreCodiceFiscale) return alert(erroreCodiceFiscale);
     setMostraErroriValidazione(false);
 
-    const stato = calcolaStato(form, codiceInModifica ? form.stato : "incompleto");
+    const stato = calcolaStato(form, codiceInModifica ? form.stato : STATO_VOUCHER.INCOMPLETO);
 
     const payload = {
       nominativo: form.nominativo,
@@ -387,7 +388,7 @@ function Voucher({ user }) {
     setCodiceInModifica(codiceFinale);
     setCodiceGenerato(codiceFinale);
     fetchVoucher();
-    alert(`Voucher ${codiceFinale} salvato (stato: ${stato}).`);
+    alert(`Voucher ${codiceFinale} salvato (stato: ${etichettaStatoVoucher(stato)}).`);
   };
 
   // Voucher pregresso: il codice è quello del buono, e la data di emissione è scritta dentro il codice.
@@ -417,7 +418,7 @@ function Voucher({ user }) {
     if (!codiceInModifica) {
       const { data: esistente } = await supabase.from('voucher').select('codice').eq('codice', codice).maybeSingle();
       if (esistente) { setSalvataggioVoucher(false); return alert(`Esiste già un voucher con codice ${codice}.`); }
-      ({ error } = await supabase.from('voucher').insert([{ codice, ...payload, dataEmissione: dataDaCodicePregresso(codice), stato: 'emesso' }]));
+      ({ error } = await supabase.from('voucher').insert([{ codice, ...payload, dataEmissione: dataDaCodicePregresso(codice), stato: STATO_VOUCHER.EMESSO }]));
     } else {
       // Codice, data e stato non si toccano: emesso/usato lo decide la prenotazione su cui viene scelto.
       ({ error } = await supabase.from('voucher').update(payload).eq('codice', codice));
@@ -456,7 +457,7 @@ function Voucher({ user }) {
       fattProvincia: v.fattProvincia || "",
       fattCF: v.fattCF || "",
       pagamenti: v.pagamenti || [],
-      stato: v.stato || "incompleto",
+      stato: v.stato || STATO_VOUCHER.INCOMPLETO,
       dataEmissione: v.dataEmissione || "",
       pregresso: !!v.pregresso,
       codicePregresso: v.pregresso ? v.codice : ""
@@ -531,7 +532,7 @@ function Voucher({ user }) {
     const statoPag = statoPagamentoDi(v.pagamenti, v.importo);
     const pagColore = statoPag === 'saldato' ? '#16a34a' : statoPag === 'acconto' ? '#ca8a04' : '#dc2626';
     // Banda laterale con lo stato del voucher, come nelle righe delle prenotazioni
-    const coloreStatoRiga = v.stato === 'emesso' ? '#16a34a' : v.stato === 'usato' ? '#94a3b8' : '#f59e0b';
+    const coloreStatoRiga = v.stato === STATO_VOUCHER.EMESSO ? '#16a34a' : v.stato === STATO_VOUCHER.USATO ? '#94a3b8' : '#f59e0b';
     return (
       <Fragment key={v.codice}>
         <tr onClick={() => setRigaEspansaId(prev => prev === v.codice ? null : v.codice)} style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}>
@@ -560,7 +561,7 @@ function Voucher({ user }) {
             <td colSpan={5} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
-                  <div style={{ marginBottom: '2px' }}><span className={`badge-stato ${v.stato}`}>{v.stato}</span></div>
+                  <div style={{ marginBottom: '2px' }}><span className={`badge-stato ${classeBadgeStato(v.stato)}`}>{etichettaStatoVoucher(v.stato)}</span></div>
                   {(v.telefono || v.email) && (
                     <div><span style={{ color: '#94a3b8' }}>Contatti </span>{[v.telefono, v.email].filter(Boolean).join(' · ')}</div>
                   )}
@@ -574,7 +575,7 @@ function Voucher({ user }) {
                       <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(v.pagamenti && v.pagamenti.length > 0) ? v.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${formattaDataGGMMAAAA(pg.data)}`).join(', ') : 'nessuno'} <em style={{ color: '#94a3b8' }}>({statoPag})</em></div>
                     </>
                   )}
-                  {v.stato === 'usato' && (
+                  {v.stato === STATO_VOUCHER.USATO && (
                     <div><span style={{ color: '#94a3b8' }}>Usato su </span>{prenUso ? `${prenUso.id} — ${prenUso.nominativo || ''} (${prenUso.data || ''})` : <em style={{ color: '#999' }}>prenotazione non trovata</em>}</div>
                   )}
                 </div>
@@ -793,7 +794,7 @@ function Voucher({ user }) {
                 </div>
               </div>
             )}
-            {form.stato === 'usato' && (
+            {form.stato === STATO_VOUCHER.USATO && (
               <p className="descrizione-pagina" style={{ margin: '10px 0 0 0' }}>
                 🎟️ Voucher già usato{prenotazioneDelVoucher(codiceInModifica) ? ` sulla prenotazione ${prenotazioneDelVoucher(codiceInModifica).id}` : ''}.
               </p>
@@ -862,7 +863,7 @@ function Voucher({ user }) {
           <label style={{ ...stileLabel, marginTop: '12px' }}>Importo € *
             <input type="number" step="any" min="0" value={form.importo} onChange={(e) => setF({ importo: e.target.value })} className={evidenzia('importo')} />
           </label>
-          {form.stato === 'usato' && (
+          {form.stato === STATO_VOUCHER.USATO && (
             <p className="descrizione-pagina" style={{ margin: '10px 0 0 0' }}>
               🎟️ Voucher già usato{prenotazioneDelVoucher(codiceInModifica) ? ` sulla prenotazione ${prenotazioneDelVoucher(codiceInModifica).id}` : ''}.
             </p>
@@ -970,9 +971,9 @@ function Voucher({ user }) {
 
       {/* ===================== GESTIONE (sotto-schede per stato) ===================== */}
       {currentView === "gestione" && puoVedere(user, 'voucher', 'gestione') && (() => {
-        const incompleti = voucherSalvati.filter(v => v.stato === 'incompleto');
-        const emessi = voucherSalvati.filter(v => v.stato === 'emesso');
-        const usati = voucherSalvati.filter(v => v.stato === 'usato');
+        const incompleti = voucherSalvati.filter(v => v.stato === STATO_VOUCHER.INCOMPLETO);
+        const emessi = voucherSalvati.filter(v => v.stato === STATO_VOUCHER.EMESSO);
+        const usati = voucherSalvati.filter(v => v.stato === STATO_VOUCHER.USATO);
         const liste = { incompleti, emessi, usati };
         const messaggiVuoto = {
           incompleti: "Nessun voucher da completare.",
@@ -1020,9 +1021,7 @@ function Voucher({ user }) {
               <label>Stato:</label>
               <select value={filtroStato} onChange={(e) => setFiltroStato(e.target.value)}>
                 <option value="">Tutti</option>
-                <option value="incompleto">Incompleto</option>
-                <option value="emesso">Emesso</option>
-                <option value="usato">Usato</option>
+                {Object.values(STATO_VOUCHER).map(stato => <option key={stato} value={stato}>{etichettaStatoVoucher(stato)}</option>)}
               </select>
             </div>
           </div>

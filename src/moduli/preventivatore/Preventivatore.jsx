@@ -2,7 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import html2pdf from 'html2pdf.js';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabaseClient';
-import { COSTO_AL_KM, GIORNI_VALIDITA_PREVENTIVO } from '../../lib/costanti';
+import { COSTO_AL_KM, GIORNI_VALIDITA_PREVENTIVO, STATO_PREVENTIVO, etichettaStatoPreventivo, classeBadgeStato } from '../../lib/costanti';
 import { puoVedere } from '../../lib/permessi';
 import Icona from '../../components/Icona';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
@@ -18,7 +18,13 @@ import {
 } from '../../lib/utils';
 
 // Colore della banda laterale nelle righe di tabella, uno per stato.
-const COLORE_STATO_PREVENTIVO = { Prenotato: '#0288d1', Confermato: '#16a34a', 'Azione richiesta': '#ea580c', Registrato: '#f59e0b', Annullato: '#dc2626' };
+const COLORE_STATO_PREVENTIVO = {
+  [STATO_PREVENTIVO.PRENOTATO]: '#0288d1',
+  [STATO_PREVENTIVO.CONFERMATO]: '#16a34a',
+  [STATO_PREVENTIVO.AZIONE_RICHIESTA]: '#ea580c',
+  [STATO_PREVENTIVO.REGISTRATO]: '#f59e0b',
+  [STATO_PREVENTIVO.ANNULLATO]: '#dc2626',
+};
 
 // Stato effettivo di un preventivo. A database esistono "Registrato", "Confermato", "Prenotato" e
 // "Annullato": "Azione richiesta" è derivato dalla data di emissione secondo la validità dichiarata
@@ -27,15 +33,13 @@ const COLORE_STATO_PREVENTIVO = { Prenotato: '#0288d1', Confermato: '#16a34a', '
 // oppure annullare il preventivo. Un preventivo già confermato non scade mai, e "Prenotato"
 // (collegato a una prenotazione, quindi non più selezionabile) lo decide il modulo prenotazioni.
 const statoPreventivo = (p) => {
-  if (p?.stato === "Prenotato") return "Prenotato";
-  if (p?.stato === "Confermato") return "Confermato";
-  if (p?.stato === "Annullato") return "Annullato";
-  if (!p?.dataEmissione) return p?.stato || "Registrato";
+  if (p?.stato === STATO_PREVENTIVO.PRENOTATO) return STATO_PREVENTIVO.PRENOTATO;
+  if (p?.stato === STATO_PREVENTIVO.CONFERMATO) return STATO_PREVENTIVO.CONFERMATO;
+  if (p?.stato === STATO_PREVENTIVO.ANNULLATO) return STATO_PREVENTIVO.ANNULLATO;
+  if (!p?.dataEmissione) return p?.stato || STATO_PREVENTIVO.REGISTRATO;
   const scadenza = new Date(p.dataEmissione).getTime() + GIORNI_VALIDITA_PREVENTIVO * 24 * 60 * 60 * 1000;
-  return Date.now() > scadenza ? "Azione richiesta" : "Registrato";
+  return Date.now() > scadenza ? STATO_PREVENTIVO.AZIONE_RICHIESTA : STATO_PREVENTIVO.REGISTRATO;
 };
-// Classe CSS del badge: "Azione richiesta" ha uno spazio, che farebbe due classi.
-const classeStatoPreventivo = (stato) => stato.toLowerCase().replace(/\s+/g, '-');
 
 // Le schede "Preventivatore" e "Vendita" sono superate dal form overlay di Gestione, che fa
 // entrambe le cose in un unico passaggio. Restano nel codice ma nascoste, in attesa di essere
@@ -199,7 +203,7 @@ function Preventivatore({ user }) {
   const [dataEmissionePreventivo, setDataEmissionePreventivo] = useState(null);
   // Stato a database del preventivo aperto: correggere un preventivo già confermato non lo
   // riporta a "Registrato", la conferma si toglie solo dal pulsante apposito in Gestione.
-  const [statoDocumento, setStatoDocumento] = useState("Registrato");
+  const [statoDocumento, setStatoDocumento] = useState(STATO_PREVENTIVO.REGISTRATO);
   const [salvataggioPreventivo, setSalvataggioPreventivo] = useState(false);
   // Stato di lavoro al momento del caricamento/salvataggio: serve per "Annulla modifiche"
   const [statoOriginale, setStatoOriginale] = useState(null);
@@ -228,6 +232,7 @@ function Preventivatore({ user }) {
   const [filtroReferente, setFiltroReferente] = useState("");
   const [filtroEmail, setFiltroEmail] = useState("");
   const [filtroMese, setFiltroMese] = useState(""); // mese dell'evento (aaaa-mm), "" = nessun filtro
+  const [filtroSoloBFM, setFiltroSoloBFM] = useState(false); // solo preventivi con almeno un gioco da una sede BFM
   const [rigaEspansaId, setRigaEspansaId] = useState(null); // id preventivo con riga dettaglio espansa (Storico)
 
   // --- 🔄 CARICAMENTO DATI DA SUPABASE AL LOGIN ---
@@ -320,7 +325,7 @@ function Preventivatore({ user }) {
     setNoteInterne("");
     setIdPreventivo({ codice: "", dettagliLogistici: null });
     setDataEmissionePreventivo(null);
-    setStatoDocumento("Registrato");
+    setStatoDocumento(STATO_PREVENTIVO.REGISTRATO);
     setStatoOriginale(null);
     setVenditaGonfiabili({});
     setVenditaExtras({});
@@ -548,7 +553,7 @@ function Preventivatore({ user }) {
     setDataEmissionePreventivo(p.dataEmissione || null);
     // "Azione richiesta" è derivato e non va risalvato; "Confermato", "Prenotato" e "Annullato" invece
     // vanno conservati, altrimenti salvando (anche solo una nota interna) lo si riporterebbe indietro.
-    setStatoDocumento(["Confermato", "Prenotato", "Annullato"].includes(p.stato) ? p.stato : "Registrato");
+    setStatoDocumento([STATO_PREVENTIVO.CONFERMATO, STATO_PREVENTIVO.PRENOTATO, STATO_PREVENTIVO.ANNULLATO].includes(p.stato) ? p.stato : STATO_PREVENTIVO.REGISTRATO);
     setIdPreventivo({ codice, dettagliLogistici: (typeof p.id === 'object' ? p.id.dettagliLogistici : null) });
     return codice;
   };
@@ -1115,7 +1120,7 @@ function Preventivatore({ user }) {
     if (risposta === null) return;
     const motivo = risposta.trim();
     if (!motivo) return alert("Serve un motivo per annullare il preventivo.");
-    const { error } = await supabase.from('preventivi').update({ stato: 'Annullato', motivoAnnullamento: motivo }).eq('codice', codice);
+    const { error } = await supabase.from('preventivi').update({ stato: STATO_PREVENTIVO.ANNULLATO, motivoAnnullamento: motivo }).eq('codice', codice);
     if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}`); }
     setRigaEspansaId(null);
     fetchData();
@@ -1124,10 +1129,18 @@ function Preventivatore({ user }) {
   // Tornando in gioco il motivo dell'annullamento se ne va con lo stato. Riparte da Registrato:
   // se la validità è passata ricade da sé in "Azione richiesta".
   const ripristinaPreventivo = async (codice) => {
-    const { error } = await supabase.from('preventivi').update({ stato: 'Registrato', motivoAnnullamento: null }).eq('codice', codice);
+    const { error } = await supabase.from('preventivi').update({ stato: STATO_PREVENTIVO.REGISTRATO, motivoAnnullamento: null }).eq('codice', codice);
     if (error) { console.error(error); return alert(`Errore nel ripristino: ${error.message}`); }
     fetchData();
   };
+
+  // Un preventivo "riguarda BFM" se almeno uno dei suoi giochi, gioco in offerta compreso, parte da
+  // una sede di proprietà. La sede si ritrova come alla riapertura del preventivo: per id, e per
+  // nome sulle righe salvate prima che l'id ci fosse. Conta il flag della sede di oggi.
+  const idSediBFM = new Set(sedi.filter(x => x.bfm).map(x => x.id));
+  const nomiSediBFM = new Set(sedi.filter(x => x.bfm).map(x => x.nome));
+  const rigaDaSedeBFM = (g) => !!g && (idSediBFM.has(g.sedeId) || nomiSediBFM.has(g.sedePartenza));
+  const haGiochiBFM = (p) => (p.gonfiabili || []).some(rigaDaSedeBFM) || (p.mostraGiocoOfferta && rigaDaSedeBFM(p.giocoOfferta));
 
   // --- FILTRAGGIO PREVENTIVI (Gestione e Storico) ---
   // I filtri sono gli stessi nelle due schede, e restano impostati passando dall'una all'altra.
@@ -1141,7 +1154,8 @@ function Preventivatore({ user }) {
     const matchReferente = (p.nomeReferente?.toLowerCase() || "").includes(filtroReferente.toLowerCase());
     const matchEmail = (p.emailReferente?.toLowerCase() || "").includes(filtroEmail.toLowerCase());
     const matchMese = !filtroMese || estraiDateDaPeriodo(p.periodo).inizio.startsWith(filtroMese);
-    return matchId && matchDest && matchStato && matchReferente && matchEmail && matchMese;
+    const matchBFM = !filtroSoloBFM || haGiochiBFM(p);
+    return matchId && matchDest && matchStato && matchReferente && matchEmail && matchMese && matchBFM;
   };
   const preventiviFiltrati = preventiviSalvati.filter(p => passaFiltri(p, { conStato: true }));
 
@@ -1889,7 +1903,7 @@ function Preventivatore({ user }) {
       <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
         {idPreventivo.codice ? `Modifica Preventivo ${idPreventivo.codice}` : "Nuovo Preventivo"}
         {/* Lo stato resta a vista: così è chiaro che salvando un confermato la conferma non si perde */}
-        {idPreventivo.codice && <span className={`badge-stato ${statoDocumento.toLowerCase()}`}>{statoDocumento}</span>}
+        {idPreventivo.codice && <span className={`badge-stato ${classeBadgeStato(statoDocumento)}`}>{etichettaStatoPreventivo(statoDocumento)}</span>}
       </h2>
 
       <div className="form-top-grid">
@@ -1934,7 +1948,7 @@ function Preventivatore({ user }) {
     const codice = typeof p.id === 'object' ? p.id.codice : p.id;
     const espansa = rigaEspansaId === codice;
     const stato = statoPreventivo(p);
-    const coloreStatoRiga = COLORE_STATO_PREVENTIVO[stato] || COLORE_STATO_PREVENTIVO.Registrato;
+    const coloreStatoRiga = COLORE_STATO_PREVENTIVO[stato] || COLORE_STATO_PREVENTIVO[STATO_PREVENTIVO.REGISTRATO];
     return (
       <Fragment key={`${codice}-${index}`}>
         <tr onClick={() => setRigaEspansaId(prev => prev === codice ? null : codice)} style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}>
@@ -1978,7 +1992,7 @@ function Preventivatore({ user }) {
             <td colSpan={COLONNE_PREVENTIVI.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155', minWidth: 0, flex: 1 }}>
-                  <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${classeStatoPreventivo(stato)}`}>{stato}</span></div>
+                  <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${classeBadgeStato(stato)}`}>{etichettaStatoPreventivo(stato)}</span></div>
                   {p.motivoAnnullamento && <div><span style={{ color: '#94a3b8' }}>Motivo annullamento </span><em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
                   <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{p.destinazione || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Periodo </span>{p.periodo || '—'}</div>
@@ -2030,11 +2044,11 @@ function Preventivatore({ user }) {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                  {p.stato === "Registrato" && (
-                    <button type="button" className="btn-icon-action success" title="Conferma" onClick={() => cambiaStatoPreventivo(codice, "Confermato")}><Icona nome="salva" size={16} style={{ marginRight: 0 }} /></button>
+                  {p.stato === STATO_PREVENTIVO.REGISTRATO && (
+                    <button type="button" className="btn-icon-action success" title="Conferma" onClick={() => cambiaStatoPreventivo(codice, STATO_PREVENTIVO.CONFERMATO)}><Icona nome="salva" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {p.stato === "Confermato" && (
-                    <button type="button" className="btn-icon-action" title="Riporta a Registrato" onClick={() => cambiaStatoPreventivo(codice, "Registrato")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                  {p.stato === STATO_PREVENTIVO.CONFERMATO && (
+                    <button type="button" className="btn-icon-action" title="Riporta a Registrato" onClick={() => cambiaStatoPreventivo(codice, STATO_PREVENTIVO.REGISTRATO)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   {/* "Prenotato" di norma non si tocca a mano: lo mette e lo toglie il modulo
                       Prenotazioni, e finché dura tiene il preventivo fuori dalle tendine perché non
@@ -2042,13 +2056,13 @@ function Preventivatore({ user }) {
                       quello stato non protegge nulla e impedisce soltanto di rimettere a posto: allora,
                       e solo allora, si sblocca. Il doppio aggancio resta impossibile, perché quando
                       l’aggancio c’è il pulsante non compare. */}
-                  {p.stato === "Prenotato" && !codiciPrenotati.has(String(codice)) && (
-                    <button type="button" className="btn-icon-action" title="Nessuna prenotazione lo sta usando: riportalo a Confermato" onClick={() => cambiaStatoPreventivo(codice, "Confermato")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                  {p.stato === STATO_PREVENTIVO.PRENOTATO && !codiciPrenotati.has(String(codice)) && (
+                    <button type="button" className="btn-icon-action" title="Nessuna prenotazione lo sta usando: riportalo a Confermato" onClick={() => cambiaStatoPreventivo(codice, STATO_PREVENTIVO.CONFERMATO)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {(p.stato === "Registrato" || p.stato === "Confermato") && (
+                  {(p.stato === STATO_PREVENTIVO.REGISTRATO || p.stato === STATO_PREVENTIVO.CONFERMATO) && (
                     <button type="button" className="btn-icon-action danger" title="Annulla il preventivo" onClick={() => annullaPreventivo(p)}><Icona nome="annulla" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {p.stato === "Annullato" && (
+                  {p.stato === STATO_PREVENTIVO.ANNULLATO && (
                     <button type="button" className="btn-icon-action" title="Ripristina: torna fra i registrati" onClick={() => ripristinaPreventivo(codice)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => onApri(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
@@ -2096,16 +2110,19 @@ function Preventivatore({ user }) {
         <label>Filtra per Destinazione:</label>
         <input type="text" placeholder="Es. Milano" value={filtroDestinazione} onChange={(e) => setFiltroDestinazione(e.target.value)} />
       </div>
+      <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }} title="Solo i preventivi con almeno un gioco che parte da una sede BFM">
+          <input type="checkbox" checked={filtroSoloBFM} onChange={(e) => setFiltroSoloBFM(e.target.checked)} /> Solo giochi BFM
+        </label>
+      </div>
       {conStato && (
         <div className="filtro-group" style={{ flex: '1 1 180px' }}>
           <label>Stato Documento:</label>
           <select value={filtroStato} onChange={(e) => setFiltroStato(e.target.value)}>
             <option value="">Tutti gli stati</option>
-            <option value="Registrato">Registrato</option>
-            <option value="Azione richiesta">Azione richiesta</option>
-            <option value="Confermato">Confermato</option>
-            <option value="Prenotato">Prenotato</option>
-            <option value="Annullato">Annullato</option>
+            {[STATO_PREVENTIVO.REGISTRATO, STATO_PREVENTIVO.AZIONE_RICHIESTA, STATO_PREVENTIVO.CONFERMATO, STATO_PREVENTIVO.PRENOTATO, STATO_PREVENTIVO.ANNULLATO].map(stato => (
+              <option key={stato} value={stato}>{etichettaStatoPreventivo(stato)}</option>
+            ))}
           </select>
         </div>
       )}
@@ -2568,16 +2585,16 @@ function Preventivatore({ user }) {
         // Gestione è il lavoro da fare. Gli annullati non ne hanno, e nemmeno i prenotati: da lì in
         // avanti se ne occupa il modulo Prenotazioni. Entrambi si trovano nello Storico.
         const schede = [
-          { chiave: 'registrati', etichetta: 'Registrati', icona: 'daConfermare', lista: filtrati.filter(p => statoPreventivo(p) === 'Registrato'), titolo: 'In attesa di risposta dal cliente, entro la validità dell\'offerta' },
-          { chiave: 'azioneRichiesta', etichetta: 'Azione richiesta', icona: 'attesaPagamento', lista: filtrati.filter(p => statoPreventivo(p) === 'Azione richiesta'), titolo: 'Validità scaduta senza conferma: da sentire il cliente o da annullare' },
-          { chiave: 'confermati', etichetta: 'Confermati', icona: 'completate', lista: filtrati.filter(p => statoPreventivo(p) === 'Confermato'), titolo: 'Confermati dal cliente, da collegare a una prenotazione' },
+          { chiave: 'registrati', etichetta: 'Registrati', icona: 'daConfermare', lista: filtrati.filter(p => statoPreventivo(p) === STATO_PREVENTIVO.REGISTRATO), titolo: 'In attesa di risposta dal cliente, entro la validità dell\'offerta' },
+          { chiave: 'azioneRichiesta', etichetta: 'Azione richiesta', icona: 'attesaPagamento', lista: filtrati.filter(p => statoPreventivo(p) === STATO_PREVENTIVO.AZIONE_RICHIESTA), titolo: 'Validità scaduta senza conferma: da sentire il cliente o da annullare' },
+          { chiave: 'confermati', etichetta: 'Confermati', icona: 'completate', lista: filtrati.filter(p => statoPreventivo(p) === STATO_PREVENTIVO.CONFERMATO), titolo: 'Confermati dal cliente, da collegare a una prenotazione' },
         ];
         // Come nelle prenotazioni: una sotto-scheda senza niente dentro non compare, e se quella
         // scelta si svuota (l'ultimo preventivo confermato, o escluso da un filtro) si passa alla
         // prima che ha ancora qualcosa.
         const visibili = schede.filter(sc => sc.lista.length > 0);
         const attiva = visibili.find(sc => sc.chiave === gestioneTab) || visibili[0];
-        const filtriAttivi = !!(filtroId || filtroDestinazione || filtroReferente || filtroEmail || filtroMese);
+        const filtriAttivi = !!(filtroId || filtroDestinazione || filtroReferente || filtroEmail || filtroMese || filtroSoloBFM);
         return (
           <div className="schermata-storico no-print">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>

@@ -5,6 +5,65 @@ export const MOLTIPLICATORE_TARGET = 1.35;
 // confermato viene considerato scaduto (stato derivato, non salvato a database).
 export const GIORNI_VALIDITA_PREVENTIVO = 10;
 
+// --- STATI DI PRENOTAZIONI, VOUCHER E PREVENTIVI ---
+// Ogni stato ha tre facce distinte: il nome usato nel codice (la chiave), il valore salvato nella
+// colonna "stato" e l'etichetta mostrata a schermo. Il codice usa sempre e solo la chiave: così
+// cambiare il valore salvato vuol dire cambiare una riga qui (più la migrazione dei dati), invece di
+// cercare la parola in tutto il progetto -- dove un'occorrenza dimenticata non dà errore, fa
+// semplicemente sparire le righe da un elenco.
+
+// Etichetta di uno stato, con ripiego sul valore stesso: uno stato sconosciuto si vede per quello che è.
+const etichettaDa = (etichette) => (stato) => etichette[stato] || stato || '—';
+
+// Classe CSS del badge (.badge-stato.<classe>): minuscolo e senza spazi, che farebbero due classi.
+export const classeBadgeStato = (stato) => (stato || '').toLowerCase().replace(/\s+/g, '-');
+
+// Prenotazioni -- colonna prenotazioni.stato
+export const STATO_PREN = Object.freeze({
+  FORSE: 'FORSE',
+  CONFERMATO: 'CONFERMATO',
+  ANNULLATA: 'ANNULLATA',
+  POSTICIPATA: 'POSTICIPATA',
+});
+export const ETICHETTA_STATO_PREN = Object.freeze({
+  [STATO_PREN.FORSE]: 'FORSE',
+  [STATO_PREN.CONFERMATO]: 'CONFERMATO',
+  [STATO_PREN.ANNULLATA]: 'ANNULLATA',
+  [STATO_PREN.POSTICIPATA]: 'POSTICIPATA',
+});
+export const etichettaStatoPren = etichettaDa(ETICHETTA_STATO_PREN);
+
+// Voucher -- colonna voucher.stato
+export const STATO_VOUCHER = Object.freeze({
+  INCOMPLETO: 'incompleto',
+  EMESSO: 'emesso',
+  USATO: 'usato',
+});
+export const ETICHETTA_STATO_VOUCHER = Object.freeze({
+  [STATO_VOUCHER.INCOMPLETO]: 'Incompleto',
+  [STATO_VOUCHER.EMESSO]: 'Emesso',
+  [STATO_VOUCHER.USATO]: 'Usato',
+});
+export const etichettaStatoVoucher = etichettaDa(ETICHETTA_STATO_VOUCHER);
+
+// Preventivi -- colonna preventivi.stato. AZIONE_RICHIESTA non si salva mai: si ricava dalla data
+// di emissione (vedi statoPreventivo nel preventivatore), ma a schermo si comporta come gli altri.
+export const STATO_PREVENTIVO = Object.freeze({
+  REGISTRATO: 'Registrato',
+  CONFERMATO: 'Confermato',
+  PRENOTATO: 'Prenotato',
+  ANNULLATO: 'Annullato',
+  AZIONE_RICHIESTA: 'Azione richiesta',
+});
+export const ETICHETTA_STATO_PREVENTIVO = Object.freeze({
+  [STATO_PREVENTIVO.REGISTRATO]: 'Registrato',
+  [STATO_PREVENTIVO.CONFERMATO]: 'Confermato',
+  [STATO_PREVENTIVO.PRENOTATO]: 'Prenotato',
+  [STATO_PREVENTIVO.ANNULLATO]: 'Annullato',
+  [STATO_PREVENTIVO.AZIONE_RICHIESTA]: 'Azione richiesta',
+});
+export const etichettaStatoPreventivo = etichettaDa(ETICHETTA_STATO_PREVENTIVO);
+
 // --- PROVINCE ITALIANE ---
 // Le province si scrivono sempre con la sigla (è il formato che vuole la fattura elettronica e che
 // si aspetta il gestionale). Qui la tabella nome -> sigla serve a convertire quello che arriva dalla

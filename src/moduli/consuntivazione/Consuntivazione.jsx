@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import { fineEventoDi, formattaDataGGMMAAAA } from '../../lib/utils'
+import { STATO_PREN } from '../../lib/costanti'
 import {
   sommaImporti, statoFatturazione, daFatturarePrenotazione, daFatturareVoucher,
   righeClientiExport, leggiExportFatture, abbinaFatture,
@@ -88,7 +89,7 @@ function Consuntivazione({ user }) {
   // Tutto ciò che si può fatturare: le prenotazioni confermate e i voucher venduti con l'app.
   // Una partita commissionata da un fornitore o da un campo no: non si fattura, si compensa nella
   // sua scheda di consuntivazione.
-  const fatturabili = useMemo(() => prenotazioni.filter(p => p.stato === 'CONF' && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
+  const fatturabili = useMemo(() => prenotazioni.filter(p => p.stato === STATO_PREN.CONFERMATO && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
   const voci = useMemo(() => {
     const valore = (codice) => parseFloat(voucherPerCodice[String(codice)]?.importo) || 0;
     const daPrenotazioni = fatturabili.map(p => {

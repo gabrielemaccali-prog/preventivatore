@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import { fineEventoDi, fatturazioneCompletaDi, etichettaPartita, etichettaGiochiBreve } from '../../lib/utils'
+import { STATO_PREN, etichettaStatoPren, classeBadgeStato } from '../../lib/costanti'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { preventiviPerOperatore, lordizza } from '../compensi/calcolo'
@@ -141,7 +142,7 @@ function CostiRicavi({ user }) {
     // Una partita annullata non ha prodotto niente, e una posticipata lo produrra' un altro
     // giorno: contarle qui vorrebbe dire mettere a bilancio ricavi che non ci sono e costi che
     // non sono stati sostenuti. Restano nel modulo prenotazioni, che e' dove servono.
-    if (pr.data) setPrenotazioni(pr.data.filter(p => p.stato !== 'ANNULLATA' && p.stato !== 'POSTICIPATA').map(p => ({
+    if (pr.data) setPrenotazioni(pr.data.filter(p => p.stato !== STATO_PREN.ANNULLATA && p.stato !== STATO_PREN.POSTICIPATA).map(p => ({
       ...p,
       pagamenti: (pag.data || []).filter(x => x.riferimento === p.id).map(x => ({ data: x.data, importo: x.importo, nominativo: x.nominativo || "" }))
     })));
@@ -315,7 +316,7 @@ function CostiRicavi({ user }) {
         <td style={{ padding: '10px' }}>{p.nominativo}</td>
         <td style={{ padding: '10px' }}>{etichettaDi(p)}</td>
         <td style={{ padding: '10px' }}>{campoNomeDi(p)}</td>
-        <td style={{ padding: '10px' }}><span className={`badge-stato ${(p.stato || '').toLowerCase()}`}>{p.stato}</span></td>
+        <td style={{ padding: '10px' }}><span className={`badge-stato ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
         <td style={{ padding: '10px', textAlign: 'right' }}>€{r.toFixed(2)}</td>
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cc.toFixed(2)}</td>
         <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{cr.toFixed(2)}</td>
@@ -377,12 +378,12 @@ function CostiRicavi({ user }) {
     );
   };
 
-  // ====================== COMPLETATE (partite CONF passate, saldate e con dati di fatturazione completi) ======================
+  // ====================== COMPLETATE (partite confermate passate, saldate e con dati di fatturazione completi) ======================
   const oggiIsoCR = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
   // Non solo quelle chiuse: tutte le partite confermate che sono gia' state giocate. Una che
   // aspetta il saldo o i dati di fatturazione e' proprio quella da cercare, e prima restava
   // fuori dall'unico elenco che guardava indietro.
-  const righeCompletate = prenotazioni.filter(p => p.stato === 'CONF' && fineEventoDi(p) < oggiIsoCR);
+  const righeCompletate = prenotazioni.filter(p => p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIsoCR);
 
   // ====================== ANDAMENTO (grafici) ======================
   const annoCorrente = String(new Date().getFullYear());
@@ -599,7 +600,7 @@ function CostiRicavi({ user }) {
           </div>
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
             <div className="filtro-group" style={{ flex: '1 1 160px' }}><label>Data:</label><input type="date" value={filtroData} onChange={(e) => setFiltroData(e.target.value)} /></div>
-            <div className="filtro-group" style={{ flex: '1 1 160px' }}><label>Stato:</label><select value={filtroStato} onChange={(e) => setFiltroStato(e.target.value)}><option value="">Tutti</option><option value="FORSE">FORSE</option><option value="CONF">CONF</option></select></div>
+            <div className="filtro-group" style={{ flex: '1 1 160px' }}><label>Stato:</label><select value={filtroStato} onChange={(e) => setFiltroStato(e.target.value)}><option value="">Tutti</option>{[STATO_PREN.FORSE, STATO_PREN.CONFERMATO].map(s => <option key={s} value={s}>{etichettaStatoPren(s)}</option>)}</select></div>
             <div className="filtro-group" style={{ flex: '1 1 180px' }}><label>Nominativo:</label><input type="text" value={filtroNome} onChange={(e) => setFiltroNome(e.target.value)} /></div>
           </div>
 

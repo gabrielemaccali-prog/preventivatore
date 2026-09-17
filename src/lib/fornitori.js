@@ -1,3 +1,5 @@
+import { STATO_PREN } from './costanti.js';
+
 // ============================================================
 // Fornitori e campi: da quale sede arriva il costo di una prenotazione, e cosa resta da
 // consuntivare per ogni controparte a cui si paga qualcosa.
@@ -173,7 +175,7 @@ const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, 
 
   prenotazioni.forEach(p => {
     // Una FORSE non è stata giocata, un'annullata non c'è stata: non c'è niente da pagare.
-    if (p.stato !== 'CONF' || !nelFiltro(p.data)) return;
+    if (p.stato !== STATO_PREN.CONFERMATO || !nelFiltro(p.data)) return;
 
     costiDi(p).forEach(c => {
       const controparte = c.id != null ? perId[String(c.id)] : null;

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA, etichettaPartita } from '../../lib/utils'
+import { STATO_PREN } from '../../lib/costanti'
 import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, arrotonda2 } from '../../lib/fornitori'
 
 // ============================================================
@@ -114,7 +115,7 @@ function Controparti({ tipo }) {
     setCaricamento(true);
     const [pr, se, ca, li, pv, gi, vc, pe] = await Promise.all([
       // Solo il passato: il futuro non si consuntiva, come nei compensi.
-      supabase.from('prenotazioni').select('*').eq('stato', 'CONF').lte('data', oggiIso()).order('data'),
+      supabase.from('prenotazioni').select('*').eq('stato', STATO_PREN.CONFERMATO).lte('data', oggiIso()).order('data'),
       supabase.from('sedi').select('*'),
       supabase.from('pren_campi').select('id, nome').order('nome'),
       supabase.from('gonfiabili').select('id, giocoId, locationId'),

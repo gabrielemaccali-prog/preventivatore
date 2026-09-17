@@ -2,6 +2,7 @@
 //   npm run prova:fornitori
 // Gira in Node senza dev server né browser, perché fornitori.js è fatto di sole funzioni pure.
 import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, SEDE_NON_INDICATA } from './fornitori.js';
+import { STATO_PREN } from './costanti.js';
 
 const esiti = [];
 const verifica = (caso, atteso, ottenuto) => {
@@ -27,8 +28,8 @@ const risolutore = risolutoreSedi({ sedi, listino, preventivi });
 
 // Il caso che ha fatto nascere tutto: a Laquilone dobbiamo 920 per un noleggio (costo ereditato
 // dal preventivo, senza righe), e lui ci ha commissionato una partita da 600 netti.
-const pren1032 = { id: 'PRN-2026-1032', data: '2026-09-03', stato: 'CONF', nominativo: 'Beatrice', ereditaCosti: true, costoEreditato: 920, preventivoCollegato: 'PRV-AQ', voci: null, giocoId: 11, prezzoVenditaNetto: 1250 };
-const pren1047 = { id: 'PRN-2026-1047', data: '2026-09-06', stato: 'CONF', nominativo: 'Ezio', ereditaCosti: false, voci: null, giocoId: 10, prezzoVenditaNetto: 600, prezzoVendita: 732, clienteSedeId: 'loc_aq' };
+const pren1032 = { id: 'PRN-2026-1032', data: '2026-09-03', stato: STATO_PREN.CONFERMATO, nominativo: 'Beatrice', ereditaCosti: true, costoEreditato: 920, preventivoCollegato: 'PRV-AQ', voci: null, giocoId: 11, prezzoVenditaNetto: 1250 };
+const pren1047 = { id: 'PRN-2026-1047', data: '2026-09-06', stato: STATO_PREN.CONFERMATO, nominativo: 'Ezio', ereditaCosti: false, voci: null, giocoId: 10, prezzoVenditaNetto: 600, prezzoVendita: 732, clienteSedeId: 'loc_aq' };
 
 // ---------- da quale sede arriva il costo ----------
 verifica('costo ereditato: sede dal preventivo', { Laquilone: { costo: 920, giochi: [] } }, risolutore.costiPerSede(pren1032));
@@ -66,9 +67,9 @@ verifica('periodo chiuso: resta solo la partita fuori', ['PRN-2026-1047'], dopoP
 verifica('periodo chiuso: il saldo diventa un credito', -600, dopoPeriodo.saldo);
 
 // ---------- esclusioni ----------
-const forse = { ...pren1032, id: 'PRN-FORSE', stato: 'FORSE' };
+const forse = { ...pren1032, id: 'PRN-FORSE', stato: STATO_PREN.FORSE };
 verifica('una FORSE non si consuntiva', 1, daConsuntivareFornitori({ ...base, prenotazioni: [forse, pren1047] }).controparti[0].righe.length);
-const ignota = { id: 'PRN-X', data: '2026-09-10', stato: 'CONF', ereditaCosti: true, costoEreditato: 50, voci: null };
+const ignota = { id: 'PRN-X', data: '2026-09-10', stato: STATO_PREN.CONFERMATO, ereditaCosti: true, costoEreditato: 50, voci: null };
 verifica('costo di sede ignota: segnalato, non perso', [{ sede: SEDE_NON_INDICATA, costo: 50 }],
   daConsuntivareFornitori({ ...base, prenotazioni: [ignota] }).senzaControparte.map(s => ({ sede: s.nome, costo: s.costo })));
 
@@ -94,7 +95,7 @@ verifica("extra su preventivo di un fornitore: si paga a lui", { Laquilone: { co
   conDettaglio.costiPerSede({ preventivoCollegato: 'PRV-AQ', voci: vociAq }));
 verifica('extra su partita nostra: resta un costo, di nessun fornitore', { '—': { costo: 100, giochi: ['Pernotto'] } },
   conDettaglio.costiPerSede({ preventivoCollegato: 'PRV-BFM', voci: [{ nome: 'Bubble', sede: 'BFM', costo: 190, giocoId: 10 }, { nome: 'Pernotto', sede: '—', costo: 100, giocoId: null }] }));
-const nostraConExtra = { id: 'PRN-BFM', data: '2026-09-05', stato: 'CONF', preventivoCollegato: 'PRV-BFM', voci: [{ nome: 'Pernotto', sede: '—', costo: 100, giocoId: null }] };
+const nostraConExtra = { id: 'PRN-BFM', data: '2026-09-05', stato: STATO_PREN.CONFERMATO, preventivoCollegato: 'PRV-BFM', voci: [{ nome: 'Pernotto', sede: '—', costo: 100, giocoId: null }] };
 verifica('extra su partita nostra: non è un avviso di fornitore mancante', 0,
   daConsuntivareFornitori({ prenotazioni: [nostraConExtra], sedi, risolutore: conDettaglio }).senzaControparte.length);
 const rigaAq = daConsuntivareFornitori({ prenotazioni: [{ ...pren1032, voci: vociAq }], sedi, risolutore: conDettaglio }).controparti[0].righe[0];
@@ -109,9 +110,9 @@ verifica('fotografia: dice di che controparte è', ['fornitore', 'loc_aq'], [fot
 
 // ---------- campi: affitto + rinfresco ----------
 const campiAnagrafica = [{ id: 'cmp_q', nome: 'Quintosole' }, { id: 'cmp_c', nome: 'Comasina' }];
-const partitaCampo = { id: 'PRN-C1', data: '2026-09-13', stato: 'CONF', nominativo: 'Marco', campoId: 'cmp_q', campoNome: 'Quintosole', costoCampoNetto: 45.08196721311476, costoRinfrescoNetto: 98.36065573770492, prezzoVenditaNetto: 400 };
-const soloAffitto = { id: 'PRN-C2', data: '2026-09-12', stato: 'CONF', campoId: 'cmp_q', costoCampo: 61, costoRinfrescoNetto: 0 };
-const commissionata = { id: 'PRN-C3', data: '2026-09-14', stato: 'CONF', campoId: null, prezzoVenditaNetto: 150, clienteCampoId: 'cmp_q' };
+const partitaCampo = { id: 'PRN-C1', data: '2026-09-13', stato: STATO_PREN.CONFERMATO, nominativo: 'Marco', campoId: 'cmp_q', campoNome: 'Quintosole', costoCampoNetto: 45.08196721311476, costoRinfrescoNetto: 98.36065573770492, prezzoVenditaNetto: 400 };
+const soloAffitto = { id: 'PRN-C2', data: '2026-09-12', stato: STATO_PREN.CONFERMATO, campoId: 'cmp_q', costoCampo: 61, costoRinfrescoNetto: 0 };
+const commissionata = { id: 'PRN-C3', data: '2026-09-14', stato: STATO_PREN.CONFERMATO, campoId: null, prezzoVenditaNetto: 150, clienteCampoId: 'cmp_q' };
 const campiBase = { prenotazioni: [partitaCampo, soloAffitto, commissionata], campi: campiAnagrafica };
 const quintosole = daConsuntivareCampi(campiBase).controparti.find(c => c.controparte.id === 'cmp_q');
 verifica('campo: affitto e rinfresco separati', { affitto: 45.08, rinfresco: 98.36 }, quintosole.righe.find(r => r.riferimento === 'PRN-C1').dettaglio);
@@ -126,7 +127,7 @@ verifica('campo: il suo periodo sì', 0,
   daConsuntivareCampi({ ...campiBase, periodi: [{ controparte: 'campo', controparte_id: 'cmp_q', dal: '2026-09-01', al: '2026-09-30' }] }).controparti.length);
 verifica('campo: rettifica sul rinfresco', 183.44,
   daConsuntivareCampi({ ...campiBase, voci: [{ controparte: 'campo', controparte_id: 'cmp_q', riferimento: 'PRN-C1', lato: 'costo', importo: -10 }] }).controparti[0].costo);
-const campoIgnoto = { id: 'PRN-C4', data: '2026-09-10', stato: 'CONF', campoId: 'cmp_sparito', campoNome: 'Vecchio', costoCampoNetto: 40 };
+const campoIgnoto = { id: 'PRN-C4', data: '2026-09-10', stato: STATO_PREN.CONFERMATO, campoId: 'cmp_sparito', campoNome: 'Vecchio', costoCampoNetto: 40 };
 verifica('campo tolto dall\'anagrafica: segnalato, non perso', [{ nome: 'Vecchio', costo: 40 }],
   daConsuntivareCampi({ prenotazioni: [campoIgnoto], campi: campiAnagrafica }).senzaControparte.map(x => ({ nome: x.nome, costo: x.costo })));
 

@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { validaCF, formattaDataGGMMAAAA, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
-import { STATI_ESTERI, STATO_ITALIA } from '../../lib/costanti'
+import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
@@ -33,7 +33,7 @@ const PREN_VUOTA = {
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
   fattStraniero: false, fattStato: "",
   ragioneSociale: "", aziIndirizzo: "", aziCap: "", aziCitta: "", aziProvincia: "", pIva: "", cfAzienda: "", sdi: "",
-  stato: "FORSE"
+  stato: STATO_PREN.FORSE
 };
 
 const ivaLabel = (incl) => incl ? 'IVA inclusa' : 'IVA esclusa';
@@ -59,9 +59,9 @@ const inizioSettimana = (d) => { const x = new Date(d); const g = x.getDay(); x.
 // traccia di un impegno che c'e' stato -- il campo prenotato, il cliente avvisato -- e con essa
 // il motivo per cui quel giorno era occupato.
 const COLORI_STATO = {
-  CONF: { bg: '#dcfce7', bd: '#16a34a', tx: '#166534' },
-  ANNULLATA: { bg: '#fee2e2', bd: '#dc2626', tx: '#991b1b' },
-  POSTICIPATA: { bg: '#fef9c3', bd: '#eab308', tx: '#854d0e' },
+  [STATO_PREN.CONFERMATO]: { bg: '#dcfce7', bd: '#16a34a', tx: '#166534' },
+  [STATO_PREN.ANNULLATA]: { bg: '#fee2e2', bd: '#dc2626', tx: '#991b1b' },
+  [STATO_PREN.POSTICIPATA]: { bg: '#fef9c3', bd: '#eab308', tx: '#854d0e' },
 };
 const STATO_AMBRA = { bg: '#fed7aa', bd: '#f59e0b', tx: '#9a3412' };
 const coloreStato = (s) => COLORI_STATO[s] || STATO_AMBRA;
@@ -723,7 +723,7 @@ function Prenotazioni({ user }) {
       fattNome: p.fattNome || "", fattCognome: p.fattCognome || "", fattIndirizzo: p.fattIndirizzo || "", fattCap: p.fattCap || "", fattCitta: p.fattCitta || "", fattProvincia: p.fattProvincia || "", fattCF: p.fattCF || "",
       fattStraniero: !!p.fattStraniero, fattStato: p.fattStato || "",
       ragioneSociale: p.ragioneSociale || "", aziIndirizzo: p.aziIndirizzo || "", aziCap: p.aziCap || "", aziCitta: p.aziCitta || "", aziProvincia: p.aziProvincia || "", pIva: p.pIva || "", cfAzienda: p.cfAzienda || "", sdi: p.sdi || "",
-      stato: p.stato || "FORSE"
+      stato: p.stato || STATO_PREN.FORSE
     };
     setFormPren(caricato);
     setFormPrenOriginale(caricato);
@@ -948,18 +948,18 @@ function Prenotazioni({ user }) {
   const puoConfermareSenzaIncasso = user.isAdmin;
 
   const cambiaStatoPren = async (p, nuovoStato) => {
-    if (nuovoStato === 'CONF' && senzaIncasso(p)) {
+    if (nuovoStato === STATO_PREN.CONFERMATO && senzaIncasso(p)) {
       if (!puoConfermareSenzaIncasso) return alert("Non è possibile confermare: serve almeno un acconto o il saldo.");
       if (!window.confirm("Su questa prenotazione non risulta alcun incasso. Confermarla comunque?")) return;
     }
     // Tornando fra le partite vive il motivo dell'annullamento se ne va con lo stato: tenerlo
     // vorrebbe dire raccontare di una cosa che non e' piu' successa.
-    const tornaInGioco = p.stato === 'ANNULLATA' || p.stato === 'POSTICIPATA';
+    const tornaInGioco = p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA;
     await supabase.from('prenotazioni')
       .update(tornaInGioco ? { stato: nuovoStato, motivoAnnullamento: null } : { stato: nuovoStato })
       .eq('id', p.id);
     fetchTutto();
-    if (nuovoStato === 'CONF') { setPrenConferma(p); setConfermaInglese(false); }
+    if (nuovoStato === STATO_PREN.CONFERMATO) { setPrenConferma(p); setConfermaInglese(false); }
   };
   // Annullare una partita non e' una cosa sola: se non e' entrato niente e' finita li', ma se un
   // acconto c'e' quel denaro resta del cliente e la partita e' solo da riprogrammare. Sono due
@@ -967,10 +967,10 @@ function Prenotazioni({ user }) {
   // le distingue, quindi lo stato lo decide lui invece di chiederlo a chi clicca.
   const annullaPrenotazione = async (p) => {
     const incassato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
-    const nuovoStato = incassato > 0 ? 'POSTICIPATA' : 'ANNULLATA';
+    const nuovoStato = incassato > 0 ? STATO_PREN.POSTICIPATA : STATO_PREN.ANNULLATA;
     const spiegazione = incassato > 0
-      ? `Su ${p.id} risultano €${incassato.toFixed(2)} già incassati, quindi non si annulla: passa a POSTICIPATA, da riprogrammare.`
-      : `Su ${p.id} non risulta alcun incasso: passa ad ANNULLATA.`;
+      ? `Su ${p.id} risultano €${incassato.toFixed(2)} già incassati, quindi non si annulla: passa a ${etichettaStatoPren(nuovoStato)}, da riprogrammare.`
+      : `Su ${p.id} non risulta alcun incasso: passa ad ${etichettaStatoPren(nuovoStato)}.`;
     // Il motivo non e' un di piu': lo stato dice che la partita non si fa, il motivo dice se il
     // problema era del cliente, del campo o del tempo. Fra due mesi e' l'unica cosa che serve, e
     // se non lo si scrive adesso resta nella testa di chi ha cliccato. Per questo si chiede qui e
@@ -1009,8 +1009,8 @@ function Prenotazioni({ user }) {
     const pren = prenotazioni.find(p => p.id === id);
     await supabase.from('prenotazioni').delete().eq('id', id);
     await supabase.from('pagamenti').delete().eq('tipo', 'prenotazione').eq('riferimento', id);
-    if (pren?.voucherCodice) await supabase.from('voucher').update({ stato: 'emesso' }).eq('codice', pren.voucherCodice);
-    if (pren?.preventivoCollegato) await supabase.from('preventivi').update({ stato: 'Confermato' }).eq('codice', pren.preventivoCollegato);
+    if (pren?.voucherCodice) await supabase.from('voucher').update({ stato: STATO_VOUCHER.EMESSO }).eq('codice', pren.voucherCodice);
+    if (pren?.preventivoCollegato) await supabase.from('preventivi').update({ stato: STATO_PREVENTIVO.CONFERMATO }).eq('codice', pren.preventivoCollegato);
     fetchTutto();
   };
 
@@ -1040,7 +1040,7 @@ function Prenotazioni({ user }) {
     // Verde vuol dire "da parte nostra non manca niente": confermata, giocata, con i dati per
     // fatturare. Il saldo non c'entra -- una partita che aspetta solo il pagamento sta in "Da
     // saldare", non in "Da completare", e non c'e' niente da sistemare nella scheda.
-    const completata = p.stato === 'CONF' && fineEventoDi(p) < oggiIso && fatturazioneCompletaDi(p);
+    const completata = p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso && fatturazioneCompletaDi(p);
     const saldata = p.statoPagamento === 'saldato';
     return (
       <Fragment key={p.id}>
@@ -1090,7 +1090,7 @@ function Prenotazioni({ user }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
                   {/* Lo stato in testa, come nel dettaglio dei preventivi: aprendo una riga e' la prima
                       cosa che si vuole sapere, prima di chi e' il cliente. */}
-                  <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${(p.stato || '').toLowerCase()}`}>{p.stato || '—'}</span></div>
+                  <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></div>
                   <div><span style={{ color: '#94a3b8' }}>Telefono </span>{p.telefono || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Email </span>{p.email || '—'}</div>
                   {p.tipoRinfresco && <div><span style={{ color: '#94a3b8' }}>Rinfresco </span>{p.tipoRinfresco}{p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} pers` : ''}</div>}
@@ -1103,17 +1103,17 @@ function Prenotazioni({ user }) {
                   {p.note && <div><span style={{ color: '#94a3b8' }}>Note </span><em>{p.note}</em></div>}
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                  {p.stato === "FORSE" && (!senzaIncasso(p) || puoConfermareSenzaIncasso) && (
-                    <button type="button" className="btn-icon-action success" title={senzaIncasso(p) ? "Conferma senza incasso (da amministratore)" : "Conferma (prepara mail al cliente)"} onClick={() => cambiaStatoPren(p, "CONF")}><Icona nome="salva" size={16} style={{ marginRight: 0 }} /></button>
+                  {p.stato === STATO_PREN.FORSE && (!senzaIncasso(p) || puoConfermareSenzaIncasso) && (
+                    <button type="button" className="btn-icon-action success" title={senzaIncasso(p) ? "Conferma senza incasso (da amministratore)" : "Conferma (prepara mail al cliente)"} onClick={() => cambiaStatoPren(p, STATO_PREN.CONFERMATO)}><Icona nome="salva" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {p.stato === "CONF" && (
-                    <button type="button" className="btn-icon-action" title="Riporta a FORSE" onClick={() => cambiaStatoPren(p, "FORSE")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                  {p.stato === STATO_PREN.CONFERMATO && (
+                    <button type="button" className="btn-icon-action" title="Riporta a FORSE" onClick={() => cambiaStatoPren(p, STATO_PREN.FORSE)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {(p.stato === "FORSE" || p.stato === "CONF") && (
+                  {(p.stato === STATO_PREN.FORSE || p.stato === STATO_PREN.CONFERMATO) && (
                     <button type="button" className="btn-icon-action danger" title="Annulla la prenotazione" onClick={() => annullaPrenotazione(p)}><Icona nome="annulla" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {(p.stato === "ANNULLATA" || p.stato === "POSTICIPATA") && (
-                    <button type="button" className="btn-icon-action" title="Rimetti in FORSE" onClick={() => cambiaStatoPren(p, "FORSE")}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                  {(p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA) && (
+                    <button type="button" className="btn-icon-action" title="Rimetti in FORSE" onClick={() => cambiaStatoPren(p, STATO_PREN.FORSE)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => caricaPrenotazione(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
                   {!p.googleCalendarSync && (
@@ -1197,7 +1197,7 @@ function Prenotazioni({ user }) {
     const mNome = (p.nominativo || "").toLowerCase().includes(filtroPrenNome.toLowerCase());
     // Se lo stato scelto e' proprio ANNULLATA la spunta non le nasconde: vorrebbe dire chiedere una
     // cosa e toglierla nello stesso momento, e restare con un elenco vuoto senza capire perche'.
-    const mAnnullate = !nascondiAnnullate || filtroPrenStato === 'ANNULLATA' || p.stato !== 'ANNULLATA';
+    const mAnnullate = !nascondiAnnullate || filtroPrenStato === STATO_PREN.ANNULLATA || p.stato !== STATO_PREN.ANNULLATA;
     return mData && mSettimana && mStato && mNome && mAnnullate;
   };
   const prenotazioniFiltrate = prenotazioni.filter(p => passaFiltriPren(p));
@@ -1225,10 +1225,7 @@ function Prenotazioni({ user }) {
               <label>Stato:</label>
               <select value={filtroPrenStato} onChange={(e) => setFiltroPrenStato(e.target.value)}>
                 <option value="">Tutti</option>
-                <option value="FORSE">FORSE</option>
-                <option value="CONF">CONF</option>
-                <option value="ANNULLATA">ANNULLATA</option>
-                <option value="POSTICIPATA">POSTICIPATA</option>
+                {Object.values(STATO_PREN).map(stato => <option key={stato} value={stato}>{etichettaStatoPren(stato)}</option>)}
               </select>
             </div>
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
@@ -1256,7 +1253,10 @@ function Prenotazioni({ user }) {
       numeroPartecipanti: (p && p.numeroPartecipanti != null) ? p.numeroPartecipanti : prev.numeroPartecipanti,
       campoId: "",
       oraFine: (p && p.durataOre != null && p.durataOre !== "") ? "" : prev.oraFine,
-      tipoRinfresco: p?.prevedeRinfresco ? prev.tipoRinfresco : ""
+      tipoRinfresco: p?.prevedeRinfresco ? prev.tipoRinfresco : "",
+      // "Più giorni" e "Senza orario" esistono solo sui noleggi: passando a un pacchetto da campo
+      // si spengono, invece di restare attivi senza più una casella che lo mostri.
+      ...(eUnNoleggio(p) ? {} : { piuGiorni: false, altriGiorni: [], senzaOrario: false })
     }));
   };
 
@@ -1302,8 +1302,8 @@ function Prenotazioni({ user }) {
   // viene tolto dalla prenotazione (o se la prenotazione viene eliminata).
   const aggiornaVoucherCollegato = async (codicePrecedente, codiceNuovo) => {
     if (String(codicePrecedente || "") === String(codiceNuovo || "")) return;
-    if (codicePrecedente) await supabase.from('voucher').update({ stato: 'emesso' }).eq('codice', codicePrecedente);
-    if (codiceNuovo) await supabase.from('voucher').update({ stato: 'usato' }).eq('codice', codiceNuovo);
+    if (codicePrecedente) await supabase.from('voucher').update({ stato: STATO_VOUCHER.EMESSO }).eq('codice', codicePrecedente);
+    if (codiceNuovo) await supabase.from('voucher').update({ stato: STATO_VOUCHER.USATO }).eq('codice', codiceNuovo);
   };
 
   // Un preventivo passa a "Prenotato" quando viene collegato a una prenotazione, e torna "Confermato"
@@ -1314,11 +1314,11 @@ function Prenotazioni({ user }) {
       const { error } = await supabase.from('preventivi').update({ stato }).eq('codice', codice);
       if (error) console.error(`Preventivo ${codice}: stato non aggiornato a ${stato}`, error);
     };
-    if (codicePrecedente && String(codicePrecedente) !== String(codiceNuovo || "")) await cambiaStato(codicePrecedente, 'Confermato');
+    if (codicePrecedente && String(codicePrecedente) !== String(codiceNuovo || "")) await cambiaStato(codicePrecedente, STATO_PREVENTIVO.CONFERMATO);
     // Lo stato del preventivo agganciato viene riaffermato a ogni salvataggio, anche quando il
     // collegamento non è cambiato: così una prenotazione già esistente allinea il suo preventivo
     // appena la si risalva, senza doverlo scollegare e ricollegare.
-    if (codiceNuovo) await cambiaStato(codiceNuovo, 'Prenotato');
+    if (codiceNuovo) await cambiaStato(codiceNuovo, STATO_PREVENTIVO.PRENOTATO);
   };
 
   const salvaPrenotazione = async () => {
@@ -1330,8 +1330,10 @@ function Prenotazioni({ user }) {
     // Prenotazione "senza orario": copre l'intera giornata, quindi non ha orari da normalizzare.
     // Giorni dell'evento: la data del form più gli altri giorni scelti, in ordine e senza doppioni.
     // Restano nulli quando la prenotazione dura un giorno solo, così "data" basta a descriverla.
-    const senzaOrario = !!f.senzaOrario;
-    const giorniEvento = Array.from(new Set([f.data, ...(f.piuGiorni ? f.altriGiorni : [])].filter(Boolean))).sort();
+    // Entrambe le opzioni valgono solo per i noleggi: una partita su campo ha sempre un giorno e un orario.
+    const noleggioPac = eUnNoleggio(pac);
+    const senzaOrario = noleggioPac && !!f.senzaOrario;
+    const giorniEvento = Array.from(new Set([f.data, ...(noleggioPac && f.piuGiorni ? f.altriGiorni : [])].filter(Boolean))).sort();
     const giorni = giorniEvento.length > 1 ? giorniEvento : null;
     const oraInizio = senzaOrario ? null : normalizzaOra24(f.oraInizio);
     const oraFine = (senzaOrario || durataFissa) ? "" : normalizzaOra24(f.oraFine);
@@ -1455,7 +1457,7 @@ function Prenotazioni({ user }) {
       // Solo se la colonna c'è: prima di sql/consuntivazione_fornitori.sql scriverla farebbe fallire ogni salvataggio.
       ...(colonnaClienteSede ? { clienteSedeId: f.clienteSedeId || null } : {}),
       ...(colonnaClienteCampo ? { clienteCampoId: f.clienteCampoId || null } : {}),
-      stato: f.stato || "FORSE",
+      stato: f.stato || STATO_PREN.FORSE,
       fattTipo: f.fattTipo,
       fattNome: f.fattNome, fattCognome: f.fattCognome, fattIndirizzo: f.fattIndirizzo,
       fattCap: stranieroFatt ? '00000' : f.fattCap, fattCitta: f.fattCitta,
@@ -1664,7 +1666,7 @@ function Prenotazioni({ user }) {
         // Cosa manca perché la prenotazione risulti completata (stessa regola di prenotazioneCompletata, ma sui
         // valori a schermo, così l'avviso sparisce mentre si compila e non solo dopo il salvataggio). Ha senso solo
         // su una prenotazione già confermata con l'evento passato: prima di allora non c'è niente da "completare".
-        const daChiudere = !!codicePrenInModifica && formPren.stato === 'CONF' && !!formPren.data && formPren.data < oggiIso;
+        const daChiudere = !!codicePrenInModifica && formPren.stato === STATO_PREN.CONFERMATO && !!formPren.data && formPren.data < oggiIso;
         const mancanzeCompletamento = daChiudere
           ? [
               ...campiFatturazioneMancanti(formPren)
@@ -1711,8 +1713,11 @@ function Prenotazioni({ user }) {
         // non hai collegato un preventivo.
         const giocoMancante = giochiScelti().some(g => !g) && (!noleggio || scegliereUnaStrada);
         const nominativoMancante = !formPren.nominativo.trim();
-        const oraInizioMancante = !formPren.senzaOrario && !formPren.oraInizio;
-        const oraFineMancante = !formPren.senzaOrario && !durataFissa && !formPren.oraFine;
+        // "Più giorni" e "Senza orario" si offrono solo sui noleggi.
+        const piuGiorniAttivo = noleggio && formPren.piuGiorni;
+        const senzaOrarioAttivo = noleggio && formPren.senzaOrario;
+        const oraInizioMancante = !senzaOrarioAttivo && !formPren.oraInizio;
+        const oraFineMancante = !senzaOrarioAttivo && !durataFissa && !formPren.oraFine;
         const tipoRinfrescoMancante = !!pac?.prevedeRinfresco && !formPren.tipoRinfresco;
 
         // Selezionando un preventivo si eredita subito costo e prezzo di vendita (restano poi modificabili a mano),
@@ -1789,7 +1794,7 @@ function Prenotazioni({ user }) {
                     value={formPren.preventivoCollegato} onChange={(e) => onCambiaPreventivoCollegato(e.target.value)}
                   >
                     <option value="">-- Nessuno --</option>
-                    {preventivi.filter(pv => pv.stato === 'Confermato' || String(pv.codice) === String(formPren.preventivoCollegato))
+                    {preventivi.filter(pv => pv.stato === STATO_PREVENTIVO.CONFERMATO || String(pv.codice) === String(formPren.preventivoCollegato))
                                .map(pv => <option key={pv.codice} value={pv.codice}>{pv.codice} — {pv.destinazione || pv.nomeReferente || ''} (€{(parseFloat(pv.totaleVendita) || 0).toFixed(2)})</option>)}
                   </select>
                 </label>
@@ -1834,16 +1839,20 @@ function Prenotazioni({ user }) {
                 ⚠️ Nessun gioco proponibile per questo pacchetto. Spunta &quot;su campo&quot; sui giochi giocabili, in Catalogo.
               </p>
             )}
-            <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
-              <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>{formPren.piuGiorni ? 'Primo giorno' : 'Data'}
+            {/* Riga in flex e non in griglia: la casella deve stare subito accanto alla data, mentre
+                la griglia le darebbe una colonna sua, lontana e libera di andare a capo. */}
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', marginTop: '12px' }}>
+              <label style={{ flex: '0 1 200px', minWidth: '140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>{piuGiorniAttivo ? 'Primo giorno' : 'Data'}
                 <input type="date" value={formPren.data} onChange={(e) => setF({ data: e.target.value })} {...campoRosso('data', dataMancante)} />
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 'normal', whiteSpace: 'nowrap', color: '#475569', alignSelf: 'flex-end', paddingBottom: '8px' }}>
-                <input type="checkbox" checked={!!formPren.piuGiorni} onChange={(e) => setF({ piuGiorni: e.target.checked, altriGiorni: e.target.checked ? formPren.altriGiorni : [] })} />
-                Più giorni
-              </label>
+              {noleggio && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, fontSize: '0.8rem', fontWeight: 'normal', whiteSpace: 'nowrap', color: '#475569', paddingBottom: '8px' }}>
+                  <input type="checkbox" checked={!!formPren.piuGiorni} onChange={(e) => setF({ piuGiorni: e.target.checked, altriGiorni: e.target.checked ? formPren.altriGiorni : [] })} />
+                  Più giorni
+                </label>
+              )}
             </div>
-            {formPren.piuGiorni && (
+            {piuGiorniAttivo && (
               <div style={{ marginTop: '10px' }}>
                 <div style={{ fontWeight: 600, fontSize: '0.82rem', marginBottom: '6px' }}>Altri giorni dell'evento</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
@@ -1862,23 +1871,25 @@ function Prenotazioni({ user }) {
               </div>
             )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '12px', alignItems: 'flex-end' }}>
-              {!formPren.senzaOrario && (
+              {!senzaOrarioAttivo && (
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', width: '85px', flexShrink: 0 }}>Ora inizio
                 <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraInizio} onChange={(e) => setF({ oraInizio: formattaOraInput(e.target.value) })} onBlur={() => setF({ oraInizio: normalizzaOra24(formPren.oraInizio) ?? formPren.oraInizio })} {...campoRosso('oraInizio', oraInizioMancante)} />
               </label>
               )}
-              {!formPren.senzaOrario && !durataFissa && (
+              {!senzaOrarioAttivo && !durataFissa && (
                 <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', width: '85px', flexShrink: 0 }}>Ora fine
                   <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={formPren.oraFine} onChange={(e) => setF({ oraFine: formattaOraInput(e.target.value) })} onBlur={() => setF({ oraFine: normalizzaOra24(formPren.oraFine) ?? formPren.oraFine })} {...campoRosso('oraFine', oraFineMancante)} />
                 </label>
               )}
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 'normal', whiteSpace: 'nowrap', color: '#475569', paddingBottom: '8px' }}>
-                <input type="checkbox" checked={!!formPren.senzaOrario} onChange={(e) => setF({ senzaOrario: e.target.checked })} />
-                Senza orario
-              </label>
               <div style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem', color: '#555' }}>Durata
-                <div className="valore">{formPren.senzaOrario ? 'tutto il giorno' : (durataOre != null ? `${durataOre} h` : '—')} {durataFissa && !formPren.senzaOrario && <span style={{ fontSize: '0.72rem', color: '#0288d1' }}>(fissa)</span>}</div>
+                <div className="valore">{senzaOrarioAttivo ? 'tutto il giorno' : (durataOre != null ? `${durataOre} h` : '—')} {durataFissa && !senzaOrarioAttivo && <span style={{ fontSize: '0.72rem', color: '#0288d1' }}>(fissa)</span>}</div>
               </div>
+              {noleggio && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, fontSize: '0.8rem', fontWeight: 'normal', whiteSpace: 'nowrap', color: '#475569', paddingBottom: '8px' }}>
+                  <input type="checkbox" checked={!!formPren.senzaOrario} onChange={(e) => setF({ senzaOrario: e.target.checked })} />
+                  Senza orario
+                </label>
+              )}
             </div>
 
             <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
@@ -2286,7 +2297,7 @@ function Prenotazioni({ user }) {
                             Il suo valore vale come pagamento, quindi non genera una riga nella tabella pagamenti. */}
                         <select value={formPren.voucherCodice} onChange={(e) => setF({ voucherCodice: e.target.value })} style={evidenzia('voucherCodice')}>
                           <option value="">-- Nessun voucher --</option>
-                          {voucher.filter(v => v.stato === 'emesso').map(v => <option key={v.codice} value={v.codice}>{v.codice} — {v.nominativo} (€{(parseFloat(v.importo) || 0).toFixed(2)}){v.pregresso ? ' · pregresso' : ''}</option>)}
+                          {voucher.filter(v => v.stato === STATO_VOUCHER.EMESSO).map(v => <option key={v.codice} value={v.codice}>{v.codice} — {v.nominativo} (€{(parseFloat(v.importo) || 0).toFixed(2)}){v.pregresso ? ' · pregresso' : ''}</option>)}
                         </select>
                       </label>
                     </div>
@@ -2604,15 +2615,15 @@ function Prenotazioni({ user }) {
         // Una FORSE con la data gia' passata non aspetta piu' un pagamento ne' una conferma: la
         // partita non c'e' stata, e va chiusa -- annullata, o posticipata se c'era un acconto. Esce
         // dalle due liste delle FORSE e sta in una sua, cosi' non si mescola con quelle ancora vive.
-        const daAnnullarePosticipare = base.filter(p => p.stato === 'FORSE' && fineEventoDi(p) < oggiIso);
-        const forseVive = base.filter(p => p.stato === 'FORSE' && fineEventoDi(p) >= oggiIso);
+        const daAnnullarePosticipare = base.filter(p => p.stato === STATO_PREN.FORSE && fineEventoDi(p) < oggiIso);
+        const forseVive = base.filter(p => p.stato === STATO_PREN.FORSE && fineEventoDi(p) >= oggiIso);
         const inAttesaPagamento = forseVive.filter(p => !p.statoPagamento || p.statoPagamento === 'in attesa');
         const daConfermare = forseVive.filter(p => p.statoPagamento && p.statoPagamento !== 'in attesa');
-        const partiteAttive = base.filter(p => p.stato === 'CONF' && fineEventoDi(p) >= oggiIso);
+        const partiteAttive = base.filter(p => p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) >= oggiIso);
         // Partite giocate ma non ancora chiuse, divise per il tipo di lavoro che resta da fare:
         // se l'anagrafica di fatturazione è a posto manca solo l'incasso, altrimenti mancano dati.
         // Le due liste sono complementari: ogni prenotazione non conclusa sta in una sola delle due.
-        const daChiudere = base.filter(p => p.stato === 'CONF' && fineEventoDi(p) < oggiIso && !prenotazioneCompletata(p, oggiIso));
+        const daChiudere = base.filter(p => p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso && !prenotazioneCompletata(p, oggiIso));
         const daCompletare = daChiudere.filter(p => campiFatturazioneMancanti(p).length > 0);
         const daSaldare = daChiudere.filter(p => campiFatturazioneMancanti(p).length === 0);
         // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
@@ -2663,7 +2674,7 @@ function Prenotazioni({ user }) {
         // farebbe sembrare pieno uno slot che e' libero. Una posticipata invece resta: l'acconto e'
         // stato incassato e il campo e' ancora tenuto, finche' non si decide la data nuova.
         const prenDelGiorno = (iso) => prenotazioni
-          .filter(p => p.stato !== 'ANNULLATA' && giorniEventoDi(p).includes(iso))
+          .filter(p => p.stato !== STATO_PREN.ANNULLATA && giorniEventoDi(p).includes(iso))
           .sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
 
         // --- Griglia oraria (viste Settimana/Giorno): posiziona ogni prenotazione in base a orario e durata reali ---
@@ -2717,7 +2728,7 @@ function Prenotazioni({ user }) {
           const pagColore = colorePagamento(p.statoPagamento);
           const hasOp = p.operatori && p.operatori.length > 0;
           return (
-            <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${p.stato} · ${p.nominativo} · ${campoTxt} · ${etichettaDi(p)} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
+            <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${etichettaStatoPren(p.stato)} · ${p.nominativo} · ${campoTxt} · ${etichettaDi(p)} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4px' }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'}>{p.googleCalendarSync ? '✅' : '⚠️'}</span> {p.senzaOrario ? <strong>tutto il giorno</strong> : (p.oraInizio ? <strong>{p.oraInizio}</strong> : '')} - {p.nominativo}
@@ -2774,8 +2785,8 @@ function Prenotazioni({ user }) {
             </div>
 
             <div className="cal-legenda" style={{ display: 'flex', gap: '14px', margin: '10px 0', fontSize: '0.8rem' }}>
-              <span><span style={{ display: 'inline-block', width: 12, height: 12, background: '#fed7aa', border: '1px solid #f59e0b', borderRadius: 2, verticalAlign: 'middle' }}></span> FORSE</span>
-              <span><span style={{ display: 'inline-block', width: 12, height: 12, background: '#dcfce7', border: '1px solid #16a34a', borderRadius: 2, verticalAlign: 'middle' }}></span> CONF</span>
+              <span><span style={{ display: 'inline-block', width: 12, height: 12, background: '#fed7aa', border: '1px solid #f59e0b', borderRadius: 2, verticalAlign: 'middle' }}></span> {etichettaStatoPren(STATO_PREN.FORSE)}</span>
+              <span><span style={{ display: 'inline-block', width: 12, height: 12, background: '#dcfce7', border: '1px solid #16a34a', borderRadius: 2, verticalAlign: 'middle' }}></span> {etichettaStatoPren(STATO_PREN.CONFERMATO)}</span>
             </div>
 
             {/* MESE */}
@@ -2804,7 +2815,7 @@ function Prenotazioni({ user }) {
                               {lista.slice(0, 4).map(p => {
                                 const c = coloreStato(p.stato);
                                 return (
-                                  <span key={p.id} title={`${p.oraInizio || ''} ${p.stato} · ${p.nominativo}`} onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} style={{ display: 'inline-block', fontSize: '0.55rem', lineHeight: 1, fontWeight: 'bold', padding: '1px 2px', borderRadius: '3px', background: c.bg, border: `1px solid ${c.bd}`, color: c.tx, margin: '1px' }}>
+                                  <span key={p.id} title={`${p.oraInizio || ''} ${etichettaStatoPren(p.stato)} · ${p.nominativo}`} onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} style={{ display: 'inline-block', fontSize: '0.55rem', lineHeight: 1, fontWeight: 'bold', padding: '1px 2px', borderRadius: '3px', background: c.bg, border: `1px solid ${c.bd}`, color: c.tx, margin: '1px' }}>
                                     {(p.oraInizio || '').slice(0, 2) || '•'}
                                   </span>
                                 );
@@ -2965,7 +2976,7 @@ function Prenotazioni({ user }) {
                       <button className="btn-chiudi" title="Chiudi" style={{ float: 'none', padding: '4px 9px' }} onClick={() => setPrenSelezionata(null)}>✕</button>
                       <h3 style={{ margin: 0 }}>{prenSelezionata.id}</h3>
                     </div>
-                    <span className={`badge-stato ${(prenSelezionata.stato || '').toLowerCase()}`}>{prenSelezionata.stato}</span>
+                    <span className={`badge-stato ${classeBadgeStato(prenSelezionata.stato)}`}>{etichettaStatoPren(prenSelezionata.stato)}</span>
                   </div>
                   <div style={{ marginTop: '12px', fontSize: '0.9rem', lineHeight: 1.6 }}>
                     📅 {prenSelezionata.data} · {prenSelezionata.oraInizio}{prenSelezionata.oraFine ? `–${prenSelezionata.oraFine}` : ''}{prenSelezionata.durataOre ? ` (${prenSelezionata.durataOre}h)` : ''}<br />
@@ -2987,10 +2998,10 @@ function Prenotazioni({ user }) {
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginTop: '18px', justifyContent: 'center' }}>
                     <button className="btn-modifica-inline" title="Apri" style={{ padding: '8px 12px' }} onClick={() => { caricaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>📂</button>
-                    {prenSelezionata.stato === 'FORSE' && <button className="btn-conferma" disabled={senzaIncasso(prenSelezionata) && !puoConfermareSenzaIncasso} title={senzaIncasso(prenSelezionata) ? (puoConfermareSenzaIncasso ? "Conferma senza incasso (da amministratore)" : "Serve almeno un acconto per confermare") : "Conferma (prepara mail al cliente)"} style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'CONF'); setPrenSelezionata(null); }}>✔️</button>}
-                    {(prenSelezionata.stato === 'FORSE' || prenSelezionata.stato === 'CONF') && <button className="btn-elimina-prev" title="Annulla la prenotazione" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { annullaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>🚫</button>}
-                    {(prenSelezionata.stato === 'ANNULLATA' || prenSelezionata.stato === 'POSTICIPATA') && <button className="btn-ripristina" title="Rimetti in FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'FORSE'); setPrenSelezionata(null); }}>↩️</button>}
-                    {prenSelezionata.stato === 'CONF' && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, 'FORSE'); setPrenSelezionata(null); }}>↩️</button>}
+                    {prenSelezionata.stato === STATO_PREN.FORSE && <button className="btn-conferma" disabled={senzaIncasso(prenSelezionata) && !puoConfermareSenzaIncasso} title={senzaIncasso(prenSelezionata) ? (puoConfermareSenzaIncasso ? "Conferma senza incasso (da amministratore)" : "Serve almeno un acconto per confermare") : "Conferma (prepara mail al cliente)"} style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.CONFERMATO); setPrenSelezionata(null); }}>✔️</button>}
+                    {(prenSelezionata.stato === STATO_PREN.FORSE || prenSelezionata.stato === STATO_PREN.CONFERMATO) && <button className="btn-elimina-prev" title="Annulla la prenotazione" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { annullaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>🚫</button>}
+                    {(prenSelezionata.stato === STATO_PREN.ANNULLATA || prenSelezionata.stato === STATO_PREN.POSTICIPATA) && <button className="btn-ripristina" title="Rimetti in FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.FORSE); setPrenSelezionata(null); }}>↩️</button>}
+                    {prenSelezionata.stato === STATO_PREN.CONFERMATO && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.FORSE); setPrenSelezionata(null); }}>↩️</button>}
                     <button className="btn-modifica-inline" title={prenSelezionata.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '8px 12px' }} onClick={() => apriGoogleCalendar(prenSelezionata)}>📅</button>
                     {user.isAdmin && <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { eliminaPrenotazione(prenSelezionata.id); setPrenSelezionata(null); }}>🗑️</button>}
                   </div>
@@ -3008,7 +3019,7 @@ function Prenotazioni({ user }) {
         const isoSettimana = new Set(Array.from({ length: 7 }, (_, i) => toISODate(addGiorni(inizio, i))));
         // Stessa regola dei promemoria: a un campo non si annuncia una partita annullata, mentre
         // una posticipata resta sua finche' non la si sposta.
-        const righeSettimana = prenotazioni.filter(p => p.stato !== 'ANNULLATA' && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
+        const righeSettimana = prenotazioni.filter(p => p.stato !== STATO_PREN.ANNULLATA && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
         const locLabelRiep = (p) => p.campoNome || luogoLiberoDi(p) || '—';
 
         // Come si legge un evento in un promemoria: prima cosa si gioca, poi -- se c'è -- il

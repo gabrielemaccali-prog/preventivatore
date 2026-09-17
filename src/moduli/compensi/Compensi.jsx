@@ -5,6 +5,7 @@ import Icona from '../../components/Icona'
 import html2pdf from 'html2pdf.js'
 import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita } from './calcolo'
 import { toMinutes, righeResidenza, etichettaPartita } from '../../lib/utils'
+import { STATO_PREN } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -179,7 +180,7 @@ function Compensi({ user }) {
     const [pr, vc, pe, ca, ut, gi] = await Promise.all([
       supabase.from('prenotazioni')
         .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoId, campoNome, pacchettoNome, giocoId, locationIndirizzo, locationCitta, locationProvincia, operatori')
-        .eq('stato', 'CONF').lte('data', oggiIso()).order('data', { ascending: false }),
+        .eq('stato', STATO_PREN.CONFERMATO).lte('data', oggiIso()).order('data', { ascending: false }),
       supabase.from('op_voci').select('*').lte('data', oggiIso()),
       supabase.from('op_periodi').select('*').order('dal', { ascending: false }),
       // Serve per l'indirizzo delle giornate sul documento: la prenotazione porta solo il nome
