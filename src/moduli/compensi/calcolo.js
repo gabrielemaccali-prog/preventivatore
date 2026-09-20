@@ -336,3 +336,90 @@ export const consuntivoDiPeriodo = (preventivo, { concordato = null, forfettario
     concordatoApplicato: concordato != null && concordato !== '',
   };
 };
+
+// ============================================================
+// Le righe per partita di un periodo consuntivato.
+//
+// Un periodo dice quanto e' stato pagato a un operatore, ma non di quali partite e' fatto: quello
+// serve a Costi/Ricavi, che ragiona per prenotazione. Ricostruirlo dopo vorrebbe dire rifare il
+// conto sulle voci e sui parametri di domani, e allora non sarebbe piu' un consuntivo -- basta
+// cancellare una rettifica o ritoccare una tariffa e cambia quanto "e' stato pagato" l'anno scorso.
+// Quindi si congela qui, al momento della chiusura, come fanno gia' i periodi di fornitori e campi.
+// ============================================================
+
+// Le tre parti della quota di ogni partita, tutte al netto. Nascono in momenti diversi, e chi legge
+// deve poterle distinguere:
+//   base        ore a tariffa piu' il bonus recensione, cioe' quanto la partita valeva da prevista
+//   rettifiche  le correzioni scritte dopo (ore di viaggio, benzina)
+//   spese       rimborsi vivi, esenti da ritenuta
+// Le voci che dicono a quale partita si riferiscono vanno li'; quelle che non lo dicono si dividono
+// in proporzione alle quote, perche' sono costo della giornata e la giornata e' fatta di queste partite.
+export const quotePartite = (preventivoOperatore) => {
+  const righe = [];
+  (preventivoOperatore.giornate || []).forEach(g => {
+    const partite = g.blocchi.flatMap(b => b.partite);
+    if (partite.length === 0) return; // una spesa in un giorno senza partite non e' attribuibile
+    const totaleQuote = partite.reduce((s, x) => s + (x.compenso || 0), 0);
+    const somma = (elenco, filtro) => elenco.filter(filtro).reduce((s, v) => s + (parseFloat(v.importo) || 0), 0);
+    const eRecensione = (v) => !v.esente_ritenuta && v.tipo === 'recensione';
+    const eRettifica = (v) => !v.esente_ritenuta && v.tipo !== 'recensione';
+    const eSpesa = (v) => !!v.esente_ritenuta;
+    const sparse = (g.voci || []).filter(v => !v.riferimento);
+    partite.forEach(x => {
+      const proprie = (g.voci || []).filter(v => String(v.riferimento || '') === String(x.partita.id));
+      const quota = totaleQuote > 0 ? (x.compenso / totaleQuote) : (1 / partite.length);
+      righe.push({
+        riferimento: String(x.partita.id),
+        data: g.data,
+        ore: arrotondaCentesimi(x.oreAttribuite || 0),
+        base: arrotondaCentesimi(x.compenso + somma(proprie, eRecensione) + somma(sparse, eRecensione) * quota),
+        rettifiche: arrotondaCentesimi(somma(proprie, eRettifica) + somma(sparse, eRettifica) * quota),
+        spese: arrotondaCentesimi(somma(proprie, eSpesa) + somma(sparse, eSpesa) * quota),
+      });
+    });
+  });
+  return righe.sort((a, b) => String(a.data).localeCompare(String(b.data)) || a.riferimento.localeCompare(b.riferimento));
+};
+
+// Le righe come vanno congelate nel periodo: alle quote si aggiungono la trasferta messa a rimborso
+// e la ritenuta che ne deriva.
+//
+// La trasferta il documento la dichiara per giornata, non per partita: si divide fra le partite di
+// quel giorno in proporzione all'imponibile, che e' la base su cui pesa. Non aggiunge denaro -- ne
+// sposta una fetta fuori dall'imponibile -- quindi l'operatore incassa uguale e cambia la ritenuta.
+//
+// `trasfertePerData` e' { 'aaaa-mm-gg': importo }; vuoto finche' il rimborso non e' stato elaborato.
+export const righeConsuntivo = (quote, { aliquota, trasfertePerData = {} } = {}) => {
+  const imponibileDelGiorno = {};
+  quote.forEach(r => {
+    imponibileDelGiorno[r.data] = (imponibileDelGiorno[r.data] || 0) + r.base + r.rettifiche;
+  });
+  return quote.map(r => {
+    const suo = r.base + r.rettifiche;
+    const delGiorno = imponibileDelGiorno[r.data] || 0;
+    const trasferta = delGiorno > 0
+      ? arrotondaCentesimi((parseFloat(trasfertePerData[r.data]) || 0) * (suo / delGiorno))
+      : 0;
+    const imponibile = arrotondaCentesimi(Math.max(suo - trasferta, 0));
+    const ritenuta = arrotondaCentesimi(lordizza(imponibile, aliquota).ritenuta);
+    return {
+      ...r,
+      trasferta,
+      imponibile,
+      ritenuta,
+      // Quello che incassa l'operatore per questa partita, piu' la ritenuta versata per lui:
+      // il costo dell'azienda, che e' il numero che Costi/Ricavi mette in colonna.
+      incassaOperatore: arrotondaCentesimi(suo + r.spese),
+      consuntivato: arrotondaCentesimi(suo + r.spese + ritenuta),
+    };
+  });
+};
+
+// Le trasferte del documento di rimborso, per giornata.
+export const trasfertePerData = (rimborso) => {
+  const per = {};
+  (rimborso?.trasferte?.righe || []).forEach(t => {
+    per[t.data] = arrotondaCentesimi((per[t.data] || 0) + (parseFloat(t.importo) || 0));
+  });
+  return per;
+};

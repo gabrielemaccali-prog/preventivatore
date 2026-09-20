@@ -1,10 +1,10 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
-import { supabase } from '../../lib/supabaseClient'
+import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { validaCF, formattaDataGGMMAAAA, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
-import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO } from '../../lib/costanti'
+import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
@@ -396,6 +396,7 @@ function Prenotazioni({ user }) {
   const [filtroPrenSettimana, setFiltroPrenSettimana] = useState(""); // lunedì (ISO) della settimana mostrata, "" = nessun filtro
   const [filtroPrenStato, setFiltroPrenStato] = useState("");
   const [filtroPrenNome, setFiltroPrenNome] = useState("");
+  const [filtroPrenId, setFiltroPrenId] = useState("");
   // Nello storico le annullate partono nascoste: di solito si cerca cosa si e' giocato o si
   // giochera', e le disdette in mezzo sono rumore. Togliendo la spunta tornano, perche' restano
   // comunque parte dell'archivio.
@@ -413,6 +414,7 @@ function Prenotazioni({ user }) {
   }, []);
   const [prenSelezionata, setPrenSelezionata] = useState(null);
   const [prenConferma, setPrenConferma] = useState(null); // prenotazione di cui preparare la mail di conferma da copiare
+  const [formCostiAnnullamento, setFormCostiAnnullamento] = useState(null); // { p, scelte: [] } -- quali costi restano su un'annullata
   const [confermaInglese, setConfermaInglese] = useState(false);
   const [confermaCopiata, setConfermaCopiata] = useState(false);
   const [riepilogoData, setRiepilogoData] = useState(() => new Date());
@@ -433,7 +435,10 @@ function Prenotazioni({ user }) {
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
       supabase.from('preventivi').select('*').order('codice', { ascending: false }),
       supabase.from('voucher').select('*').order('codice', { ascending: false }),
-      supabase.from('disp_calendario').select('*'),
+      // Paginata: `disp_calendario` supera il limite di righe per risposta di Supabase, che tronca
+      // in silenzio. Con un risultato parziale disponibilitaOperatore dichiarava "non disponibile"
+      // un bubbler che invece lo era, perché le sue righe non erano fra quelle arrivate.
+      leggiTutte(() => supabase.from('disp_calendario').select('*').order('id')),
       supabase.from('disp_fasce').select('*').order('ordine'),
       supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data'),
       supabase.from('giochi').select('*').order('nome'),
@@ -956,7 +961,9 @@ function Prenotazioni({ user }) {
     // vorrebbe dire raccontare di una cosa che non e' piu' successa.
     const tornaInGioco = p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA;
     await supabase.from('prenotazioni')
-      .update(tornaInGioco ? { stato: nuovoStato, motivoAnnullamento: null } : { stato: nuovoStato })
+      .update(tornaInGioco
+        ? { stato: nuovoStato, motivoAnnullamento: null, ...(p.costiAnnullamento ? { costiAnnullamento: null } : {}) }
+        : { stato: nuovoStato })
       .eq('id', p.id);
     fetchTutto();
     if (nuovoStato === STATO_PREN.CONFERMATO) { setPrenConferma(p); setConfermaInglese(false); }
@@ -980,6 +987,40 @@ function Prenotazioni({ user }) {
     const { error } = await supabase.from('prenotazioni').update({ stato: nuovoStato, motivoAnnullamento: motivo }).eq('id', p.id);
     if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}`); }
     setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, stato: nuovoStato, motivoAnnullamento: motivo } : prev);
+    fetchTutto();
+    // Senza incasso non c'e' ricavo, ma un costo puo' esserci lo stesso: il campo che chiede
+    // l'affitto, il rinfresco gia' pronto, gli operatori gia' sul posto. E' raro, e proprio per
+    // questo si chiede adesso: dopo nessuno se lo ricorda. Una posticipata no: si giochera', e i
+    // costi arriveranno con lei. Se la partita non ha niente che possa costare, non si chiede.
+    if (nuovoStato === STATO_PREN.ANNULLATA && costiPossibiliAnnullamento(p).length > 0) {
+      setFormCostiAnnullamento({ p: { ...p, stato: nuovoStato }, scelte: p.costiAnnullamento || [] });
+    }
+  };
+
+  // Quali costi puo' lasciare un'annullata: solo quelli che la prenotazione ha davvero. Gli importi si
+  // mostrano per orientarsi, ma non si scrivono: sono quelli della prenotazione e dei compensi, e la
+  // differenza con quanto pagato si rettifica in consuntivazione.
+  const costiPossibiliAnnullamento = (p) => {
+    const netto = (n, l) => (n != null ? parseFloat(n) || 0 : (parseFloat(l) || 0) / 1.22);
+    const affitto = netto(p.costoCampoNetto, p.costoCampo);
+    const rinfresco = netto(p.costoRinfrescoNetto, p.costoRinfresco);
+    return [
+      p.campoId && affitto > 0.005 && { id: COSTO_ANNULLAMENTO.CAMPO, dettaglio: `${p.campoNome || 'campo'} · €${affitto.toFixed(2)} netti` },
+      rinfresco > 0.005 && { id: COSTO_ANNULLAMENTO.RINFRESCO, dettaglio: `${p.tipoRinfresco || 'rinfresco'} · €${rinfresco.toFixed(2)} netti` },
+      (p.operatori || []).length > 0 && { id: COSTO_ANNULLAMENTO.OPERATORI, dettaglio: `${p.operatori.map(o => o.nome).join(', ')} · compenso come per una partita giocata` },
+    ].filter(Boolean);
+  };
+
+  const salvaCostiAnnullamento = async () => {
+    const { p, scelte } = formCostiAnnullamento;
+    const valore = scelte.length > 0 ? scelte : null;
+    // Niente scelto e niente salvato prima: non c'e' niente da scrivere, e non si tocca una colonna
+    // che puo' non esistere ancora.
+    if (!valore && !p.costiAnnullamento) { setFormCostiAnnullamento(null); return; }
+    const { error } = await supabase.from('prenotazioni').update({ costiAnnullamento: valore }).eq('id', p.id);
+    if (error) { console.error(error); return alert(`Errore nel salvataggio dei costi: ${error.message}\n\nServe lo script sql/prenotazioni_costi_annullamento.sql.`); }
+    setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, costiAnnullamento: valore } : prev);
+    setFormCostiAnnullamento(null);
     fetchTutto();
   };
 
@@ -1100,6 +1141,15 @@ function Prenotazioni({ user }) {
                     ...(p.pagamenti || []).map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${formattaDataGGMMAAAA(pg.data)}`)
                   ].filter(Boolean).join(', ') || 'nessuno'}</div>
                   {p.motivoAnnullamento && <div><span style={{ color: '#94a3b8' }}>Motivo </span><em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
+                  {p.stato === STATO_PREN.ANNULLATA && costiPossibiliAnnullamento(p).length > 0 && (
+                    <div>
+                      <span style={{ color: '#94a3b8' }}>Costi da sostenere </span>
+                      {(p.costiAnnullamento || []).length > 0
+                        ? <strong style={{ color: '#991b1b' }}>{p.costiAnnullamento.map(c => ETICHETTA_COSTO_ANNULLAMENTO[c] || c).join(', ')}</strong>
+                        : <span style={{ color: '#64748b' }}>nessuno</span>}
+                      {' '}<button type="button" onClick={() => setFormCostiAnnullamento({ p, scelte: p.costiAnnullamento || [] })} style={{ background: 'none', border: 'none', padding: 0, color: '#0288d1', cursor: 'pointer', fontSize: '0.82rem', textDecoration: 'underline' }}>modifica</button>
+                    </div>
+                  )}
                   {p.note && <div><span style={{ color: '#94a3b8' }}>Note </span><em>{p.note}</em></div>}
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
@@ -1195,10 +1245,12 @@ function Prenotazioni({ user }) {
     const mSettimana = !settimanaFiltrata || giorniEvento.some(g => g >= settimanaFiltrata.da && g <= settimanaFiltrata.a);
     const mStato = !filtroPrenStato || p.stato === filtroPrenStato;
     const mNome = (p.nominativo || "").toLowerCase().includes(filtroPrenNome.toLowerCase());
+    // Il codice si cerca anche a pezzi: chi ha in mano "1047" non deve scrivere tutto "PRN-2026-1047".
+    const mId = !filtroPrenId.trim() || String(p.id || "").toLowerCase().includes(filtroPrenId.trim().toLowerCase());
     // Se lo stato scelto e' proprio ANNULLATA la spunta non le nasconde: vorrebbe dire chiedere una
     // cosa e toglierla nello stesso momento, e restare con un elenco vuoto senza capire perche'.
     const mAnnullate = !nascondiAnnullate || filtroPrenStato === STATO_PREN.ANNULLATA || p.stato !== STATO_PREN.ANNULLATA;
-    return mData && mSettimana && mStato && mNome && mAnnullate;
+    return mData && mSettimana && mStato && mNome && mId && mAnnullate;
   };
   const prenotazioniFiltrate = prenotazioni.filter(p => passaFiltriPren(p));
 
@@ -1231,6 +1283,10 @@ function Prenotazioni({ user }) {
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
               <label>Nominativo:</label>
               <input type="text" placeholder="Nome prenotazione" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} />
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
+              <label>ID prenotazione:</label>
+              <input type="text" placeholder="Es. PRN-2026-1047" value={filtroPrenId} onChange={(e) => setFiltroPrenId(e.target.value)} />
             </div>
             {conNascondiAnnullate && (
             <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
@@ -3213,6 +3269,37 @@ function Prenotazioni({ user }) {
       )}
 
       {/* ANTEPRIMA CONFERMA DA COPIARE (invio manuale via Gmail, con formattazione HTML) */}
+      {formCostiAnnullamento && (() => {
+        const { p, scelte } = formCostiAnnullamento;
+        const cambia = (id) => setFormCostiAnnullamento(f => ({ ...f, scelte: f.scelte.includes(id) ? f.scelte.filter(x => x !== id) : [...f.scelte, id] }));
+        return (
+          <div className="modal-form-backdrop" onClick={() => setFormCostiAnnullamento(null)}>
+            <div className="modal-form-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+              <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setFormCostiAnnullamento(null)}>✕</button>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>Ci sono costi da sostenere?</h3>
+              <p style={{ margin: '0 0 14px 0', fontSize: '0.8rem', color: '#777' }}>
+                {p.id}{p.nominativo ? ` · ${p.nominativo}` : ''}. Segna quello che si paga anche se la partita è annullata: entra in consuntivazione
+                con gli importi della prenotazione, e la differenza con quanto pagato davvero si rettifica lì.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                {costiPossibiliAnnullamento(p).map(c => (
+                  <label key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 12px', border: `1px solid ${scelte.includes(c.id) ? '#dc2626' : '#e2e8f0'}`, borderRadius: '6px', background: scelte.includes(c.id) ? '#fef2f2' : '#fff', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={scelte.includes(c.id)} onChange={() => cambia(c.id)} style={{ margin: '3px 0 0 0' }} />
+                    <span>
+                      <strong style={{ fontSize: '0.9rem' }}>{ETICHETTA_COSTO_ANNULLAMENTO[c.id]}</strong>
+                      <span style={{ display: 'block', fontSize: '0.78rem', color: '#64748b' }}>{c.dettaglio}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <button type="button" onClick={salvaCostiAnnullamento} style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
+                <Icona nome="salva" size={16} style={{ marginRight: '6px' }} />{scelte.length > 0 ? 'Salva' : 'Nessun costo'}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {prenConferma !== null && (() => {
         const testoConferma = costruisciConferma(prenConferma, confermaInglese);
         return (

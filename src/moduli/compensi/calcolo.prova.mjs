@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   preventivoGiornata, lordizza, preventiviPerOperatore, consuntivoDiPeriodo, blocchiDiGiornata,
-  ripartisciSuOre, rettificheForfait, importiRimborso,
+  ripartisciSuOre, rettificheForfait, importiRimborso, quotePartite, righeConsuntivo, trasfertePerData,
 } from './calcolo.js';
 
 const par = {
@@ -259,6 +259,45 @@ const idNumerici = preventiviPerOperatore(
 verifica('id numerici: due operatori', 2, idNumerici.length);
 verifica('id numerici: chi ha solo voci resta senza nome', null, idNumerici.find(o => o.id === 3).nome);
 verifica('id numerici: chi ha partite tiene il suo', 'Ester', idNumerici.find(o => o.id === 7).nome);
+
+// ---------- righe per partita congelate nel periodo ----------
+// Il caso vero della PRN-2026-1047: 6 ore, 50 di ore viaggio e 21,20 di benzina come rettifiche,
+// 8,80 di pedaggi come spesa, e nel documento 94,00 di trasferta su quella giornata.
+const partita1047 = { id: 'PRN-2026-1047', data: '2026-09-06', oraInizio: '13:30', oraFine: '19:30', operatori: [{ id: 8, nome: 'Daniele' }] };
+const voci1047 = [
+  { operatore_id: 8, data: '2026-09-06', tipo: 'rettifica', riferimento: 'PRN-2026-1047', importo: 50, esente_ritenuta: false },
+  { operatore_id: 8, data: '2026-09-06', tipo: 'rettifica', riferimento: 'PRN-2026-1047', importo: 21.2, esente_ritenuta: false },
+  { operatore_id: 8, data: '2026-09-06', tipo: 'spesa', riferimento: 'PRN-2026-1047', importo: 8.8, esente_ritenuta: true },
+];
+const quote1047 = quotePartite(preventiviPerOperatore([partita1047], voci1047, par)[0]);
+verifica('quote: la base sono le sole ore a tariffa', 80, quote1047[0].base);
+verifica('quote: le rettifiche stanno per conto loro', 71.2, quote1047[0].rettifiche);
+verifica('quote: le spese restano esenti', 8.8, quote1047[0].spese);
+
+const senzaTrasferta = righeConsuntivo(quote1047, { aliquota: 20 });
+verifica('righe: senza trasferta la ritenuta è sul tutto', 37.8, senzaTrasferta[0].ritenuta);
+verifica('righe: costo azienda senza trasferta', 197.8, senzaTrasferta[0].consuntivato);
+
+const conTrasferta = righeConsuntivo(quote1047, {
+  aliquota: 20,
+  trasfertePerData: trasfertePerData({ trasferte: { righe: [{ data: '2026-09-06', importo: 94 }] } }),
+});
+verifica("righe: la trasferta esce dall'imponibile", 57.2, conTrasferta[0].imponibile);
+verifica('righe: e la ritenuta scende', 14.3, conTrasferta[0].ritenuta);
+verifica("righe: l'operatore incassa uguale", 160, conTrasferta[0].incassaOperatore);
+verifica('righe: costo azienda con trasferta', 174.3, conTrasferta[0].consuntivato);
+
+// Due partite nello stesso giorno: la trasferta della giornata si divide in proporzione all'imponibile.
+const dueIlGiorno = [
+  { id: 'A', data: '2026-09-06', oraInizio: '09:00', oraFine: '11:00', operatori: [{ id: 8 }] },
+  { id: 'B', data: '2026-09-06', oraInizio: '14:00', oraFine: '16:00', operatori: [{ id: 8 }] },
+];
+const righeDue = righeConsuntivo(quotePartite(preventiviPerOperatore(dueIlGiorno, [], par)[0]), {
+  aliquota: 20,
+  trasfertePerData: { '2026-09-06': 50 },
+});
+verifica('righe: la trasferta del giorno si divide fra le partite', 50, r2(righeDue.reduce((s, x) => s + x.trasferta, 0)));
+verifica('righe: e nessuna resta senza la sua parte', true, righeDue.every(x => x.trasferta > 0));
 
 // ---------- esito ----------
 const falliti = esiti.filter(e => !e.ok);

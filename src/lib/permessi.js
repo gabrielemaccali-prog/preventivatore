@@ -4,7 +4,9 @@ export const MODULI_REGISTRY = [
   { id: 'voucher', label: 'Voucher', icon: 'voucher' },
   { id: 'prenotazioni', label: 'Prenotazioni', icon: 'prenotazioni' },
   { id: 'disponibilita', label: 'Disponibilità', icon: 'disponibilita' },
-  { id: 'costiricavi', label: 'Costi/Ricavi', icon: 'costiricavi' },
+  // Si chiama Cruscotto, ma l'id resta 'costiricavi': e' la chiave con cui i permessi dei ruoli
+  // sono gia' salvati a database, e cambiarla toglierebbe l'accesso a chi ce l'ha senza dire niente.
+  { id: 'costiricavi', label: 'Cruscotto', icon: 'cruscotto' },
   { id: 'compensi', label: 'Compensi', icon: 'compensi' },
   // Quello che e' davvero successo dopo il preventivo. Per ora le fatture; qui arriveranno anche
   // compensi, campi e servizi.
@@ -73,10 +75,9 @@ export const SCHEDE_REGISTRY = {
   },
   costiricavi: {
     schede: [
-      { id: 'tabella', label: 'Tabella' },
+      { id: 'cruscotto', label: 'Dettaglio' },
       { id: 'andamento', label: 'Andamento' },
       { id: 'pergioco', label: 'Per gioco' },
-      { id: 'completate', label: 'Completate' },
     ],
   },
   compensi: {

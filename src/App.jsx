@@ -5,7 +5,7 @@ import Catalogo from './moduli/catalogo/Catalogo';
 import Preventivatore from './moduli/preventivatore/Preventivatore';
 import Voucher from './moduli/voucher/Voucher';
 import Prenotazioni from './moduli/prenotazioni/Prenotazioni';
-import CostiRicavi from './moduli/costiricavi/CostiRicavi';
+import Cruscotto from './moduli/cruscotto/Cruscotto';
 import Disponibilita from './moduli/disponibilita/Disponibilita';
 import Compensi from './moduli/compensi/Compensi';
 import Consuntivazione from './moduli/consuntivazione/Consuntivazione';
@@ -408,7 +408,7 @@ function App() {
 
       {currentModule === "prenotazioni" && <Prenotazioni user={user} />}
 
-      {currentModule === "costiricavi" && <CostiRicavi user={user} />}
+      {currentModule === "costiricavi" && <Cruscotto user={user} />}
 
       {currentModule === "disponibilita" && <Disponibilita user={user} />}
 

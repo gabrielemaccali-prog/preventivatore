@@ -1,4 +1,4 @@
-import { STATO_PREN } from './costanti.js';
+import { STATO_PREN, COSTO_ANNULLAMENTO, costiAnnullamentoDi } from './costanti.js';
 
 // ============================================================
 // Fornitori e campi: da quale sede arriva il costo di una prenotazione, e cosa resta da
@@ -165,6 +165,7 @@ const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, 
     const rettifiche = somma(proprie, 'importo');
     return {
       lato, riferimento: String(p.id), data: p.data, nominativo: p.nominativo || '', giochi,
+      ...(p.stato === STATO_PREN.ANNULLATA ? { annullata: true } : {}),
       preventivato: arrotonda2(preventivato),
       rettifiche: arrotonda2(rettifiche),
       consuntivato: arrotonda2(preventivato + rettifiche),
@@ -174,8 +175,10 @@ const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, 
   };
 
   prenotazioni.forEach(p => {
-    // Una FORSE non è stata giocata, un'annullata non c'è stata: non c'è niente da pagare.
-    if (p.stato !== STATO_PREN.CONFERMATO || !nelFiltro(p.data)) return;
+    // Una FORSE non è stata giocata, un'annullata non c'è stata: non c'è niente da pagare. Salvo
+    // l'annullata con costi segnati, di cui costiDi restituisce solo quelli (vedi costanti.js).
+    const annullata = p.stato === STATO_PREN.ANNULLATA;
+    if ((p.stato !== STATO_PREN.CONFERMATO && !annullata) || !nelFiltro(p.data)) return;
 
     costiDi(p).forEach(c => {
       const controparte = c.id != null ? perId[String(c.id)] : null;
@@ -189,6 +192,7 @@ const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, 
       if (r.preventivato !== 0 || r.voci.length > 0) righeDi(controparte).push(r);
     });
 
+    if (annullata) return; // niente ricavo da compensare: la partita non si è giocata
     const idCliente = clienteDi(p);
     const cliente = idCliente ? perId[String(idCliente)] : null;
     if (cliente && !chiuso(cliente.id, p.data)) righeDi(cliente).push(riga(cliente, p, 'ricavo', nettoRicavoDi(p), []));
@@ -212,7 +216,8 @@ export const daConsuntivareFornitori = ({ prenotazioni = [], sedi = [], risoluto
   return consuntivoControparti({
     prenotazioni, controparti: sedi, nelFiltro,
     voci: soloDi('fornitore', voci), periodi: soloDi('fornitore', periodi),
-    costiDi: (p) => Object.entries(risolutore.costiPerSede(p))
+    // Fra i costi di un'annullata non c'è il noleggio: si segnano campo, rinfresco e operatori.
+    costiDi: (p) => (p.stato !== STATO_PREN.CONFERMATO ? [] : Object.entries(risolutore.costiPerSede(p)))
       .filter(([nome]) => nome !== SENZA_SEDE)
       .map(([nome, c]) => ({ id: sedePerNome[nome]?.id ?? null, nome, costo: c.costo, giochi: c.giochi, dettaglio: risolutore.dettaglioCostoDi?.(p, nome) || null })),
     clienteDi: (p) => p.clienteSedeId || null,
@@ -230,8 +235,12 @@ export const daConsuntivareCampi = ({ prenotazioni = [], campi = [], voci = [], 
   voci: soloDi('campo', voci), periodi: soloDi('campo', periodi),
   costiDi: (p) => {
     if (!p.campoId) return [];
-    const affitto = arrotonda2(nettoAffittoDi(p));
-    const rinfresco = arrotonda2(nettoRinfrescoDi(p));
+    // Di un'annullata si paga solo quello che è stato segnato; il resto vale zero.
+    const annullata = p.stato === STATO_PREN.ANNULLATA;
+    const segnati = costiAnnullamentoDi(p);
+    if (annullata && !segnati.has(COSTO_ANNULLAMENTO.CAMPO) && !segnati.has(COSTO_ANNULLAMENTO.RINFRESCO)) return [];
+    const affitto = !annullata || segnati.has(COSTO_ANNULLAMENTO.CAMPO) ? arrotonda2(nettoAffittoDi(p)) : 0;
+    const rinfresco = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO) ? arrotonda2(nettoRinfrescoDi(p)) : 0;
     return [{ id: p.campoId, nome: p.campoNome || p.campoId, costo: affitto + rinfresco, giochi: [], dettaglio: { affitto, rinfresco } }];
   },
   clienteDi: (p) => p.clienteCampoId || null,
@@ -251,6 +260,7 @@ export const periodoDaControparte = (c, tipo, dataConsuntivo) => ({
   saldo: c.saldo,
   righe: c.righe.map(r => ({
     lato: r.lato, riferimento: r.riferimento, data: r.data, nominativo: r.nominativo, giochi: r.giochi,
+    ...(r.annullata ? { annullata: true } : {}),
     preventivato: r.preventivato, rettifiche: r.rettifiche, consuntivato: r.consuntivato,
     ...(r.dettaglio ? { dettaglio: r.dettaglio } : {}),
   })),

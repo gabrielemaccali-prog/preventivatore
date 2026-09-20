@@ -131,6 +131,23 @@ const campoIgnoto = { id: 'PRN-C4', data: '2026-09-10', stato: STATO_PREN.CONFER
 verifica('campo tolto dall\'anagrafica: segnalato, non perso', [{ nome: 'Vecchio', costo: 40 }],
   daConsuntivareCampi({ prenotazioni: [campoIgnoto], campi: campiAnagrafica }).senzaControparte.map(x => ({ nome: x.nome, costo: x.costo })));
 
+// ---------- annullate ----------
+const annullata = { ...partitaCampo, id: 'PRN-A1', stato: STATO_PREN.ANNULLATA };
+verifica("un'annullata senza costi segnati non si consuntiva", 0,
+  daConsuntivareCampi({ prenotazioni: [annullata], campi: campiAnagrafica }).controparti.length);
+verifica("un'annullata con i soli operatori non tocca il campo", 0,
+  daConsuntivareCampi({ prenotazioni: [{ ...annullata, costiAnnullamento: ['operatori'] }], campi: campiAnagrafica }).controparti.length);
+const rigaSoloAffitto = daConsuntivareCampi({ prenotazioni: [{ ...annullata, costiAnnullamento: ['campo'] }], campi: campiAnagrafica }).controparti[0].righe[0];
+verifica("annullata con il campo: l'affitto sì, il rinfresco no", [45.08, { affitto: 45.08, rinfresco: 0 }, true], [rigaSoloAffitto.preventivato, rigaSoloAffitto.dettaglio, rigaSoloAffitto.annullata]);
+verifica('annullata con campo e rinfresco: tutti e due', 143.44,
+  daConsuntivareCampi({ prenotazioni: [{ ...annullata, costiAnnullamento: ['campo', 'rinfresco'] }], campi: campiAnagrafica }).controparti[0].costo);
+verifica("un'annullata non porta crediti, nemmeno se commissionata", 0,
+  daConsuntivareCampi({ prenotazioni: [{ ...commissionata, stato: STATO_PREN.ANNULLATA, costiAnnullamento: ['campo'] }], campi: campiAnagrafica }).controparti.length);
+verifica("un'annullata non ha costi di fornitore", 0,
+  daConsuntivareFornitori({ ...base, prenotazioni: [{ ...pren1032, stato: STATO_PREN.ANNULLATA, costiAnnullamento: ['campo', 'operatori'] }] }).controparti.length);
+verifica('fotografia: la riga ricorda che la partita era annullata', true,
+  periodoDaControparte({ controparte: campiAnagrafica[0], righe: [rigaSoloAffitto], costoPreventivato: 0, costo: 0, ricavo: 0, saldo: 0 }, 'campo', '2026-09-16').righe[0].annullata);
+
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${JSON.stringify(e.atteso)}, ottenuto ${JSON.stringify(e.ottenuto)}`}`));
 console.log(`\n${esiti.length - falliti.length}/${esiti.length} verifiche passate`);

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '../../lib/supabaseClient'
+import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
@@ -58,28 +58,48 @@ function Disponibilita({ user }) {
   const [dispCalendario, setDispCalendario] = useState([]);
   // Conferme mensili: una riga = utente + campo + mese 'YYYY-MM'.
   const [dispConferme, setDispConferme] = useState([]);
+  // Coppie (utente, campo) su tutto lo storico: dicono su quali campi lavora un bubbler anche fuori
+  // dal mese caricato. Due sole colonne, così restano leggere al crescere delle disponibilità.
+  const [coppieUtenteCampo, setCoppieUtenteCampo] = useState([]);
 
-  useEffect(() => { fetchTutto(); }, []);
+  // Un caricamento fallito (tabella mancante, permessi) lascerebbe la pagina apparentemente
+  // vuota senza dire perché: almeno in console la causa deve esserci.
+  const segnalaCaricamenti = (...risultati) => risultati.forEach(r => { if (r.error) console.error('Disponibilità — caricamento fallito:', r.error); });
 
-  const fetchTutto = async () => {
-    const [fasceRes, bubblersRes, campiRes, dCalRes, dConfRes] = await Promise.all([
+  // Anagrafiche: non dipendono dal mese, si leggono una volta sola.
+  const fetchStatico = async () => {
+    const [fasceRes, bubblersRes, campiRes] = await Promise.all([
       supabase.from('disp_fasce').select('*').order('ordine'),
       // In ordine di cognome, che è quello che l'elenco mostra: ordinare per username voleva dire
       // ordinare per una colonna che a schermo non compare più.
       supabase.from('utenti').select('id, username, nome, cognome, nome_breve, telefono, email, bubbler, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true).order('cognome'),
       supabase.from('pren_campi').select('id, nome, citta, provincia').order('nome'),
-      supabase.from('disp_calendario').select('*'),
-      supabase.from('disp_conferme').select('*'),
     ]);
-    // Un caricamento fallito (tabella mancante, permessi) lascerebbe la pagina apparentemente
-    // vuota senza dire perché: almeno in console la causa deve esserci.
-    [fasceRes, bubblersRes, campiRes, dCalRes, dConfRes].forEach(r => { if (r.error) console.error('Disponibilità — caricamento fallito:', r.error); });
+    segnalaCaricamenti(fasceRes, bubblersRes, campiRes);
     if (fasceRes.data) setFasce(fasceRes.data);
     if (bubblersRes.data) setBubblers(bubblersRes.data);
     if (campiRes.data) setCampi(campiRes.data);
+  };
+
+  // Disponibilità del periodo mostrato. Si legge solo la finestra che la griglia disegna invece di
+  // tutta la tabella: `disp_calendario` cresce come bubbler × campi × giorni × fasce e senza filtro
+  // superava il limite di righe per risposta di Supabase, che tronca in silenzio. Le righe mancanti
+  // facevano apparire spente fasce in realtà già registrate, e cliccarle dava errore di chiave duplicata.
+  const fetchDisponibilita = async () => {
+    const [dCalRes, dConfRes, coppieRes] = await Promise.all([
+      // La griglia disegna 6 settimane piene, quindi anche i giorni di coda del mese precedente e
+      // successivo: sono cliccabili nell'editor e devono essere caricati come gli altri.
+      leggiTutte(() => supabase.from('disp_calendario').select('*').gte('data', inizioGriglia).lte('data', fineGriglia).order('id')),
+      leggiTutte(() => supabase.from('disp_conferme').select('*').eq('mese', meseVisualizzato).order('id')),
+      leggiTutte(() => supabase.from('disp_calendario').select('utente_id, campo_id').order('id')),
+    ]);
+    segnalaCaricamenti(dCalRes, dConfRes, coppieRes);
     if (dCalRes.data) setDispCalendario(dCalRes.data);
     if (dConfRes.data) setDispConferme(dConfRes.data);
+    if (coppieRes.data) setCoppieUtenteCampo(coppieRes.data);
   };
+
+  const fetchTutto = async () => { await Promise.all([fetchStatico(), fetchDisponibilita()]); };
 
   // Gli errori di Supabase arrivano all'utente con il messaggio del database, non con una frase
   // generica: senza, davanti a un alert non si capisce se manca una tabella, se è un duplicato
@@ -110,7 +130,9 @@ function Disponibilita({ user }) {
   const nomeCampo = (id) => campoInfo(id)?.nome || id;
   const rigaDisp = (utenteId, campoId, iso, fasciaId) => dispCalendario.find(d => d.utente_id === utenteId && d.campo_id === campoId && d.data === iso && d.fascia === fasciaId);
   // Campi (id) su cui un bubbler ha almeno una disponibilità: sostituisce la vecchia tabella disp_campi.
-  const campiIdDiBubbler = (utenteId) => [...new Set(dispCalendario.filter(d => d.utente_id === utenteId).map(d => d.campo_id))];
+  // Legge le coppie di tutto lo storico, non il solo mese caricato, altrimenti un campo usato in altri
+  // mesi risulterebbe mai usato.
+  const campiIdDiBubbler = (utenteId) => [...new Set(coppieUtenteCampo.filter(d => d.utente_id === utenteId).map(d => d.campo_id))];
   const campiDiBubbler = (utenteId) => campiIdDiBubbler(utenteId).map(id => campoInfo(id)).filter(Boolean);
   const provinciaCampo = (campoId) => campoInfo(campoId)?.provincia || 'Senza provincia';
   const orarioRiga = (riga) => `${oraHHMM(riga.ora_inizio) || oraHHMM(fasciaInfo(riga.fascia)?.ora_inizio)}–${oraHHMM(riga.ora_fine) || oraHHMM(fasciaInfo(riga.fascia)?.ora_fine)}`;
@@ -199,6 +221,16 @@ function Disponibilita({ user }) {
   const giorniMese = Array.from({ length: new Date(calDate.getFullYear(), calDate.getMonth() + 1, 0).getDate() }, (_, i) => new Date(calDate.getFullYear(), calDate.getMonth(), i + 1));
   const meseVisualizzato = meseISO(calDate);
   const etichettaMese = `${MESI[calDate.getMonth()]} ${calDate.getFullYear()}`;
+  // Estremi di ciò che la griglia mostra: è la finestra che si carica dal database.
+  const inizioGriglia = toISODate(settimaneMese[0][0]);
+  const fineGriglia = toISODate(settimaneMese[5][6]);
+
+  // Anagrafiche una volta sola; le disponibilità a ogni cambio di mese, perché si carica
+  // solo la finestra visualizzata.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchStatico(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchDisponibilita(); }, [meseVisualizzato]);
 
   // Le mie righe di disponibilità: servono sia all'editor (per la copia da un altro campo)
   // sia al riepilogo personale, quindi stanno qui sopra a entrambi.

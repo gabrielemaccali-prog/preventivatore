@@ -48,7 +48,7 @@ const CONFIG = {
   campo: {
     titolo: 'Campi',
     intestazione: 'Campo',
-    descrizione: "Quello che dobbiamo ai centri sportivi: l'affitto del campo e il rinfresco, al netto dell'IVA, come li ha calcolati la prenotazione. Con le rettifiche diventa il consuntivato, che si chiude per periodo quando è stato pagato. Le partite commissionate da un campo (\"cliente fornitore\" sulla prenotazione) non si incassano: si compensano qui, e si paga la differenza.",
+    descrizione: "Quello che dobbiamo ai centri sportivi: l'affitto del campo e il rinfresco, al netto dell'IVA, come li ha calcolati la prenotazione. Con le rettifiche diventa il consuntivato, che si chiude per periodo quando è stato pagato. Le partite commissionate da un campo (\"cliente fornitore\" sulla prenotazione) non si incassano: si compensano qui, e si paga la differenza. Compaiono anche le partite annullate per cui all'annullamento si è segnato che affitto o rinfresco si pagano lo stesso: entrano con gli importi della prenotazione, da rettificare fino a quanto va pagato davvero.",
     vuoto: 'Niente da consuntivare: affitti e rinfreschi delle partite giocate sono già tutti chiusi.',
     titoloCosto: 'Affitto più rinfresco: quello che dobbiamo al campo',
     titoloCredito: 'Il prezzo netto delle partite che il campo ci ha commissionato',
@@ -115,7 +115,8 @@ function Controparti({ tipo }) {
     setCaricamento(true);
     const [pr, se, ca, li, pv, gi, vc, pe] = await Promise.all([
       // Solo il passato: il futuro non si consuntiva, come nei compensi.
-      supabase.from('prenotazioni').select('*').eq('stato', STATO_PREN.CONFERMATO).lte('data', oggiIso()).order('data'),
+      // Anche le annullate: quelle con costi segnati entrano, le altre le scarta il calcolo.
+      supabase.from('prenotazioni').select('*').in('stato', [STATO_PREN.CONFERMATO, STATO_PREN.ANNULLATA]).lte('data', oggiIso()).order('data'),
       supabase.from('sedi').select('*'),
       supabase.from('pren_campi').select('id, nome').order('nome'),
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
@@ -230,7 +231,7 @@ function Controparti({ tipo }) {
   const tabellaRighe = (controparte, righe, soloLettura) => {
     const perPrenotazione = new Map();
     righe.forEach(r => {
-      if (!perPrenotazione.has(r.riferimento)) perPrenotazione.set(r.riferimento, { riferimento: r.riferimento, data: r.data, nominativo: r.nominativo, esempio: r });
+      if (!perPrenotazione.has(r.riferimento)) perPrenotazione.set(r.riferimento, { riferimento: r.riferimento, data: r.data, nominativo: r.nominativo, annullata: !!r.annullata, esempio: r });
       perPrenotazione.get(r.riferimento)[r.lato] = r;
     });
     const elenco = [...perPrenotazione.values()]
@@ -296,7 +297,9 @@ function Controparti({ tipo }) {
                 <tr key={x.riferimento} style={{ borderTop: '1px solid #eee' }}>
                   <td style={{ ...cella, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(x.data)}</td>
                   <td style={{ ...cella, whiteSpace: 'nowrap' }}><strong>{x.riferimento}</strong></td>
-                  <td style={cella}>{x.nominativo || '—'}</td>
+                  {/* Un costo su una partita che non si è giocata va riconosciuto a colpo d'occhio:
+                      di solito è da rettificare fino a quanto concordato. */}
+                  <td style={cella}>{x.nominativo || '—'}{x.annullata && <span style={{ color: '#dc2626', fontSize: '0.75rem', fontWeight: 600, marginLeft: '6px' }} title="Partita annullata con costi da sostenere">annullata</span>}</td>
                   <td style={{ ...cella, color: '#475569' }}>{soloLettura ? (x.esempio.giochi?.join(' + ') || '—') : etichettaRiga(x.esempio)}</td>
                   {cfg.parti.map(p => (
                     <td key={p.campo} style={destra} title={x.costo?.dettaglio && p.dettaglio ? p.dettaglio(x.costo.dettaglio) : undefined}>{parte(x.costo, p.campo)}</td>

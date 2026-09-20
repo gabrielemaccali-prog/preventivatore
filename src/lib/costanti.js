@@ -33,6 +33,27 @@ export const ETICHETTA_STATO_PREN = Object.freeze({
 });
 export const etichettaStatoPren = etichettaDa(ETICHETTA_STATO_PREN);
 
+// Costi di una partita annullata -- colonna prenotazioni.costiAnnullamento (text[]).
+// Un'annullata senza incasso non ha ricavo e di norma nemmeno costi. Quando qualcosa si paga lo
+// stesso, all'annullamento si segna cosa: gli importi non si scrivono, sono quelli della prenotazione
+// (affitto, rinfresco) e dei compensi, e la differenza con quanto pagato davvero si rettifica in
+// consuntivazione. Vale solo per le ANNULLATA: tornando in gioco la partita porta i suoi costi pieni.
+export const COSTO_ANNULLAMENTO = Object.freeze({
+  CAMPO: 'campo',
+  RINFRESCO: 'rinfresco',
+  OPERATORI: 'operatori',
+});
+export const ETICHETTA_COSTO_ANNULLAMENTO = Object.freeze({
+  [COSTO_ANNULLAMENTO.CAMPO]: 'Affitto campo',
+  [COSTO_ANNULLAMENTO.RINFRESCO]: 'Rinfresco',
+  [COSTO_ANNULLAMENTO.OPERATORI]: 'Operatori',
+});
+export const costiAnnullamentoDi = (p) => new Set(
+  p?.stato === STATO_PREN.ANNULLATA && Array.isArray(p.costiAnnullamento) ? p.costiAnnullamento : []
+);
+// Chi genera un compenso: chi ha giocato, e l'annullata per cui gli operatori si pagano lo stesso.
+export const generaCompenso = (p) => p?.stato === STATO_PREN.CONFERMATO || costiAnnullamentoDi(p).has(COSTO_ANNULLAMENTO.OPERATORI);
+
 // Voucher -- colonna voucher.stato
 export const STATO_VOUCHER = Object.freeze({
   INCOMPLETO: 'incompleto',

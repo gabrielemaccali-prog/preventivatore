@@ -3,9 +3,9 @@ import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import html2pdf from 'html2pdf.js'
-import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita } from './calcolo'
+import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita, quotePartite, righeConsuntivo, trasfertePerData } from './calcolo'
 import { toMinutes, righeResidenza, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN } from '../../lib/costanti'
+import { STATO_PREN, generaCompenso } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -176,11 +176,14 @@ function Compensi({ user }) {
   // e con questi volumi restringere lato database non fa risparmiare niente.
   const fetchPartite = async () => {
     setCaricamentoPartite(true);
-    // Solo partite confermate: una FORSE non giocata non genera compenso.
+    // Solo partite confermate: una FORSE non giocata non genera compenso. Piu' le annullate per cui
+    // all'annullamento si e' segnato che gli operatori si pagano lo stesso (vedi generaCompenso).
+    // Tutte le colonne, non un elenco: costiAnnullamento puo' non esistere ancora, e chiederla per
+    // nome farebbe fallire lo scarico finche' lo script SQL non e' stato eseguito.
     const [pr, vc, pe, ca, ut, gi] = await Promise.all([
       supabase.from('prenotazioni')
-        .select('id, data, oraInizio, oraFine, durataOre, nominativo, campoId, campoNome, pacchettoNome, giocoId, locationIndirizzo, locationCitta, locationProvincia, operatori')
-        .eq('stato', STATO_PREN.CONFERMATO).lte('data', oggiIso()).order('data', { ascending: false }),
+        .select('*')
+        .in('stato', [STATO_PREN.CONFERMATO, STATO_PREN.ANNULLATA]).lte('data', oggiIso()).order('data', { ascending: false }),
       supabase.from('op_voci').select('*').lte('data', oggiIso()),
       supabase.from('op_periodi').select('*').order('dal', { ascending: false }),
       // Serve per l'indirizzo delle giornate sul documento: la prenotazione porta solo il nome
@@ -196,7 +199,7 @@ function Compensi({ user }) {
     // L'anagrafica no: se manca, il modulo deve continuare a funzionare e il documento lo dice
     // da sé che i dati fiscali non ci sono.
     if (ut.error) console.error('Compensi — anagrafica bubbler non caricata:', ut.error);
-    setPartite((pr.data || []).filter(p => (p.operatori || []).length > 0));
+    setPartite((pr.data || []).filter(p => generaCompenso(p) && (p.operatori || []).length > 0));
     setVoci(vc.data || []);
     setPeriodi(pe.data || []);
     setCampi(ca.data || []);
@@ -329,9 +332,13 @@ function Compensi({ user }) {
     )) return;
 
     setInCorso(`consuntiva-${op.id}`);
+    // Le righe per partita si congelano qui: dopo, ricostruirle vorrebbe dire rifare il conto sui
+    // dati di domani, e un consuntivo che si riscrive da solo non è un consuntivo (vedi calcolo.js).
+    const aliquota = parametri.aliquota_ritenuta;
     const { error } = await supabase.from('op_periodi').insert([{
       operatore_id: op.id, dal, al,
       compenso_netto: op.compenso, spese: op.spese,
+      righe: righeConsuntivo(quotePartite(op), { aliquota }),
       // Il costo azienda qui è il solo esborso verso l'operatore: la ritenuta si aggiunge
       // quando si elabora il rimborso, non adesso.
       costo_azienda: op.compenso + op.spese,
@@ -556,8 +563,21 @@ function Compensi({ user }) {
     if (e.giornate.length === 0) return alert("Indica almeno una giornata: il documento deve dire per cosa si paga.");
 
     setInCorso('rimborso');
+    // Le trasferte spostano una fetta di compenso fuori dall'imponibile, quindi la ritenuta di ogni
+    // riga cambia: le righe congelate si riscrivono con gli importi del documento appena emesso.
+    const aliquotaDoc = e.periodo.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta;
+    const righeAggiornate = righeConsuntivo(
+      (e.periodo.righe || []).map(r => ({ riferimento: r.riferimento, data: r.data, ore: r.ore, base: r.base, rettifiche: r.rettifiche, spese: r.spese })),
+      { aliquota: aliquotaDoc, trasfertePerData: { ...trasfertePerData({ trasferte: { righe: i.righeTrasferta } }) } }
+    );
     const { error } = await supabase.from('op_periodi').update({
       evaso_il: new Date().toISOString(),
+      ...(righeAggiornate.length > 0 ? { righe: righeAggiornate } : {}),
+      // La ritenuta e il costo per l'azienda nascono qui: alla consuntivazione non erano ancora
+      // decisi. Finivano solo dentro il documento, e le due colonne restavano a zero -- chiunque le
+      // leggesse senza aprire il jsonb vedeva un costo più basso del vero.
+      ritenuta: i.ritenuta,
+      costo_azienda: arrotonda2(i.totale + i.ritenuta),
       // La data scritta sul documento è a tutti gli effetti la data di consuntivazione del periodo:
       // è quella che si vede in elenco e quella che il bubbler ha in mano.
       data_consuntivo: e.dataDocumento,
@@ -597,7 +617,18 @@ function Compensi({ user }) {
       + `così ripartendo ritrovi giornate e trasferte già impostate.`
     )) return;
     setInCorso(`riapri-rimborso-${p.id}`);
-    const { error } = await supabase.from('op_periodi').update({ evaso_il: null }).eq('id', p.id);
+    // Ritenuta e costo azienda tornano come erano prima dell'elaborazione, insieme alle righe: il
+    // documento resta come bozza, ma quello che è stato pagato non lo è più.
+    const righeRiaperte = righeConsuntivo(
+      (p.righe || []).map(r => ({ riferimento: r.riferimento, data: r.data, ore: r.ore, base: r.base, rettifiche: r.rettifiche, spese: r.spese })),
+      { aliquota: p.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta }
+    );
+    const { error } = await supabase.from('op_periodi').update({
+      evaso_il: null,
+      ...(righeRiaperte.length > 0 ? { righe: righeRiaperte } : {}),
+      ritenuta: 0,
+      costo_azienda: arrotonda2((parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0)),
+    }).eq('id', p.id);
     setInCorso(null);
     if (error) { console.error(error); return alert("Errore nella riapertura del rimborso."); }
     fetchPartite();
@@ -691,7 +722,7 @@ function Compensi({ user }) {
                         )}
                       </td>
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{x.partita.id}</td>
-                      <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}</td>
+                      <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}{x.partita.stato === STATO_PREN.ANNULLATA && <span style={{ color: '#dc2626', fontSize: '0.75rem', fontWeight: 600, marginLeft: '6px' }} title="Partita annullata con costi da sostenere">annullata</span>}</td>
                       <td style={{ padding: '7px 10px', color: '#666' }}>{etichettaPartita(x.partita.pacchettoNome, nomeGiocoPerId[x.partita.giocoId]) || '—'}</td>
                       <td style={{ padding: '7px 10px', color: '#666' }}>{locationDi(x.partita)}</td>
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>{ore(x.oreAttribuite)}</td>
