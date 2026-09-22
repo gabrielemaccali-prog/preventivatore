@@ -22,6 +22,9 @@ const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta:
 // Frazione IVA da applicare (percentuale campo, es. 22 -> 0.22); 22% di default se non specificata sul campo.
 const fracIva = (v) => (v != null && v !== '' ? parseFloat(v) : 22) / 100;
 
+// Riga vuota del pagamento che si sta digitando, prima di aggiungerla alla prenotazione.
+const PAGAMENTO_VUOTO = { importo: "", data: "", nominativo: "" };
+
 const PREN_VUOTA = {
   data: "", altriGiorni: [], piuGiorni: false, senzaOrario: false, pacchettoId: "", giocoId: "", oraInizio: "", oraFine: "",
   nominativo: "", email: "", telefono: "",
@@ -386,7 +389,10 @@ function Prenotazioni({ user }) {
   const [formPrenOriginale, setFormPrenOriginale] = useState(null); // snapshot al caricamento, per evidenziare i campi modificati
   const [codicePrenInModifica, setCodicePrenInModifica] = useState(null);
   const [salvataggioPren, setSalvataggioPren] = useState(false);
-  const [nuovoPagamento, setNuovoPagamento] = useState({ importo: "", data: "", nominativo: "" });
+  const [nuovoPagamento, setNuovoPagamento] = useState(PAGAMENTO_VUOTO);
+  // Un pagamento digitato ma non ancora aggiunto con "+ Pagamento" è una modifica a tutti gli
+  // effetti: senza contarlo il form si chiude come se fosse pulito e quei dati spariscono in silenzio.
+  const pagamentoInSospeso = nuovoPagamento.importo !== "" || !!nuovoPagamento.data || !!(nuovoPagamento.nominativo || "").trim();
   const [nuovoGiornoPren, setNuovoGiornoPren] = useState("");
   // Il dettaglio per gioco si legge sempre, si modifica solo dopo averlo chiesto: sono i numeri
   // da cui escono prezzo e costo della pratica, e un clic distratto non deve poterli spostare.
@@ -691,7 +697,7 @@ function Prenotazioni({ user }) {
     return `${prefix}${prossimo}`;
   };
 
-  const nuovaPrenotazione = () => { setFormPren(PREN_VUOTA); setFormPrenOriginale(null); setCodicePrenInModifica(null); setMostraErroriValidazione(false); };
+  const nuovaPrenotazione = () => { setFormPren(PREN_VUOTA); setFormPrenOriginale(null); setCodicePrenInModifica(null); setMostraErroriValidazione(false); setNuovoPagamento(PAGAMENTO_VUOTO); };
 
   // Apre il form di nuova prenotazione come overlay compatto (richiamato da Gestione), invece che come scheda a pagina intera.
   const nuovaPrenotazioneOverlay = () => { nuovaPrenotazione(); setShowFormGestione(true); };
@@ -699,7 +705,11 @@ function Prenotazioni({ user }) {
   // Chiude l'overlay di Gestione, chiedendo conferma se ci sono modifiche non salvate.
   const chiudiFormGestione = () => {
     const modificato = JSON.stringify(formPren) !== JSON.stringify(formPrenOriginale ?? PREN_VUOTA);
-    if (modificato && !window.confirm("Ci sono modifiche non salvate. Chiudere comunque?")) return;
+    const avviso = pagamentoInSospeso
+      ? "C'è un pagamento digitato ma non aggiunto con \"+ Pagamento\": chiudendo va perso. Chiudere comunque?"
+      : "Ci sono modifiche non salvate. Chiudere comunque?";
+    if ((modificato || pagamentoInSospeso) && !window.confirm(avviso)) return;
+    setNuovoPagamento(PAGAMENTO_VUOTO);
     setShowFormGestione(false);
   };
 
@@ -733,6 +743,7 @@ function Prenotazioni({ user }) {
     setFormPren(caricato);
     setFormPrenOriginale(caricato);
     setMostraErroriValidazione(false);
+    setNuovoPagamento(PAGAMENTO_VUOTO);
     setShowFormGestione(true);
   };
 
@@ -1334,7 +1345,7 @@ function Prenotazioni({ user }) {
   const aggiungiPagamento = () => {
     if (nuovoPagamento.importo === "" || !nuovoPagamento.data) return alert("Inserisci importo e data del pagamento.");
     setFormPren(prev => ({ ...prev, pagamenti: [...prev.pagamenti, { importo: parseFloat(nuovoPagamento.importo) || 0, data: nuovoPagamento.data, nominativo: nuovoPagamento.nominativo }] }));
-    setNuovoPagamento({ importo: "", data: "", nominativo: "" });
+    setNuovoPagamento(PAGAMENTO_VUOTO);
   };
   const rimuoviPagamento = (idx) => setFormPren(prev => ({ ...prev, pagamenti: prev.pagamenti.filter((_, i) => i !== idx) }));
 
@@ -1523,6 +1534,8 @@ function Prenotazioni({ user }) {
       sdi: privatoFatt ? '0000000' : f.sdi
     };
 
+    if (pagamentoInSospeso && !window.confirm("Il pagamento digitato non è stato aggiunto con \"+ Pagamento\": salvando non verrà registrato. Procedere?")) return;
+
     setSalvataggioPren(true);
     let codice = codicePrenInModifica;
     const eraNuova = !codice;
@@ -1543,6 +1556,9 @@ function Prenotazioni({ user }) {
     setSalvataggioPren(false);
     setCodicePrenInModifica(codice);
     setFormPrenOriginale(f);
+    // Se si è scelto di salvare senza aggiungerlo, i campi si svuotano: tenerli pieni lascerebbe
+    // la prenotazione "modificata" subito dopo il salvataggio, per un pagamento che non c'è.
+    setNuovoPagamento(PAGAMENTO_VUOTO);
     fetchTutto();
     // Una prenotazione appena nata va segnata sul calendario finche' si ha in mano il contesto:
     // chiederlo adesso evita il giro "salva, cerca la riga, apri, clicca" -- e le partite che sul
@@ -1732,7 +1748,7 @@ function Prenotazioni({ user }) {
         // Evidenzia i campi cambiati rispetto ai valori caricati inizialmente (solo in modifica)
         const campoModificato = (chiave) => formPrenOriginale != null && JSON.stringify(formPren[chiave]) !== JSON.stringify(formPrenOriginale[chiave]);
         const evidenzia = (chiave) => campoModificato(chiave) ? { borderColor: '#f59e0b', borderWidth: '2px', backgroundColor: '#fffbeb' } : undefined;
-        const formModificato = formPrenOriginale != null && JSON.stringify(formPren) !== JSON.stringify(formPrenOriginale);
+        const formModificato = pagamentoInSospeso || (formPrenOriginale != null && JSON.stringify(formPren) !== JSON.stringify(formPrenOriginale));
 
         // Campi obbligatori mancanti: evidenziati di rosso solo dopo un tentativo di salvataggio (mostraErroriValidazione).
         // Usa una classe (non solo lo style inline) perché una regola globale "input { border ... !important }"
@@ -2372,6 +2388,11 @@ function Prenotazioni({ user }) {
                       <button type="button" className="btn-accent-inline" style={{ padding: '8px 14px', fontSize: '0.85rem' }} onClick={aggiungiPagamento}>+ Pagamento</button>
                     </div>
                   </div>
+                  {pagamentoInSospeso && (
+                    <p style={{ margin: '6px 0 0', fontSize: '0.8rem', color: '#b45309' }}>
+                      ⚠️ Pagamento non ancora aggiunto: premi &quot;+ Pagamento&quot; perché finisca nella prenotazione.
+                    </p>
+                  )}
                 </>
               )}
             </div>
@@ -2386,7 +2407,7 @@ function Prenotazioni({ user }) {
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <button className="btn-preventivo btn-accent" style={(codicePrenInModifica && formModificato) ? { width: 'auto', flex: '1 1 auto' } : undefined} onClick={salvaPrenotazione} disabled={salvataggioPren}>{salvataggioPren ? 'Salvataggio…' : (codicePrenInModifica ? '💾 Salva modifiche' : '💾 Salva Prenotazione (FORSE)')}</button>
             {codicePrenInModifica && formModificato && (
-              <button type="button" className="btn-annulla-inline" disabled={salvataggioPren} onClick={() => { if (window.confirm("Annullare le modifiche non salvate?")) setFormPren(formPrenOriginale); }}>Annulla modifiche</button>
+              <button type="button" className="btn-annulla-inline" disabled={salvataggioPren} onClick={() => { if (window.confirm("Annullare le modifiche non salvate?")) { setFormPren(formPrenOriginale); setNuovoPagamento(PAGAMENTO_VUOTO); } }}>Annulla modifiche</button>
             )}
           </div>
         </div>

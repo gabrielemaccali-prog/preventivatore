@@ -24,6 +24,9 @@ const FORM_VUOTO = {
   // Voucher pregresso: venduto col vecchio sistema, ha già un codice suo scritto sul buono.
   pregresso: false, codicePregresso: ""
 };
+// Riga vuota del pagamento che si sta digitando, prima di aggiungerla al voucher.
+const PAGAMENTO_VUOTO = { importo: "", data: "", nominativo: "" };
+
 const FORM_PREGRESSO_VUOTO = { ...FORM_VUOTO, pregresso: true, stato: STATO_VOUCHER.EMESSO };
 
 // Il codice di un voucher pregresso è quello scritto sul buono: BR + AAAAMMGG, la data in cui è
@@ -139,7 +142,10 @@ function Voucher({ user }) {
     daFatturareVoucher(v), sommaImporti(fattureVoucher.filter(f => f.riferimento === String(v.codice)))
   ) === 'fatturata';
   const [prenotazioni, setPrenotazioni] = useState([]); // serve solo per sapere dove è stato usato un voucher
-  const [nuovoPagamento, setNuovoPagamento] = useState({ importo: "", data: "", nominativo: "" });
+  const [nuovoPagamento, setNuovoPagamento] = useState(PAGAMENTO_VUOTO);
+  // Un pagamento digitato ma non ancora aggiunto con "+ Pagamento" è una modifica a tutti gli
+  // effetti: senza contarlo il form si chiude come se fosse pulito e quei dati spariscono in silenzio.
+  const pagamentoInSospeso = nuovoPagamento.importo !== "" || !!nuovoPagamento.data || !!(nuovoPagamento.nominativo || "").trim();
 
   // --- CONFIGURATORE PACCHETTI ---
   const [nuovoPacchetto, setNuovoPacchetto] = useState({ nome: "", importo: "", descrizione: "" });
@@ -207,7 +213,7 @@ function Voucher({ user }) {
   const aggiungiPagamento = () => {
     if (nuovoPagamento.importo === "" || !nuovoPagamento.data) return alert("Inserisci importo e data del pagamento.");
     setForm(prev => ({ ...prev, pagamenti: [...(prev.pagamenti || []), { importo: parseFloat(nuovoPagamento.importo) || 0, data: nuovoPagamento.data, nominativo: nuovoPagamento.nominativo }] }));
-    setNuovoPagamento({ importo: "", data: "", nominativo: "" });
+    setNuovoPagamento(PAGAMENTO_VUOTO);
   };
   const rimuoviPagamento = (idx) => setForm(prev => ({ ...prev, pagamenti: prev.pagamenti.filter((_, i) => i !== idx) }));
 
@@ -263,7 +269,7 @@ function Voucher({ user }) {
     setCodiceGenerato("");
     setQueryIndirizzo("");
     setRisultatiRicerca([]);
-    setNuovoPagamento({ importo: "", data: "", nominativo: "" });
+    setNuovoPagamento(PAGAMENTO_VUOTO);
     setMostraErroriValidazione(false);
   };
 
@@ -275,7 +281,11 @@ function Voucher({ user }) {
   // Chiude l'overlay, chiedendo conferma se ci sono modifiche non salvate.
   const chiudiFormVoucher = () => {
     const modificato = JSON.stringify(form) !== JSON.stringify(formOriginale ?? (form.pregresso ? FORM_PREGRESSO_VUOTO : FORM_VUOTO));
-    if (modificato && !window.confirm("Ci sono modifiche non salvate. Chiudere comunque?")) return;
+    const avviso = pagamentoInSospeso
+      ? "C'è un pagamento digitato ma non aggiunto con \"+ Pagamento\": chiudendo va perso. Chiudere comunque?"
+      : "Ci sono modifiche non salvate. Chiudere comunque?";
+    if ((modificato || pagamentoInSospeso) && !window.confirm(avviso)) return;
+    setNuovoPagamento(PAGAMENTO_VUOTO);
     setShowFormVoucher(false);
   };
 
@@ -335,6 +345,7 @@ function Voucher({ user }) {
     }
     const erroreCodiceFiscale = erroreCF(form.fattCF);
     if (erroreCodiceFiscale) return alert(erroreCodiceFiscale);
+    if (pagamentoInSospeso && !window.confirm("Il pagamento digitato non è stato aggiunto con \"+ Pagamento\": salvando non verrà registrato. Procedere?")) return;
     setMostraErroriValidazione(false);
 
     const stato = calcolaStato(form, codiceInModifica ? form.stato : STATO_VOUCHER.INCOMPLETO);
@@ -384,6 +395,7 @@ function Voucher({ user }) {
     const salvato = { ...form, stato, dataEmissione: form.dataEmissione || new Date().toISOString() };
     setForm(salvato);
     setFormOriginale(salvato);
+    setNuovoPagamento(PAGAMENTO_VUOTO);
     setSalvataggioVoucher(false);
     setCodiceInModifica(codiceFinale);
     setCodiceGenerato(codiceFinale);
@@ -468,7 +480,7 @@ function Voucher({ user }) {
     setCodiceGenerato(v.codice);
     setQueryIndirizzo("");
     setRisultatiRicerca([]);
-    setNuovoPagamento({ importo: "", data: "", nominativo: "" });
+    setNuovoPagamento(PAGAMENTO_VUOTO);
     setMostraErroriValidazione(false);
     setShowFormVoucher(true);
   };
@@ -635,7 +647,7 @@ function Voucher({ user }) {
     const totalePagato = pagamentiForm.reduce((s, p) => s + (parseFloat(p.importo) || 0), 0);
     const statoPag = statoPagamentoDi(pagamentiForm, importoVoucher);
 
-    const formModificato = formOriginale != null && JSON.stringify(form) !== JSON.stringify(formOriginale);
+    const formModificato = pagamentoInSospeso || (formOriginale != null && JSON.stringify(form) !== JSON.stringify(formOriginale));
 
     // Stato visivo di un campo: rosso se obbligatorio e mancante (solo dopo un tentativo di salvataggio),
     // altrimenti giallo se modificato rispetto ai valori caricati (solo in modifica).
@@ -794,6 +806,11 @@ function Voucher({ user }) {
                 </div>
               </div>
             )}
+            {pagamentoInSospeso && (
+              <p style={{ margin: '6px 0 0', fontSize: '0.8rem', color: '#b45309' }}>
+                ⚠️ Pagamento non ancora aggiunto: premi &quot;+ Pagamento&quot; perché finisca nel voucher.
+              </p>
+            )}
             {form.stato === STATO_VOUCHER.USATO && (
               <p className="descrizione-pagina" style={{ margin: '10px 0 0 0' }}>
                 🎟️ Voucher già usato{prenotazioneDelVoucher(codiceInModifica) ? ` sulla prenotazione ${prenotazioneDelVoucher(codiceInModifica).id}` : ''}.
@@ -805,7 +822,7 @@ function Voucher({ user }) {
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn-preventivo btn-accent" style={{ width: 'auto', flex: '1 1 auto', marginTop: 0 }} onClick={salvaVoucher} disabled={salvataggioVoucher}>{salvataggioVoucher ? 'Salvataggio…' : (codiceInModifica ? '💾 Salva modifiche' : '💾 Salva Voucher')}</button>
           {codiceInModifica && formModificato && (
-            <button type="button" className="btn-annulla-inline" disabled={salvataggioVoucher} onClick={() => { if (window.confirm("Annullare le modifiche non salvate?")) setForm(formOriginale); }}>Annulla modifiche</button>
+            <button type="button" className="btn-annulla-inline" disabled={salvataggioVoucher} onClick={() => { if (window.confirm("Annullare le modifiche non salvate?")) { setForm(formOriginale); setNuovoPagamento(PAGAMENTO_VUOTO); } }}>Annulla modifiche</button>
           )}
           <button className="btn-stampa" style={{ marginTop: 0 }} onClick={stampaFormCorrente} disabled={!codiceGenerato || !fatturazioneCompleta}>🖨️ Scarica PDF</button>
         </div>
