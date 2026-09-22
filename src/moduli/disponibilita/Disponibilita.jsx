@@ -447,14 +447,26 @@ function Disponibilita({ user }) {
   const [dettaglioRiepilogo, setDettaglioRiepilogo] = useState(null); // { utenteId, iso }
   const [filtroProvincia, setFiltroProvincia] = useState("");
   const [filtroCampo, setFiltroCampo] = useState("");
+  // L'id dell'utente resta una stringa: è il valore di una select, e confrontarlo con String(b.id)
+  // evita di doverlo riconvertire a numero ogni volta.
+  const [filtroBubbler, setFiltroBubbler] = useState("");
   const bubblersOrdinati = [...bubblers].sort((a, b) => (a.nome_breve || a.cognome || a.username).localeCompare(b.nome_breve || b.cognome || b.username));
 
   const campiFiltroDisponibili = filtroProvincia ? campi.filter(c => (c.provincia || 'Senza provincia') === filtroProvincia) : campi;
-  const bubblersFiltrati = (!filtroProvincia && !filtroCampo) ? bubblersOrdinati : bubblersOrdinati.filter(b => {
+  // I bubbler che lavorano nel luogo filtrato: sono le voci selezionabili nel filtro per operatore
+  // e, finché quel filtro è spento, già il risultato da mostrare.
+  const bubblersDelLuogo = (!filtroProvincia && !filtroCampo) ? bubblersOrdinati : bubblersOrdinati.filter(b => {
     const idCampiBubbler = campiIdDiBubbler(b.id);
     if (filtroCampo) return idCampiBubbler.includes(filtroCampo);
     return idCampiBubbler.some(id => provinciaCampo(id) === filtroProvincia);
   });
+  // Restringendo provincia o campo l'operatore scelto può uscire dall'elenco: in quel caso il filtro
+  // si considera spento, invece di lasciare la select su un nome che non è più fra le opzioni.
+  // Allargando di nuovo il luogo il nome torna selezionato, senza passare da un effetto.
+  const bubblerCorrente = bubblersDelLuogo.some(b => String(b.id) === filtroBubbler) ? filtroBubbler : "";
+  const bubblersFiltrati = bubblerCorrente
+    ? bubblersDelLuogo.filter(b => String(b.id) === bubblerCorrente)
+    : bubblersDelLuogo;
   // Righe di disponibilità di un bubbler in un giorno/fascia, già ristrette al filtro campo/provincia attivo.
   const righeDisp = (utenteId, iso, fasciaId) => dispCalendario.filter(d =>
     d.utente_id === utenteId && d.data === iso && d.fascia === fasciaId &&
@@ -967,7 +979,13 @@ function Disponibilita({ user }) {
                 <option value="">Tutti i campi</option>
                 {campiFiltroDisponibili.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
               </select>
-              {(filtroProvincia || filtroCampo) && <button className="btn-annulla-inline" style={{ fontSize: '0.8rem', padding: '5px 10px' }} onClick={() => { setFiltroProvincia(""); setFiltroCampo(""); }}>Azzera filtri</button>}
+              {/* Filtro per operatore: isola il calendario di un singolo bubbler. L'elenco segue
+                  provincia e campo già scelti, così non si può selezionare chi lì non lavora. */}
+              <select value={bubblerCorrente} onChange={(e) => setFiltroBubbler(e.target.value)} style={{ height: '32px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.82rem' }}>
+                <option value="">Tutti i bubbler</option>
+                {bubblersDelLuogo.map(b => <option key={b.id} value={b.id}>{nomeBubbler(b.id)}</option>)}
+              </select>
+              {(filtroProvincia || filtroCampo || bubblerCorrente) && <button className="btn-annulla-inline" style={{ fontSize: '0.8rem', padding: '5px 10px' }} onClick={() => { setFiltroProvincia(""); setFiltroCampo(""); setFiltroBubbler(""); }}>Azzera filtri</button>}
             </div>
           </div>
 
