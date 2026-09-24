@@ -85,6 +85,19 @@ export const ETICHETTA_STATO_PREVENTIVO = Object.freeze({
 });
 export const etichettaStatoPreventivo = etichettaDa(ETICHETTA_STATO_PREVENTIVO);
 
+// Lo stato vero di un preventivo, che non è sempre quello salvato: passata la validità dell'offerta,
+// un preventivo ancora registrato diventa "Azione richiesta" -- il cliente va sentito, o il preventivo
+// annullato. Confermato, Prenotato e Annullato non scadono: sono decisioni prese.
+// Sta qui perché la leggono il preventivatore e le statistiche del cruscotto, e devono dire la stessa cosa.
+export const statoPreventivoDi = (p) => {
+  if (p?.stato === STATO_PREVENTIVO.PRENOTATO) return STATO_PREVENTIVO.PRENOTATO;
+  if (p?.stato === STATO_PREVENTIVO.CONFERMATO) return STATO_PREVENTIVO.CONFERMATO;
+  if (p?.stato === STATO_PREVENTIVO.ANNULLATO) return STATO_PREVENTIVO.ANNULLATO;
+  if (!p?.dataEmissione) return p?.stato || STATO_PREVENTIVO.REGISTRATO;
+  const scadenza = new Date(p.dataEmissione).getTime() + GIORNI_VALIDITA_PREVENTIVO * 24 * 60 * 60 * 1000;
+  return Date.now() > scadenza ? STATO_PREVENTIVO.AZIONE_RICHIESTA : STATO_PREVENTIVO.REGISTRATO;
+};
+
 // --- PROVINCE ITALIANE ---
 // Le province si scrivono sempre con la sigla (è il formato che vuole la fattura elettronica e che
 // si aspetta il gestionale). Qui la tabella nome -> sigla serve a convertire quello che arriva dalla

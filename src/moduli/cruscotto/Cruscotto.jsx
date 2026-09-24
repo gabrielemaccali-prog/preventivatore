@@ -3,7 +3,10 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import { etichettaPartita, etichettaGiochiBreve, formattaDataGGMMAAAA } from '../../lib/utils'
-import { STATO_PREN, etichettaStatoPren, classeBadgeStato, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO, costiAnnullamentoDi, generaCompenso } from '../../lib/costanti'
+import {
+  STATO_PREN, etichettaStatoPren, classeBadgeStato, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO,
+  costiAnnullamentoDi, generaCompenso, STATO_PREVENTIVO, statoPreventivoDi, GIORNI_VALIDITA_PREVENTIVO,
+} from '../../lib/costanti'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { preventiviPerOperatore, lordizza, righeConsuntivo, trasfertePerData } from '../compensi/calcolo'
@@ -57,6 +60,17 @@ const raggruppaPerCentro = (righe, getCentro, getValore) => {
   const top = voci.slice(0, 7);
   const restoValore = voci.slice(7).reduce((s, v) => s + v.valore, 0);
   return [...top, { nome: 'Altro', valore: restoValore }];
+};
+
+// Come le righe scrivono "non parte da nessun magazzino": un extra, un servizio.
+const SENZA_SEDE = '—';
+
+const ESITO = { VINTO: 'vinto', PERSO: 'perso', APERTO: 'aperto' };
+const esitoDi = (p) => {
+  const stato = statoPreventivoDi(p);
+  if (stato === STATO_PREVENTIVO.CONFERMATO || stato === STATO_PREVENTIVO.PRENOTATO) return ESITO.VINTO;
+  if (stato === STATO_PREVENTIVO.ANNULLATO || stato === STATO_PREVENTIVO.AZIONE_RICHIESTA) return ESITO.PERSO;
+  return ESITO.APERTO;
 };
 
 const formattaEuro = (v) => `€${(+v || 0).toFixed(2)}`;
@@ -187,7 +201,7 @@ const statoConsuntivo = (voci) => {
 const ETICHETTA_CONSUNTIVO = { cons: 'Consuntivato', prev: 'Preventivo', misto: 'In parte consuntivato', vuoto: 'Niente da consuntivare' };
 
 function Cruscotto({ user }) {
-  const primaSchedaCR = ['cruscotto', 'andamento', 'pergioco'].find(s => puoVedere(user, 'costiricavi', s)) || 'cruscotto';
+  const primaSchedaCR = ['cruscotto', 'andamento', 'pergioco', 'preventivi'].find(s => puoVedere(user, 'costiricavi', s)) || 'cruscotto';
   const [currentView, setCurrentView] = useState(primaSchedaCR);
 
   const [prenotazioni, setPrenotazioni] = useState([]);
@@ -231,7 +245,7 @@ function Cruscotto({ user }) {
       supabase.from('op_voci').select('*'),
       supabase.from('op_periodi').select('*'),
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
-      supabase.from('preventivi').select('codice, gonfiabili'),
+      supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, totaleVendita, costoVivoTotale, destinazione, motivoAnnullamento'),
       supabase.from('fatture').select('riferimento, importo').eq('tipo', 'prenotazione'),
       supabase.from('voucher').select('codice, importo'),
       supabase.from('cons_periodi').select('controparte, controparte_id, righe'),
@@ -819,6 +833,142 @@ function Cruscotto({ user }) {
   const centriCostoDisponibili = useMemo(() => [...new Set(campi.map(c => c.centroCosto).filter(Boolean))].sort(), [campi]);
   const centriRicavoDisponibili = useMemo(() => [...new Set(giochi.map(g => g.centro_ricavo).filter(Boolean))].sort(), [giochi]);
 
+  // ====================== PREVENTIVI (statistiche dell'offerta) ======================
+  // Un preventivo finisce in uno di tre esiti, ed e' su questo che si misura tutto il resto:
+  //   vinto    confermato dal cliente, o gia' diventato una prenotazione
+  //   perso    annullato, oppure scaduto senza risposta -- un'offerta che non e' stata raccolta
+  //   aperto   emesso da poco, ancora dentro la validita' dell'offerta: non si sa ancora
+  // Gli aperti restano fuori dal calcolo della conversione: contarli fra i persi farebbe sembrare
+  // disastroso il mese in corso, dove metà dei preventivi ha appena preso la strada del cliente.
+  const [annoPrev, setAnnoPrev] = useState(null); // null = non scelto, vale il default calcolato
+  const anniPreventivi = useMemo(() => {
+    const anni = new Set(preventivi.filter(p => p.dataEmissione).map(p => String(p.dataEmissione).slice(0, 4)));
+    return [...anni].sort().reverse();
+  }, [preventivi]);
+  const annoPrevSel = annoPrev ?? (anniPreventivi.includes(annoCorrente) ? annoCorrente : (anniPreventivi[0] || ""));
+  // Il mese vale solo dentro un anno scelto: "marzo di tutti gli anni" e' una domanda diversa, e
+  // la tabella per periodo direbbe una riga sola senza dire di quale anno.
+  const [mesePrev, setMesePrev] = useState("");
+  const mesePrevSel = annoPrevSel ? mesePrev : "";
+
+  // Da quale sede parte un gioco a listino, e come si chiama: servono a dire quali giochi e quali
+  // fornitori compaiono nelle offerte, che il preventivo scrive per id di listino e non per nome.
+  const rigaListino = useMemo(() => {
+    const nomeSede = Object.fromEntries(sedi.map(s => [String(s.id), s.nome]));
+    return Object.fromEntries(listino.map(g => [String(g.id), {
+      gioco: giocoPerId[g.giocoId]?.nome || 'Gioco non a catalogo',
+      sede: nomeSede[String(g.locationId)] || 'Sede non indicata',
+    }]));
+  }, [listino, sedi, giocoPerId]);
+
+  const statPreventivi = useMemo(() => {
+    const nelPeriodo = preventivi.filter(p => {
+      if (!p.dataEmissione) return false;
+      const data = String(p.dataEmissione);
+      if (annoPrevSel && data.slice(0, 4) !== annoPrevSel) return false;
+      if (mesePrevSel && parseInt(data.slice(5, 7), 10) !== parseInt(mesePrevSel, 10)) return false;
+      return true;
+    });
+    const valore = (p) => parseFloat(p.totaleVendita) || 0;
+    const costo = (p) => parseFloat(p.costoVivoTotale) || 0;
+
+    const vuoto = () => ({ n: 0, valore: 0 });
+    const totali = { emessi: vuoto(), vinto: vuoto(), perso: vuoto(), aperto: vuoto(), margine: 0 };
+    const perMese = MESI.map((label, i) => ({ periodo: label, mese: i + 1, emessi: 0, vinto: 0, perso: 0, aperto: 0, valoreVinto: 0, valorePerso: 0, valoreAperto: 0, valore: 0 }));
+    const perAnno = {};
+    const perGruppo = { gioco: {}, sede: {} };
+    const motivi = {};
+    let scadutiSenzaRisposta = 0;
+
+    nelPeriodo.forEach(p => {
+      const esito = esitoDi(p);
+      totali.emessi.n++; totali.emessi.valore += valore(p);
+      totali[esito].n++; totali[esito].valore += valore(p);
+      totali.margine += valore(p) - costo(p);
+
+      const anno = String(p.dataEmissione).slice(0, 4);
+      if (!perAnno[anno]) perAnno[anno] = { periodo: anno, emessi: 0, vinto: 0, perso: 0, aperto: 0, valoreVinto: 0, valorePerso: 0, valoreAperto: 0, valore: 0 };
+      const riga = annoPrevSel ? perMese[parseInt(String(p.dataEmissione).slice(5, 7), 10) - 1] : perAnno[anno];
+      if (riga) {
+        riga.emessi++; riga[esito]++; riga.valore += valore(p);
+        riga[esito === ESITO.VINTO ? 'valoreVinto' : esito === ESITO.PERSO ? 'valorePerso' : 'valoreAperto'] += valore(p);
+      }
+
+      if (statoPreventivoDi(p) === STATO_PREVENTIVO.AZIONE_RICHIESTA) scadutiSenzaRisposta++;
+      const motivo = (p.motivoAnnullamento || '').trim();
+      if (statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO) {
+        const k = motivo || 'Senza motivo scritto';
+        motivi[k] = (motivi[k] || 0) + 1;
+      }
+
+      // Un preventivo conta una volta per ogni gioco e per ogni sede che contiene: e' l'offerta a
+      // essere vinta o persa, non la singola riga, quindi il valore non si spezza e non si somma
+      // qui -- si contano le offerte.
+      const righe = Array.isArray(p.gonfiabili) ? p.gonfiabili.filter(Boolean) : [];
+      const visti = { gioco: new Set(), sede: new Set() };
+      righe.forEach(g => {
+        // I preventivi piu' vecchi non agganciano il listino: la riga porta solo il nome scritto
+        // allora, e quello si usa. La sede invece non c'era proprio, e non si inventa.
+        const info = rigaListino[String(g.gonfiabileId)] || {};
+        const sedeScritta = g.sedePartenza === SENZA_SEDE ? 'Senza sede di partenza' : g.sedePartenza;
+        const nomi = {
+          gioco: info.gioco || g.nome || 'Gioco non riconosciuto',
+          sede: sedeScritta || info.sede || 'Sede non indicata',
+        };
+        ['gioco', 'sede'].forEach(dim => {
+          const nome = nomi[dim];
+          if (visti[dim].has(nome)) return;
+          visti[dim].add(nome);
+          const per = (perGruppo[dim][nome] = perGruppo[dim][nome] || { nome, emessi: 0, vinto: 0, perso: 0, aperto: 0, valoreVinto: 0 });
+          per.emessi++; per[esito]++;
+          if (esito === ESITO.VINTO) per.valoreVinto += valore(p);
+        });
+      });
+    });
+
+    // La conversione si misura su quello che una risposta ce l'ha: vinti su vinti piu' persi.
+    const conversione = (v, pr) => (v + pr > 0 ? (v / (v + pr)) * 100 : null);
+    const conRapporto = (righe) => righe.map(r => ({ ...r, conversione: conversione(r.vinto, r.perso) }));
+    const gruppi = (dim) => Object.values(perGruppo[dim])
+      .map(r => ({ ...r, conversione: conversione(r.vinto, r.perso) }))
+      .sort((a, b) => b.emessi - a.emessi);
+
+    return {
+      totali: {
+        ...totali,
+        conversione: conversione(totali.vinto.n, totali.perso.n),
+        medio: totali.emessi.n > 0 ? totali.emessi.valore / totali.emessi.n : 0,
+        medioVinto: totali.vinto.n > 0 ? totali.vinto.valore / totali.vinto.n : 0,
+        marginePerc: totali.emessi.valore > 0 ? (totali.margine / totali.emessi.valore) * 100 : null,
+      },
+      periodi: conRapporto(annoPrevSel ? perMese : Object.values(perAnno).sort((a, b) => a.periodo.localeCompare(b.periodo))),
+      giochi: gruppi('gioco'),
+      sedi: gruppi('sede'),
+      motivi: Object.entries(motivi).map(([nome, n]) => ({ nome, n })).sort((a, b) => b.n - a.n),
+      scadutiSenzaRisposta,
+      annullati: nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO).length,
+    };
+  }, [preventivi, annoPrevSel, mesePrevSel, rigaListino]);
+
+  const percentuale = (v) => (v == null ? '—' : `${v.toFixed(0)}%`);
+
+  const esportaPreventivi = () => {
+    if (statPreventivi.totali.emessi.n === 0) return alert("Nessun preventivo da esportare.");
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(statPreventivi.periodi.map(r => ({
+      Periodo: r.periodo, Emessi: r.emessi, Vinti: r.vinto, Persi: r.perso, Aperti: r.aperto,
+      'Conversione %': r.conversione == null ? '' : +r.conversione.toFixed(1),
+      'Valore emesso': +r.valore.toFixed(2), 'Valore vinto': +r.valoreVinto.toFixed(2), 'Valore perso': +r.valorePerso.toFixed(2),
+    }))), 'Per periodo');
+    const perDimensione = (righe) => righe.map(r => ({
+      Nome: r.nome, Preventivi: r.emessi, Vinti: r.vinto, Persi: r.perso, Aperti: r.aperto,
+      'Conversione %': r.conversione == null ? '' : +r.conversione.toFixed(1), 'Valore vinto': +r.valoreVinto.toFixed(2),
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(perDimensione(statPreventivi.giochi)), 'Per gioco');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(perDimensione(statPreventivi.sedi)), 'Per sede');
+    XLSX.writeFile(wb, `Cruscotto_Preventivi${annoPrevSel ? `_${annoPrevSel}` : ''}.xlsx`);
+  };
+
   // ====================== PER GIOCO ======================
   // Una prenotazione e' una vendita sola, ma le domande a cui questa scheda deve rispondere --
   // quanto rende l'Archery, quanto pesa una sede, come va la famiglia Gonfiabili -- si fanno sul
@@ -998,6 +1148,9 @@ function Cruscotto({ user }) {
         )}
         {puoVedere(user, 'costiricavi', 'andamento') && (
           <button className={`nav-btn ${currentView === 'andamento' ? 'active' : ''}`} onClick={() => setCurrentView("andamento")}><Icona nome="andamento" />Andamento</button>
+        )}
+        {puoVedere(user, 'costiricavi', 'preventivi') && (
+          <button className={`nav-btn ${currentView === 'preventivi' ? 'active' : ''}`} onClick={() => setCurrentView("preventivi")}><Icona nome="preventivatore" />Preventivi</button>
         )}
         {puoVedere(user, 'costiricavi', 'pergioco') && (
           <button className={`nav-btn ${currentView === 'pergioco' ? 'active' : ''}`} onClick={() => setCurrentView("pergioco")}><Icona nome="giochi" />Per gioco</button>
@@ -1332,6 +1485,173 @@ function Cruscotto({ user }) {
           )}
         </div>
       )}
+
+      {/* ===================== PREVENTIVI ===================== */}
+      {currentView === "preventivi" && puoVedere(user, 'costiricavi', 'preventivi') && (() => {
+        const t = statPreventivi.totali;
+        const riquadro = (titolo, valore, sotto, colore) => (
+          <div className="admin-table-box-full" style={{ flex: '1 1 180px', padding: '14px 16px' }}>
+            <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{titolo}</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: colore || '#0f172a' }}>{valore}</div>
+            <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>{sotto}</div>
+          </div>
+        );
+        const tabellaGruppi = (righe, intestazione, vuoto) => (
+          <div className="admin-table-box-full" style={{ flex: '1 1 420px', overflowX: 'auto' }}>
+            <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                  {[intestazione, 'Preventivi', 'Vinti', 'Persi', 'Conversione', 'Valore vinto'].map((c, i) => (
+                    <th key={c} style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b', textAlign: i === 0 ? 'left' : 'right' }}>{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {righe.length === 0
+                  ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{vuoto}</td></tr>
+                  : righe.map(r => (
+                    <tr key={r.nome} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: '8px 10px' }}>{r.nome}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{r.emessi}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#15803d' }}>{r.vinto}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#b91c1c' }}>{r.perso}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{percentuale(r.conversione)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{formattaEuro(r.valoreVinto)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        );
+        return (
+          <div className="schermata-storico no-print">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <h2 style={{ margin: 0 }}>Preventivi <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(importi di vendita, per data di emissione)</span></h2>
+              <button onClick={esportaPreventivi} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
+            </div>
+            <p className="descrizione-pagina">
+              Quanto si offre e quanto si porta a casa. Un preventivo è <strong>vinto</strong> quando il cliente lo conferma (o è già diventato una
+              prenotazione), <strong>perso</strong> quando viene annullato o scade senza risposta oltre i {GIORNI_VALIDITA_PREVENTIVO} giorni di validità,
+              <strong> aperto</strong> finché quella validità dura. La conversione si calcola solo su quelli con una risposta, vinti su vinti più persi:
+              gli aperti non sono ancora né l'uno né l'altro.
+            </p>
+
+            <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
+              <div className="filtro-group" style={{ flex: '1 1 140px' }}>
+                <label>Anno di emissione:</label>
+                <select value={annoPrevSel} onChange={(e) => { setAnnoPrev(e.target.value); setMesePrev(""); }}>
+                  <option value="">Tutti gli anni</option>
+                  {anniPreventivi.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </div>
+              <div className="filtro-group" style={{ flex: '1 1 140px' }}>
+                <label>Mese di emissione:</label>
+                <select value={mesePrevSel} onChange={(e) => setMesePrev(e.target.value)} disabled={!annoPrevSel}>
+                  <option value="">Tutti i mesi</option>
+                  {MESI.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '20px' }}>
+              {riquadro('Preventivi emessi', t.emessi.n, `${formattaEuro(t.emessi.valore)} offerti`)}
+              {riquadro('Conversione', percentuale(t.conversione), `${t.vinto.n} vinti, ${t.perso.n} persi, ${t.aperto.n} aperti`, '#15803d')}
+              {riquadro('Valore vinto', formattaEuro(t.vinto.valore), `${formattaEuro(t.perso.valore)} persi`, '#15803d')}
+              {riquadro('Preventivo medio', formattaEuro(t.medio), `${formattaEuro(t.medioVinto)} sui vinti`)}
+              {riquadro('Margine preventivato', formattaEuro(t.margine), t.marginePerc == null ? 'sul totale offerto' : `${t.marginePerc.toFixed(0)}% del valore offerto`)}
+            </div>
+
+            <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '16px 8px' }}>
+              <h3 style={{ margin: '0 0 2px 14px', fontSize: '1rem' }}>Valore offerto {annoPrevSel ? `per mese (${annoPrevSel})` : 'per anno'}{mesePrevSel ? `, filtrato su ${MESI[parseInt(mesePrevSel, 10) - 1]}` : ''}</h3>
+              <p style={{ margin: '0 0 10px 14px', fontSize: '0.78rem', color: INK_MUTED }}>
+                Ogni colonna è il valore dei preventivi emessi nel periodo, diviso per esito.
+              </p>
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={statPreventivi.periodi} margin={{ top: 10, right: 20, left: 0, bottom: 0 }} barCategoryGap="20%">
+                  <CartesianGrid vertical={false} stroke={STROKE_GRIGLIA} />
+                  <XAxis dataKey="periodo" stroke={STROKE_ASSE} tick={{ fill: INK_MUTED, fontSize: 12 }} axisLine={{ stroke: STROKE_ASSE }} tickLine={false} />
+                  <YAxis stroke={STROKE_ASSE} tick={{ fill: INK_MUTED, fontSize: 12 }} axisLine={{ stroke: STROKE_ASSE }} tickLine={false} tickFormatter={(v) => `€${v}`} />
+                  <Tooltip formatter={(value) => formattaEuro(value)} contentStyle={{ fontSize: '0.85rem' }} />
+                  <Legend wrapperStyle={{ fontSize: '0.85rem' }} />
+                  <Bar dataKey="valoreVinto" name="Vinto" stackId="esito" fill={COLORE_MARGINE} maxBarSize={36} />
+                  <Bar dataKey="valorePerso" name="Perso" stackId="esito" fill={COLORE_COSTO} maxBarSize={36} />
+                  <Bar dataKey="valoreAperto" name="Aperto" stackId="esito" fill={COLORE_ALTRO} radius={[4, 4, 0, 0]} maxBarSize={36} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+              <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                    {['Periodo', 'Emessi', 'Vinti', 'Persi', 'Aperti', 'Conversione', 'Valore offerto', 'Valore vinto'].map((c, i) => (
+                      <th key={c} style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b', textAlign: i === 0 ? 'left' : 'right' }}>{c}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {statPreventivi.periodi.filter(r => r.emessi > 0).length === 0
+                    ? <tr><td colSpan={8} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessun preventivo nel periodo.</td></tr>
+                    : statPreventivi.periodi.filter(r => r.emessi > 0).map(r => (
+                      <tr key={r.periodo} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '8px 10px' }}>{r.periodo}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{r.emessi}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', color: '#15803d' }}>{r.vinto}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', color: '#b91c1c' }}>{r.perso}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>{r.aperto}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{percentuale(r.conversione)}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{formattaEuro(r.valore)}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', color: '#15803d' }}>{formattaEuro(r.valoreVinto)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
+                    <td style={{ padding: '10px' }}>TOTALE</td>
+                    <td style={{ padding: '10px', textAlign: 'right' }}>{t.emessi.n}</td>
+                    <td style={{ padding: '10px', textAlign: 'right', color: '#15803d' }}>{t.vinto.n}</td>
+                    <td style={{ padding: '10px', textAlign: 'right', color: '#b91c1c' }}>{t.perso.n}</td>
+                    <td style={{ padding: '10px', textAlign: 'right', color: '#64748b' }}>{t.aperto.n}</td>
+                    <td style={{ padding: '10px', textAlign: 'right' }}>{percentuale(t.conversione)}</td>
+                    <td style={{ padding: '10px', textAlign: 'right' }}>{formattaEuro(t.emessi.valore)}</td>
+                    <td style={{ padding: '10px', textAlign: 'right', color: '#15803d' }}>{formattaEuro(t.vinto.valore)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <p className="descrizione-pagina" style={{ marginTop: '20px' }}>
+              Un preventivo conta una volta per ogni gioco e per ogni sede che contiene: a essere vinta o persa è l'offerta intera, non la singola riga,
+              quindi le righe qui sotto possono sommare più dei preventivi emessi. I preventivi più vecchi non dicono da quale sede parte il gioco e
+              finiscono in "Sede non indicata"; "Senza sede di partenza" sono invece gli extra, che da nessun magazzino partono.
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px' }}>
+              {tabellaGruppi(statPreventivi.giochi, 'Gioco', 'Nessun gioco nei preventivi del periodo.')}
+              {tabellaGruppi(statPreventivi.sedi, 'Sede di partenza', 'Nessuna sede nei preventivi del periodo.')}
+            </div>
+
+            <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '16px' }}>
+              <h3 style={{ margin: '0 0 10px 0', fontSize: '1rem' }}>Perché si perdono</h3>
+              <p style={{ margin: '0 0 12px 0', fontSize: '0.82rem', color: '#64748b' }}>
+                {statPreventivi.annullati} annullati con un motivo scritto, {statPreventivi.scadutiSenzaRisposta} scaduti senza risposta del cliente.
+              </p>
+              {statPreventivi.motivi.length === 0
+                ? <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: 0 }}>Nessun preventivo annullato nel periodo.</p>
+                : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {statPreventivi.motivi.map(m => (
+                      <div key={m.nome} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem' }}>
+                        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.nome}>{m.nome}</div>
+                        <div style={{ width: `${Math.max((m.n / statPreventivi.motivi[0].n) * 140, 8)}px`, height: '10px', borderRadius: '5px', background: COLORE_COSTO }} />
+                        <strong style={{ width: '28px', textAlign: 'right' }}>{m.n}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }

@@ -29,7 +29,7 @@ const PREN_VUOTA = {
   data: "", altriGiorni: [], piuGiorni: false, senzaOrario: false, pacchettoId: "", giocoId: "", oraInizio: "", oraFine: "",
   nominativo: "", email: "", telefono: "",
   campoId: "", campoPrenotato: false, locationNome: "", locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
-  operatoriIds: [], senzaOperatori: false, sconto: "0", prezzoManuale: "", giochiAltri: [],
+  operatoriIds: [], senzaOperatori: false, sconto: "0", prezzoManuale: "", prezzoPacchetto: "", giochiAltri: [],
   tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "", clienteSedeId: "", clienteCampoId: "",
   preventivoCollegato: "", ereditaCosti: false, costoEreditato: "", voci: [],
   fattTipo: "privato",
@@ -40,6 +40,13 @@ const PREN_VUOTA = {
 };
 
 const ivaLabel = (incl) => incl ? 'IVA inclusa' : 'IVA esclusa';
+
+// Prezzo del pacchetto applicato a questa prenotazione: quello digitato nel form, e in mancanza
+// (campo mai toccato) il listino del pacchetto. Il campo svuotato a mano vale zero, non listino:
+// azzerare il prezzo è una scelta possibile e non va scambiata per "non ho scritto niente".
+const prezzoPacchettoDi = (form, pacchetto) => (form.prezzoPacchetto === "" || form.prezzoPacchetto == null)
+  ? (parseFloat(pacchetto?.prezzo) || 0)
+  : (parseFloat(form.prezzoPacchetto) || 0);
 
 // Campo mostrato ma non modificabile: il valore lo impone una regola (CAP e provincia degli stranieri).
 const STILE_CAMPO_IMPOSTO = { backgroundColor: '#f1f5f9', color: '#64748b' };
@@ -393,6 +400,9 @@ function Prenotazioni({ user }) {
   // Un pagamento digitato ma non ancora aggiunto con "+ Pagamento" è una modifica a tutti gli
   // effetti: senza contarlo il form si chiude come se fosse pulito e quei dati spariscono in silenzio.
   const pagamentoInSospeso = nuovoPagamento.importo !== "" || !!nuovoPagamento.data || !!(nuovoPagamento.nominativo || "").trim();
+  // Il prezzo del pacchetto si modifica solo dopo averlo chiesto: di norma vale il listino, e un
+  // campo aperto invita a ritoccarlo per sbaglio.
+  const [modificaPrezzoPacchetto, setModificaPrezzoPacchetto] = useState(false);
   const [nuovoGiornoPren, setNuovoGiornoPren] = useState("");
   // Il dettaglio per gioco si legge sempre, si modifica solo dopo averlo chiesto: sono i numeri
   // da cui escono prezzo e costo della pratica, e un clic distratto non deve poterli spostare.
@@ -697,7 +707,7 @@ function Prenotazioni({ user }) {
     return `${prefix}${prossimo}`;
   };
 
-  const nuovaPrenotazione = () => { setFormPren(PREN_VUOTA); setFormPrenOriginale(null); setCodicePrenInModifica(null); setMostraErroriValidazione(false); setNuovoPagamento(PAGAMENTO_VUOTO); };
+  const nuovaPrenotazione = () => { setFormPren(PREN_VUOTA); setFormPrenOriginale(null); setCodicePrenInModifica(null); setMostraErroriValidazione(false); setNuovoPagamento(PAGAMENTO_VUOTO); setModificaPrezzoPacchetto(false); };
 
   // Apre il form di nuova prenotazione come overlay compatto (richiamato da Gestione), invece che come scheda a pagina intera.
   const nuovaPrenotazioneOverlay = () => { nuovaPrenotazione(); setShowFormGestione(true); };
@@ -719,6 +729,10 @@ function Prenotazioni({ user }) {
     const scontoN = parseFloat(p.sconto) || 0;
     const nettoVend = p.prezzoVenditaNetto != null ? parseFloat(p.prezzoVenditaNetto) : ((parseFloat(p.prezzoVendita) || 0) / 1.22);
     const prezzoManuale = hasPrezzo ? "" : (scontoN < 100 ? String(Math.round((nettoVend / (1 - scontoN / 100)) * 100) / 100) : String(nettoVend));
+    const lordoVend = p.prezzoVenditaLordo != null ? parseFloat(p.prezzoVenditaLordo) : (parseFloat(p.prezzoVendita) || 0);
+    const prezzoPacchetto = hasPrezzo
+      ? String(scontoN < 100 ? Math.round((lordoVend / (1 - scontoN / 100)) * 100) / 100 : lordoVend)
+      : "";
     setCodicePrenInModifica(p.id);
     const caricato = {
       data: p.data || "", altriGiorni: giorniEventoDi(p).filter(g => g !== p.data),
@@ -728,7 +742,7 @@ function Prenotazioni({ user }) {
       campoId: p.campoId || "", campoPrenotato: !!p.campoPrenotato,
       locationNome: p.locationNome || "", locationIndirizzo: p.locationIndirizzo || "", locationCap: p.locationCap || "", locationCitta: p.locationCitta || "", locationProvincia: p.locationProvincia || "",
       operatoriIds: (p.operatori || []).map(o => o.id), senzaOperatori: !!p.senzaOperatori,
-      sconto: String(p.sconto ?? "0"), prezzoManuale,
+      sconto: String(p.sconto ?? "0"), prezzoManuale, prezzoPacchetto,
       tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
       pagamenti: p.pagamenti || [], voucherCodice: p.voucherCodice || "", clienteSedeId: p.clienteSedeId || "", clienteCampoId: p.clienteCampoId || "",
       preventivoCollegato: p.preventivoCollegato || "", ereditaCosti: !!p.ereditaCosti, costoEreditato: p.costoEreditato ?? "", voci: p.voci || [],
@@ -744,6 +758,7 @@ function Prenotazioni({ user }) {
     setFormPrenOriginale(caricato);
     setMostraErroriValidazione(false);
     setNuovoPagamento(PAGAMENTO_VUOTO);
+    setModificaPrezzoPacchetto(false);
     setShowFormGestione(true);
   };
 
@@ -1318,6 +1333,7 @@ function Prenotazioni({ user }) {
       // campo, un gonfiabile da noleggio non lo è: si azzera invece di restare scelto di nascosto.
       giocoId: giochiSelezionabili(p, prev.giocoId).some(g => String(g.id) === String(prev.giocoId)) ? prev.giocoId : "",
       numeroPartecipanti: (p && p.numeroPartecipanti != null) ? p.numeroPartecipanti : prev.numeroPartecipanti,
+      prezzoPacchetto: (p && p.prezzo != null && p.prezzo !== "") ? String(p.prezzo) : "",
       campoId: "",
       oraFine: (p && p.durataOre != null && p.durataOre !== "") ? "" : prev.oraFine,
       tipoRinfresco: p?.prevedeRinfresco ? prev.tipoRinfresco : "",
@@ -1465,8 +1481,9 @@ function Prenotazioni({ user }) {
     const totVoci = sommaVoci(vociDaSalvare);
     const conVoci = (vociDaSalvare || []).length > 0;
     const baseNetta = (conVoci && totVoci.ricavo > 0) ? totVoci.ricavo : (parseFloat(f.prezzoManuale) || 0);
-    const prezzoBaseNetto = pacHaPrezzo ? (parseFloat(pac.prezzo) / (1 + IVA)) : baseNetta;
-    const prezzoBaseLordo = pacHaPrezzo ? parseFloat(pac.prezzo) : (baseNetta * (1 + IVA));
+    const prezzoPacchettoApplicato = prezzoPacchettoDi(f, pac);
+    const prezzoBaseNetto = pacHaPrezzo ? (prezzoPacchettoApplicato / (1 + IVA)) : baseNetta;
+    const prezzoBaseLordo = pacHaPrezzo ? prezzoPacchettoApplicato : (baseNetta * (1 + IVA));
     const prezzoVenditaNetto = prezzoBaseNetto * scontoFrac;
     const prezzoVenditaLordo = prezzoBaseLordo * scontoFrac;
     const ivaCampoFrac = campo ? fracIva(campo.ivaCampo) : IVA;
@@ -1711,7 +1728,7 @@ function Prenotazioni({ user }) {
         const conVoci = formPren.voci.length > 0;
         // Prezzo di vendita: se dal pacchetto è IVA inclusa (lordo); altrimenti è netto -> aggiunge IVA
         const prezzoBaseLordo = pacHaPrezzo
-          ? parseFloat(pac.prezzo)
+          ? prezzoPacchettoDi(formPren, pac)
           : ((conVoci ? totaliVoci.ricavo : (parseFloat(formPren.prezzoManuale) || 0)) * (1 + IVA));
         const prezzoLordo = prezzoBaseLordo * scontoFrac;
         const prezzoVendita = prezzoLordo; // il cliente paga il lordo
@@ -2307,7 +2324,33 @@ function Prenotazioni({ user }) {
                 parte, quanto si sconta, quanto paga il cliente. */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '18px', alignItems: 'flex-end', justifyContent: 'flex-end', textAlign: 'right' }}>
               {pacHaPrezzo ? (
-                <div style={{ fontSize: '0.9rem', padding: '10px 0' }}>Prezzo pacchetto: <strong>€{parseFloat(pac.prezzo).toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span></div>
+                // Il listino si mostra solo quando il prezzo applicato se ne discosta: così si vede
+                // subito che è un prezzo concordato e da quanto parte.
+                modificaPrezzoPacchetto ? (
+                  <label style={{ width: '190px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', textAlign: 'left' }}>
+                    <span style={{ whiteSpace: 'nowrap' }}>
+                      Prezzo pacchetto <span style={{ fontWeight: 'normal', fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span>
+                    </span>
+                    <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <input type="number" step="any" value={formPren.prezzoPacchetto} onChange={(e) => setF({ prezzoPacchetto: e.target.value })} placeholder={String(pac.prezzo)} style={evidenzia('prezzoPacchetto')} />
+                      <button type="button" className="btn-icon-action" title={`Torna al prezzo del pacchetto (€${(parseFloat(pac.prezzo) || 0).toFixed(2)})`} onClick={() => { setF({ prezzoPacchetto: String(pac.prezzo) }); setModificaPrezzoPacchetto(false); }}>
+                        <Icona nome="riporta" size={16} style={{ marginRight: 0 }} />
+                      </button>
+                    </span>
+                  </label>
+                ) : (
+                  <div style={{ fontSize: '0.9rem', padding: '10px 0', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <span>
+                      Prezzo pacchetto: <strong>€{prezzoPacchettoDi(formPren, pac).toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span>
+                      {Math.abs(prezzoPacchettoDi(formPren, pac) - (parseFloat(pac.prezzo) || 0)) > 0.005 && (
+                        <span style={{ fontSize: '0.75rem', color: '#b45309' }}> · listino €{(parseFloat(pac.prezzo) || 0).toFixed(2)}</span>
+                      )}
+                    </span>
+                    <button type="button" className="btn-icon-action" title="Modifica il prezzo solo per questa prenotazione" onClick={() => setModificaPrezzoPacchetto(true)}>
+                      <Icona nome="modifica" size={16} style={{ marginRight: 0 }} />
+                    </button>
+                  </div>
+                )
               ) : conVoci ? (
                 // Con il dettaglio a video il prezzo non si digita né si ripete: è il totale della
                 // tabella qui sopra, e riscriverlo qui voleva dire mostrarlo due volte.

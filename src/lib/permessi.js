@@ -78,6 +78,7 @@ export const SCHEDE_REGISTRY = {
       { id: 'cruscotto', label: 'Dettaglio' },
       { id: 'andamento', label: 'Andamento' },
       { id: 'pergioco', label: 'Per gioco' },
+      { id: 'preventivi', label: 'Preventivi' },
     ],
   },
   compensi: {

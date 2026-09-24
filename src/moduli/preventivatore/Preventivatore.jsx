@@ -2,7 +2,7 @@ import { useState, useEffect, Fragment } from 'react'
 import html2pdf from 'html2pdf.js';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabaseClient';
-import { COSTO_AL_KM, GIORNI_VALIDITA_PREVENTIVO, STATO_PREVENTIVO, etichettaStatoPreventivo, classeBadgeStato } from '../../lib/costanti';
+import { COSTO_AL_KM, GIORNI_VALIDITA_PREVENTIVO, STATO_PREVENTIVO, statoPreventivoDi, etichettaStatoPreventivo, classeBadgeStato } from '../../lib/costanti';
 import { puoVedere } from '../../lib/permessi';
 import Icona from '../../components/Icona';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
@@ -32,14 +32,7 @@ const COLORE_STATO_PREVENTIVO = {
 // che non ha risposto, e qualcuno deve fare qualcosa — sentirlo (e scriverlo nelle note interne)
 // oppure annullare il preventivo. Un preventivo già confermato non scade mai, e "Prenotato"
 // (collegato a una prenotazione, quindi non più selezionabile) lo decide il modulo prenotazioni.
-const statoPreventivo = (p) => {
-  if (p?.stato === STATO_PREVENTIVO.PRENOTATO) return STATO_PREVENTIVO.PRENOTATO;
-  if (p?.stato === STATO_PREVENTIVO.CONFERMATO) return STATO_PREVENTIVO.CONFERMATO;
-  if (p?.stato === STATO_PREVENTIVO.ANNULLATO) return STATO_PREVENTIVO.ANNULLATO;
-  if (!p?.dataEmissione) return p?.stato || STATO_PREVENTIVO.REGISTRATO;
-  const scadenza = new Date(p.dataEmissione).getTime() + GIORNI_VALIDITA_PREVENTIVO * 24 * 60 * 60 * 1000;
-  return Date.now() > scadenza ? STATO_PREVENTIVO.AZIONE_RICHIESTA : STATO_PREVENTIVO.REGISTRATO;
-};
+const statoPreventivo = statoPreventivoDi;
 
 // Le schede "Preventivatore" e "Vendita" sono superate dal form overlay di Gestione, che fa
 // entrambe le cose in un unico passaggio. Restano nel codice ma nascoste, in attesa di essere
@@ -110,7 +103,7 @@ const estraiDateDaPeriodo = (periodo) => {
   return { inizio: `${m[3]}-${m[2]}-${m[1]}`, fine: `${m[6]}-${m[5]}-${m[4]}` };
 };
 
-const COLONNE_PREVENTIVI = [
+const colonnePreventivi = (venditaBFM) => [
   { chiave: 'id', label: 'ID', stile: { width: '16%' }, valore: (p) => (typeof p.id === 'object' ? p.id.codice : p.id) || '' },
   { chiave: 'data', label: 'Emissione', stile: { width: '10%' }, valore: (p) => p.dataEmissione || '' },
   // La data dell'evento non ha una colonna sua a database: vive nel testo del periodo stampato sul documento.
@@ -118,11 +111,10 @@ const COLONNE_PREVENTIVI = [
   { chiave: 'destinazione', label: 'Destinazione', valore: (p) => (p.destinazione || '').split(',').pop().trim() },
   { chiave: 'referente', label: 'Referente', valore: (p) => p.nomeReferente || '' },
   { chiave: 'vendita', label: 'Vendita', valore: (p) => parseFloat(p.totaleVendita) || 0 },
+  // Quanto di quella vendita viene dai giochi che partono da una sede di proprietà.
+  { chiave: 'venditaBFM', label: 'di cui BFM', valore: (p) => venditaBFM(p) },
   { chiave: 'flag', label: 'Flag', stile: { width: '50px' } },
 ];
-const VALORI_ORDINAMENTO_PREVENTIVI = Object.fromEntries(
-  COLONNE_PREVENTIVI.filter(c => c.valore).map(c => [c.chiave, c.valore])
-);
 
 function Preventivatore({ user }) {
   // --- NAVIGAZIONE INTERNA AL MODULO ---
@@ -1141,6 +1133,12 @@ function Preventivatore({ user }) {
   const nomiSediBFM = new Set(sedi.filter(x => x.bfm).map(x => x.nome));
   const rigaDaSedeBFM = (g) => !!g && (idSediBFM.has(g.sedeId) || nomiSediBFM.has(g.sedePartenza));
   const haGiochiBFM = (p) => (p.gonfiabili || []).some(rigaDaSedeBFM) || (p.mostraGiocoOfferta && rigaDaSedeBFM(p.giocoOfferta));
+  // Quanto della vendita arriva dai giochi partiti da una sede di proprietà. Si sommano le sole
+  // righe dei giochi: gli extra non hanno una sede, e il gioco in offerta non entra nel totale
+  // vendita del preventivo -- sommarlo qui farebbe risultare la parte più grande del tutto.
+  const venditaSoloBFM = (p) => (p.gonfiabili || [])
+    .filter(rigaDaSedeBFM)
+    .reduce((somma, g) => somma + (parseFloat(g.prezzoVendita) || 0), 0);
 
   // --- FILTRAGGIO PREVENTIVI (Gestione e Storico) ---
   // I filtri sono gli stessi nelle due schede, e restano impostati passando dall'una all'altra.
@@ -1939,13 +1937,17 @@ function Preventivatore({ user }) {
   );
 
 
+  const colonnePrev = colonnePreventivi(venditaSoloBFM);
   // Ordinamento condiviso da Gestione e Storico: la tabella è la stessa, quindi lo è anche il criterio scelto.
-  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(VALORI_ORDINAMENTO_PREVENTIVI);
+  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(
+    Object.fromEntries(colonnePrev.filter(c => c.valore).map(c => [c.chiave, c.valore]))
+  );
 
   // ====================== TABELLA CONDIVISA (Gestione / Storico) ======================
   // Stesso layout in entrambe le schede: il clic sulla riga espande dettagli e azioni.
   const rigaTabellaPreventivo = (p, index, onApri) => {
     const codice = typeof p.id === 'object' ? p.id.codice : p.id;
+    const venditaBFMRiga = venditaSoloBFM(p);
     const espansa = rigaEspansaId === codice;
     const stato = statoPreventivo(p);
     const coloreStatoRiga = COLORE_STATO_PREVENTIVO[stato] || COLORE_STATO_PREVENTIVO[STATO_PREVENTIVO.REGISTRATO];
@@ -1978,6 +1980,11 @@ function Preventivatore({ user }) {
           <td style={{ padding: '8px 10px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
             <strong style={{ color: '#2e7d32' }}>€{p.totaleVendita.toFixed(2)}</strong>
           </td>
+          <td style={{ padding: '8px 10px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+            {venditaBFMRiga > 0
+              ? <strong style={{ color: '#0288d1' }}>€{venditaBFMRiga.toFixed(2)}</strong>
+              : <span style={{ color: '#cbd5e1' }}>—</span>}
+          </td>
           <td style={{ padding: '8px 10px' }}>
             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', color: '#64748b' }}>
               {p.mostraGiocoOfferta && <Icona nome="offerta" size={16} style={{ marginRight: 0 }} title="Gioco in offerta" />}
@@ -1989,7 +1996,7 @@ function Preventivatore({ user }) {
         </tr>
         {espansa && (
           <tr className="riga-espandibile-dettaglio">
-            <td colSpan={COLONNE_PREVENTIVI.length} onClick={(e) => e.stopPropagation()}>
+            <td colSpan={colonnePrev.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155', minWidth: 0, flex: 1 }}>
                   <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${classeBadgeStato(stato)}`}>{etichettaStatoPreventivo(stato)}</span></div>
@@ -2134,7 +2141,7 @@ function Preventivatore({ user }) {
       <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
           <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-            {COLONNE_PREVENTIVI.map(c => {
+            {colonnePrev.map(c => {
               const { style: stileOrdinabile, ...propsOrdinabile } = c.valore ? propsTestata(c.chiave) : { style: undefined };
               return (
                 <th key={c.chiave} {...propsOrdinabile} style={{ padding: '8px 10px', ...c.stile, ...stileOrdinabile }}>
@@ -2146,7 +2153,7 @@ function Preventivatore({ user }) {
         </thead>
         <tbody>
           {righe.length === 0
-            ? <tr><td colSpan={COLONNE_PREVENTIVI.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            ? <tr><td colSpan={colonnePrev.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
             : ordina(righe).map((p, index) => rigaTabellaPreventivo(p, index, onApri))}
         </tbody>
       </table>
