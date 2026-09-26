@@ -77,6 +77,8 @@ const btnRiga = { display: 'inline-flex', alignItems: 'center', padding: '6px 12
 const cella = { padding: '7px 10px' };
 const destra = { ...cella, textAlign: 'right', whiteSpace: 'nowrap' };
 const nessuno = <span style={{ color: '#cbd5e1' }}>—</span>;
+// Un importo a zero non dice niente: si mostra come "—", così l'occhio va sugli importi veri.
+const euroOVuoto = (v) => (Math.abs(+v || 0) < 0.005 ? nessuno : euro(v));
 
 // Cella cliccabile della rettifica, come nei compensi: un "+" quando è vuota, altrimenti il
 // totale. Deve sembrare cliccabile anche da vuota, o nessuno scopre che si può correggere.
@@ -248,8 +250,8 @@ function Controparti({ tipo }) {
     const conDettaglio = righe.some(r => r.lato === 'costo' && r.dettaglio);
     const sommaParte = (campo) => righe.filter(r => r.lato === 'costo' && r.dettaglio).reduce((t, r) => t + (parseFloat(r.dettaglio[campo]) || 0), 0);
 
-    const importo = (r) => (r ? euro(r.preventivato) : nessuno);
-    const parte = (r, campo) => (r?.dettaglio ? <span style={{ color: '#64748b' }}>{euro(r.dettaglio[campo])}</span> : nessuno);
+    const importo = (r) => (r ? euroOVuoto(r.preventivato) : nessuno);
+    const parte = (r, campo) => (r?.dettaglio ? <span style={{ color: '#64748b' }}>{euroOVuoto(r.dettaglio[campo])}</span> : nessuno);
     const titoloCosto = (r) => {
       const d = r?.dettaglio;
       if (!d) return r ? cfg.senzaDettaglio : undefined;
@@ -318,10 +320,10 @@ function Controparti({ tipo }) {
           <tfoot>
             <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
               <td colSpan={4} style={cella}>Totale ({elenco.length})</td>
-              {cfg.parti.map(p => <td key={p.campo} style={{ ...destra, color: '#64748b' }}>{conDettaglio ? euro(sommaParte(p.campo)) : ''}</td>)}
-              <td style={destra}>{conCosti ? euro(tot.costo) : ''}</td>
+              {cfg.parti.map(p => <td key={p.campo} style={{ ...destra, color: '#64748b' }}>{conDettaglio ? euroOVuoto(sommaParte(p.campo)) : ''}</td>)}
+              <td style={destra}>{conCosti ? euroOVuoto(tot.costo) : ''}</td>
               <td style={{ ...destra, color: '#3949ab' }}>{rettTotale(tot.rettCosto)}</td>
-              <td style={{ ...destra, borderLeft: '1px solid #e2e8f0' }}>{conCrediti ? euro(tot.credito) : ''}</td>
+              <td style={{ ...destra, borderLeft: '1px solid #e2e8f0' }}>{conCrediti ? euroOVuoto(tot.credito) : ''}</td>
               <td style={{ ...destra, color: '#3949ab' }}>{rettTotale(tot.rettCredito)}</td>
               <td style={{ ...destra, borderLeft: '1px solid #e2e8f0', color: saldoTotale.colore }}>{saldoTotale.testo}</td>
             </tr>
@@ -463,8 +465,8 @@ function Controparti({ tipo }) {
                         </td>
                         <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{periodoTesto(pe.dal, pe.al)}</td>
                         <td style={{ padding: '8px 10px', whiteSpace: 'nowrap', color: '#64748b' }}>{formattaDataGGMMAAAA(pe.data_consuntivo)}</td>
-                        <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>{euro(pe.costo_preventivato)}</td>
-                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{euro(pe.costo)}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>{euroOVuoto(pe.costo_preventivato)}</td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>{euroOVuoto(pe.costo)}</td>
                         <td style={{ padding: '8px 10px', textAlign: 'right' }}>{(parseFloat(pe.ricavo) || 0) > 0 ? euro(pe.ricavo) : nessuno}</td>
                         <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold', color: saldo.colore, whiteSpace: 'nowrap' }}>{saldo.testo}</td>
                         <td style={{ padding: '8px 10px', textAlign: 'right' }}>
