@@ -4,6 +4,7 @@ import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { validaCF, formattaDataGGMMAAAA, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
+import { fracIva, costiCampoDi, ricalcoloCampo, giornataChiusa } from '../../lib/campi'
 import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
@@ -18,9 +19,6 @@ const GIORNI = [
 // modalita' di vendita, e la modalita' non ha un centro di ricavo suo.
 const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", prevedeRinfresco: false, numeroPartecipanti: "", giochi_richiesti: "1" };
 const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusaCampo: false, ivaInclusaRinfresco: false, costoMerenda: "", costoAperitivo: "", ivaCampo: "22", ivaRinfresco: "22", noRinfresco: false };
-
-// Frazione IVA da applicare (percentuale campo, es. 22 -> 0.22); 22% di default se non specificata sul campo.
-const fracIva = (v) => (v != null && v !== '' ? parseFloat(v) : 22) / 100;
 
 // Riga vuota del pagamento che si sta digitando, prima di aggiungerla alla prenotazione.
 const PAGAMENTO_VUOTO = { importo: "", data: "", nominativo: "" };
@@ -54,12 +52,6 @@ const STILE_CAMPO_IMPOSTO = { backgroundColor: '#f1f5f9', color: '#64748b' };
 // Minuti dalla mezzanotte (anche oltre le 24h, es. un turno che sconfina nel giorno dopo) -> "HH:MM"
 const minutiAHHMM = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(Math.round(min % 60)).padStart(2, '0')}`;
 
-// Giorno settimana 1=Lun..7=Dom da una data ISO
-const giornoSettimana = (dataStr) => {
-  if (!dataStr) return null;
-  const d = new Date(dataStr).getDay(); // 0=Dom..6=Sab
-  return d === 0 ? 7 : d;
-};
 
 const MESI = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
 const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -380,6 +372,9 @@ function Prenotazioni({ user }) {
   const [formCampo, setFormCampo] = useState(CAMPO_VUOTO);
   const [editCampo, setEditCampo] = useState(null);
   const [nuovaTariffa, setNuovaTariffa] = useState({ campoId: "", giorni: [], oraInizio: "", oraFine: "", costo: "" });
+  // Ricalcolo delle prenotazioni di un campo con le tariffe di adesso (solo admin):
+  // { campo, righe, rettifiche: { [idPren]: importo }, scelte: [idPren], inCorso }
+  const [ricalcolo, setRicalcolo] = useState(null);
 
   // --- NUOVA PRENOTAZIONE ---
   const [prenotazioni, setPrenotazioni] = useState([]);
@@ -673,25 +668,6 @@ function Prenotazioni({ user }) {
       if (rIni == null || rFine == null) return true;
       return rIni < fineMin && rFine > iniMin;
     });
-  };
-
-  // Costo campo: cerca la tariffa variabile la cui fascia contiene l'ora di inizio nel giorno scelto; altrimenti flat
-  const calcolaCostoCampo = (campo, dataStr, oraInizio) => {
-    if (!campo) return 0;
-    const flat = parseFloat(campo.costoFlat) || 0;
-    const g = giornoSettimana(dataStr);
-    const oraMin = toMinutes(oraInizio);
-    if (g == null || oraMin == null) return flat;
-    for (const tr of tariffe.filter(x => x.campoId === campo.id)) {
-      const giorni = (tr.giorni || "").split(',').filter(Boolean).map(Number);
-      if (!giorni.includes(g)) continue;
-      const ini = toMinutes(tr.oraInizio);
-      let fin = toMinutes(tr.oraFine);
-      if (ini == null) continue;
-      if (fin == null || fin <= ini) fin = 24 * 60; // es. 19:00-00:00 -> mezzanotte
-      if (oraMin >= ini && oraMin < fin) return parseFloat(tr.costo) || 0;
-    }
-    return flat;
   };
 
   // ID prenotazione PRN-AAAA-NNNN (reset annuale, legge l'ultimo dal DB)
@@ -1460,8 +1436,6 @@ function Prenotazioni({ user }) {
     const IVA = 0.22;
     const durataOre = durataFissa ? parseFloat(pac.durataOre) : oreDaOrari(oraInizio, oraFine);
     const campo = pac.locationTipo === 'campi' ? campi.find(c => c.id === f.campoId) : null;
-    const campoIvaInclCampo = campo ? !!campo.ivaInclusaCampo : false;
-    const campoIvaInclRinfresco = campo ? !!campo.ivaInclusaRinfresco : false;
     const sconto = parseFloat(f.sconto) || 0;
     const scontoFrac = 1 - sconto / 100;
     const pacHaPrezzo = pac.prezzo != null && pac.prezzo !== "";
@@ -1486,19 +1460,10 @@ function Prenotazioni({ user }) {
     const prezzoBaseLordo = pacHaPrezzo ? prezzoPacchettoApplicato : (baseNetta * (1 + IVA));
     const prezzoVenditaNetto = prezzoBaseNetto * scontoFrac;
     const prezzoVenditaLordo = prezzoBaseLordo * scontoFrac;
-    const ivaCampoFrac = campo ? fracIva(campo.ivaCampo) : IVA;
-    const ivaRinfrescoFrac = campo ? fracIva(campo.ivaRinfresco) : IVA;
-    const costoCampoRaw = campo ? calcolaCostoCampo(campo, f.data, oraInizio) : 0;
-    const costoCampoLordo = campoIvaInclCampo ? costoCampoRaw : costoCampoRaw * (1 + ivaCampoFrac);
-    const costoCampoNetto = campoIvaInclCampo ? costoCampoRaw / (1 + ivaCampoFrac) : costoCampoRaw;
     const numPart = numOrNull(f.numeroPartecipanti);
-    let costoRinfrescoRaw = 0;
-    if (pac.prevedeRinfresco && f.tipoRinfresco && campo && numPart) {
-      const perPersona = f.tipoRinfresco === 'merenda' ? (parseFloat(campo.costoMerenda) || 0) : (parseFloat(campo.costoAperitivo) || 0);
-      costoRinfrescoRaw = perPersona * numPart;
-    }
-    const costoRinfrescoLordo = campoIvaInclRinfresco ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + ivaRinfrescoFrac);
-    const costoRinfrescoNetto = campoIvaInclRinfresco ? costoRinfrescoRaw / (1 + ivaRinfrescoFrac) : costoRinfrescoRaw;
+    const { costoCampoNetto, costoCampoLordo, costoRinfrescoNetto, costoRinfrescoLordo } = costiCampoDi({
+      campo, tariffe, data: f.data, oraInizio, tipoRinfresco: pac.prevedeRinfresco ? f.tipoRinfresco : null, numeroPartecipanti: numPart,
+    });
     // "Non servono operatori" e una scelta dichiarata, diversa da "non ancora assegnati": si salva
     // come tale e azzera l'elenco, cosi le due cose non si confondono a distanza di tempo.
     const senzaOperatori = !!f.senzaOperatori;
@@ -1700,6 +1665,44 @@ function Prenotazioni({ user }) {
     fetchTutto();
   };
   const rimuoviTariffa = async (id) => { await supabase.from('pren_campi_tariffe').delete().eq('id', id); fetchTutto(); };
+  // Gli importi del campo sono fotografati sulla prenotazione al salvataggio: cambiare le tariffe
+  // non li tocca. Qui un admin li riallinea, ma solo fuori dai periodi già consuntivati -- quelli
+  // sono stati pagati e non devono cambiare da sotto. Prima si vede cosa cambia, poi si sceglie.
+  const apriRicalcolo = async (campo) => {
+    const [pr, pe, vo] = await Promise.all([
+      supabase.from('prenotazioni').select('*').eq('campoId', campo.id),
+      supabase.from('cons_periodi').select('*').eq('controparte', 'campo').eq('controparte_id', campo.id),
+      supabase.from('cons_voci').select('riferimento, importo').eq('controparte', 'campo').eq('controparte_id', campo.id).eq('lato', 'costo'),
+    ]);
+    if (pr.error) { console.error(pr.error); return alert("Errore nel leggere le prenotazioni del campo"); }
+    // Senza le tabelle della consuntivazione non si sa cosa è già chiuso: meglio non toccare niente.
+    if (pe.error) { console.error(pe.error); return alert("Impossibile leggere i periodi consuntivati: ricalcolo annullato."); }
+    const righe = ricalcoloCampo({ campo, tariffe, prenotazioni: pr.data || [], periodi: pe.data || [] });
+    const rettifiche = {};
+    (vo.data || []).forEach(v => { rettifiche[v.riferimento] = (rettifiche[v.riferimento] || 0) + (parseFloat(v.importo) || 0); });
+    setRicalcolo({ campo, righe, rettifiche, scelte: righe.map(r => r.prenotazione.id), inCorso: false });
+  };
+  const applicaRicalcolo = async () => {
+    const { campo, righe, scelte } = ricalcolo;
+    if (scelte.length === 0) return;
+    setRicalcolo(r => ({ ...r, inCorso: true }));
+    // Un periodo può essere stato chiuso mentre l'anteprima era aperta: si ricontrolla ora.
+    const { data: periodi, error: errPe } = await supabase.from('cons_periodi').select('*').eq('controparte', 'campo').eq('controparte_id', campo.id);
+    if (errPe) { console.error(errPe); setRicalcolo(r => ({ ...r, inCorso: false })); return alert("Impossibile leggere i periodi consuntivati: ricalcolo annullato."); }
+    const daScrivere = righe.filter(r => scelte.includes(r.prenotazione.id) && !giornataChiusa(periodi || [], campo.id, r.prenotazione.data));
+    const esiti = await Promise.all(daScrivere.map(r => supabase.from('prenotazioni').update(r.rec).eq('id', r.prenotazione.id)));
+    const falliti = esiti.filter(e => e.error);
+    falliti.forEach(e => console.error(e.error));
+    const saltate = scelte.length - daScrivere.length;
+    setRicalcolo(null);
+    fetchTutto();
+    alert([
+      `Aggiornate ${daScrivere.length - falliti.length} prenotazioni.`,
+      saltate > 0 && `${saltate} saltate perché nel frattempo il periodo è stato consuntivato.`,
+      falliti.length > 0 && `${falliti.length} non salvate per un errore: riprova.`,
+    ].filter(Boolean).join('\n'));
+  };
+
   const toggleGiornoTariffa = (n) => setNuovaTariffa(prev => ({ ...prev, giorni: prev.giorni.includes(n) ? prev.giorni.filter(x => x !== n) : [...prev.giorni, n] }));
   const etichettaGiorni = (str) => (str || "").split(',').filter(Boolean).map(n => GIORNI.find(g => g.n === parseInt(n))?.l || n).join(' ');
 
@@ -2629,6 +2632,7 @@ function Prenotazioni({ user }) {
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '5px' }}>
+                          {user.isAdmin && <button className="btn-icon-action" aria-label="Ricalcola prenotazioni" title="Ricalcola affitto e rinfresco delle prenotazioni non consuntivate con le tariffe attuali" onClick={() => apriRicalcolo(c)} style={{ width: 'auto', padding: '0 10px', fontSize: '0.8rem', gap: '4px' }}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} />Ricalcola</button>}
                           <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => modificaCampo(c)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
                           <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviCampo(c.id)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                         </div>
@@ -3333,6 +3337,64 @@ function Prenotazioni({ user }) {
       )}
 
       {/* ANTEPRIMA CONFERMA DA COPIARE (invio manuale via Gmail, con formattazione HTML) */}
+      {ricalcolo && user.isAdmin && (() => {
+        const { campo, righe, rettifiche, scelte, inCorso } = ricalcolo;
+        const cambia = (id) => setRicalcolo(r => ({ ...r, scelte: r.scelte.includes(id) ? r.scelte.filter(x => x !== id) : [...r.scelte, id] }));
+        const tutte = righe.length > 0 && scelte.length === righe.length;
+        const eur = (n) => `€${(+n || 0).toFixed(2)}`;
+        const importo = (prima, dopo) => Math.abs(prima - dopo) > 0.005
+          ? <><span style={{ color: '#94a3b8', textDecoration: 'line-through' }}>{eur(prima)}</span> → <strong>{eur(dopo)}</strong></>
+          : eur(dopo);
+        const cella = { padding: '6px', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' };
+        const chiudi = () => { if (!inCorso) setRicalcolo(null); };
+        return (
+          <div className="modal-form-backdrop" onClick={chiudi}>
+            <div className="modal-form-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '760px' }}>
+              <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={chiudi}>✕</button>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>Ricalcola prenotazioni · {campo.nome}</h3>
+              <p style={{ margin: '0 0 14px 0', fontSize: '0.8rem', color: '#777' }}>
+                Affitto e rinfresco (netti) ricalcolati con le tariffe attuali del campo. Sono escluse le partite che cadono in un periodo già consuntivato:
+                quelle sono state pagate e non cambiano. Le rettifiche già scritte in consuntivazione restano: controlla che non correggano proprio la differenza che il ricalcolo sistema.
+              </p>
+              {righe.length === 0 ? (
+                <p style={{ fontSize: '0.9rem' }}>Nessuna prenotazione da aggiornare: gli importi salvati corrispondono già alle tariffe attuali.</p>
+              ) : (
+                <div style={{ overflowX: 'auto', maxHeight: '55vh', marginBottom: '16px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                    <thead><tr style={{ color: '#666', textAlign: 'left' }}>
+                      <th style={cella}><input type="checkbox" checked={tutte} onChange={() => setRicalcolo(r => ({ ...r, scelte: tutte ? [] : righe.map(x => x.prenotazione.id) }))} aria-label="Seleziona tutte" /></th>
+                      <th style={cella}>Prenotazione</th><th style={cella}>Data</th><th style={cella}>Stato</th>
+                      <th style={cella}>Affitto</th><th style={cella}>Rinfresco</th><th style={cella}>Rettifiche</th>
+                    </tr></thead>
+                    <tbody>
+                      {righe.map(({ prenotazione: p, prima, dopo }) => (
+                        <tr key={p.id}>
+                          <td style={cella}><input type="checkbox" checked={scelte.includes(p.id)} onChange={() => cambia(p.id)} /></td>
+                          <td style={cella}>{p.id}{p.nominativo ? <span style={{ color: '#64748b' }}> · {p.nominativo}</span> : ''}</td>
+                          <td style={cella}>{formattaDataGGMMAAAA(p.data)}{p.oraInizio ? ` ${p.oraInizio}` : ''}</td>
+                          <td style={cella}><span className={`badge-stato ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
+                          <td style={cella}>{importo(prima.affitto, dopo.affitto)}</td>
+                          <td style={cella}>{importo(prima.rinfresco, dopo.rinfresco)}</td>
+                          <td style={{ ...cella, color: rettifiche[p.id] ? '#b45309' : '#94a3b8' }}>{rettifiche[p.id] ? eur(rettifiche[p.id]) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {righe.length > 0 && (
+                  <button type="button" disabled={inCorso || scelte.length === 0} onClick={applicaRicalcolo} style={{ ...btnSalva, opacity: inCorso || scelte.length === 0 ? 0.6 : 1 }}>
+                    <Icona nome="salva" size={16} style={{ marginRight: '6px' }} />{inCorso ? 'Aggiornamento…' : `Aggiorna ${scelte.length} prenotazion${scelte.length === 1 ? 'e' : 'i'}`}
+                  </button>
+                )}
+                <button type="button" className="btn-outline-annulla" disabled={inCorso} style={{ display: 'inline-flex', alignItems: 'center', padding: '9px 18px', borderRadius: '4px', fontSize: '0.85rem' }} onClick={chiudi}><Icona nome="annulla" size={16} style={{ marginRight: '6px' }} />{righe.length > 0 ? 'Annulla' : 'Chiudi'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {formCostiAnnullamento && (() => {
         const { p, scelte } = formCostiAnnullamento;
         const cambia = (id) => setFormCostiAnnullamento(f => ({ ...f, scelte: f.scelte.includes(id) ? f.scelte.filter(x => x !== id) : [...f.scelte, id] }));

@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "prova:compensi": "node src/moduli/compensi/calcolo.prova.mjs",
     "prova:fornitori": "node src/lib/fornitori.prova.mjs",
+    "prova:campi": "node src/lib/campi.prova.mjs",
     "riempi:righe": "node src/moduli/compensi/riempiRighe.mjs"
   },
   "dependencies": {
