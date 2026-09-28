@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import * as XLSX from 'xlsx'
-import { supabase } from '../../lib/supabaseClient'
+import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
-import { fineEventoDi, formattaDataGGMMAAAA } from '../../lib/utils'
+import { fineEventoDi, formattaDataGGMMAAAA, locationBreveDi } from '../../lib/utils'
 import { STATO_PREN } from '../../lib/costanti'
 import {
   sommaImporti, statoFatturazione, daFatturarePrenotazione, daFatturareVoucher,
@@ -22,6 +22,7 @@ const euro = (n) => `€${(Number(n) || 0).toFixed(2)}`;
 const ETICHETTA_STATO = { daFatturare: 'Da fatturare', parziale: 'Fatturata in parte', fatturata: 'Fatturata', nonDovuta: 'Coperta da voucher' };
 const COLORE_STATO = { daFatturare: '#b91c1c', parziale: '#b45309', fatturata: '#0284c7', nonDovuta: '#64748b' };
 const FATTURA_VUOTA = { data: '', numero: '', importo: '' };
+const titoloDettaglio = { fontSize: '0.75rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '2px 0 4px 0' };
 const stileEtichettaFattura = { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem', fontWeight: 600, color: '#334155' };
 const stileCampoFattura = { width: '100%', height: '38px', boxSizing: 'border-box', padding: '6px 10px', margin: 0, fontSize: '0.9rem', borderRadius: '6px' };
 
@@ -43,6 +44,8 @@ function Consuntivazione({ user }) {
   const [prenotazioni, setPrenotazioni] = useState([]);
   const [voucher, setVoucher] = useState([]);
   const [fatture, setFatture] = useState([]);
+  // I pagamenti si mostrano accanto alle fatture: incassato e fatturato si confrontano a colpo d'occhio.
+  const [pagamenti, setPagamenti] = useState([]);
   // Finché sql/fatture.sql non è stato eseguito la tabella non esiste: senza avviso la pagina
   // sembrerebbe solo vuota.
   const [schemaMancante, setSchemaMancante] = useState(null);
@@ -63,15 +66,18 @@ function Consuntivazione({ user }) {
   const inputFile = useRef(null);
 
   const fetchTutto = async () => {
-    const [pr, vc, ft] = await Promise.all([
+    const [pr, vc, ft, pg] = await Promise.all([
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
       supabase.from('voucher').select('*'),
       supabase.from('fatture').select('*').order('data'),
+      // Paginata: i pagamenti crescono più in fretta delle prenotazioni e Supabase tronca in silenzio.
+      leggiTutte(() => supabase.from('pagamenti').select('*').order('data').order('id')),
     ]);
     setSchemaMancante(ft.error ? ft.error.message : null);
     if (pr.data) setPrenotazioni(pr.data);
     if (vc.data) setVoucher(vc.data);
     setFatture(ft.data || []);
+    setPagamenti(pg.data || []);
   };
 
   useEffect(() => { fetchTutto(); }, []);
@@ -79,6 +85,12 @@ function Consuntivazione({ user }) {
   const oggi = oggiIso();
   const voucherPerCodice = useMemo(() => Object.fromEntries(voucher.map(v => [String(v.codice), v])), [voucher]);
   const valoreVoucher = (codice) => parseFloat(voucherPerCodice[String(codice)]?.importo) || 0;
+
+  const pagamentiPer = useMemo(() => {
+    const m = {};
+    pagamenti.forEach(pg => { const k = `${pg.tipo}|${pg.riferimento}`; (m[k] = m[k] || []).push(pg); });
+    return m;
+  }, [pagamenti]);
 
   const fatturePer = useMemo(() => {
     const m = {};
@@ -98,7 +110,7 @@ function Consuntivazione({ user }) {
       const fatturato = sommaImporti(lista);
       return {
         tipo: 'prenotazione', codice: String(p.id), data: p.data, fine: fineEventoDi(p), intestatario: intestatarioPren(p),
-        descrizione: p.pacchettoNome || '', totale: parseFloat(p.prezzoVendita) || 0,
+        descrizione: p.pacchettoNome || '', location: locationBreveDi(p), totale: parseFloat(p.prezzoVendita) || 0,
         voucher: p.voucherCodice ? { codice: p.voucherCodice, valore: valore(p.voucherCodice) } : null,
         dovuto, fatturato, fatture: lista, stato: statoFatturazione(dovuto, fatturato), origine: p,
       };
@@ -110,7 +122,7 @@ function Consuntivazione({ user }) {
       const data = String(v.dataEmissione || '').slice(0, 10);
       return {
         tipo: 'voucher', codice: String(v.codice), data, fine: data, intestatario: intestatarioVoucher(v),
-        descrizione: v.pacchettoNome || 'Voucher', totale: parseFloat(v.importo) || 0, voucher: null,
+        descrizione: v.pacchettoNome || 'Voucher', location: '', totale: parseFloat(v.importo) || 0, voucher: null,
         dovuto, fatturato, fatture: lista, stato: statoFatturazione(dovuto, fatturato), origine: v,
       };
     });
@@ -124,7 +136,7 @@ function Consuntivazione({ user }) {
     if (filtroStato === 'aperte' && !(x.stato === 'daFatturare' || x.stato === 'parziale')) return false;
     if (filtroStato === 'fatturata' && x.stato !== 'fatturata') return false;
     const testo = cerca.trim().toLowerCase();
-    if (testo && !`${x.codice} ${x.intestatario} ${x.origine.nominativo || ''}`.toLowerCase().includes(testo)) return false;
+    if (testo && !`${x.codice} ${x.intestatario} ${x.origine.nominativo || ''} ${x.location}`.toLowerCase().includes(testo)) return false;
     return true;
   });
   const totali = visibili.reduce((a, x) => ({ dovuto: a.dovuto + x.dovuto, fatturato: a.fatturato + x.fatturato }), { dovuto: 0, fatturato: 0 });
@@ -273,7 +285,7 @@ function Consuntivazione({ user }) {
           </div>
           <div className="filtro-group" style={{ flex: '1 1 200px' }}>
             <label>Cerca:</label>
-            <input type="text" placeholder="Codice o cliente" value={cerca} onChange={(e) => setCerca(e.target.value)} />
+            <input type="text" placeholder="Codice, cliente o location" value={cerca} onChange={(e) => setCerca(e.target.value)} />
           </div>
           <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
@@ -290,6 +302,7 @@ function Consuntivazione({ user }) {
                 <th style={cella}>Data</th>
                 <th style={cella}>Intestatario</th>
                 <th style={cella}>Descrizione</th>
+                <th style={cella}>Location</th>
                 <th style={{ ...cella, textAlign: 'right' }}>Da fatturare</th>
                 <th style={{ ...cella, textAlign: 'right' }}>Fatturato</th>
                 <th style={cella}>Stato</th>
@@ -297,7 +310,7 @@ function Consuntivazione({ user }) {
             </thead>
             <tbody>
               {visibili.length === 0 && (
-                <tr><td colSpan={7} style={{ ...cella, textAlign: 'center', color: '#666', padding: '20px' }}>Nessuna voce con questi filtri.</td></tr>
+                <tr><td colSpan={8} style={{ ...cella, textAlign: 'center', color: '#666', padding: '20px' }}>Nessuna voce con questi filtri.</td></tr>
               )}
               {visibili.map(x => {
                 const aperta = espansa === chiave(x);
@@ -311,6 +324,7 @@ function Consuntivazione({ user }) {
                         {x.descrizione}
                         {x.voucher && <span style={{ color: '#94a3b8' }}> · voucher {x.voucher.codice} −{euro(x.voucher.valore)}</span>}
                       </td>
+                      <td style={{ ...cella, color: '#555' }}>{x.location || '—'}</td>
                       <td style={destra}>{euro(x.dovuto)}</td>
                       <td style={destra}>{euro(x.fatturato)}</td>
                       <td style={{ ...cella, whiteSpace: 'nowrap', color: COLORE_STATO[x.stato], fontWeight: 600 }}>
@@ -319,7 +333,48 @@ function Consuntivazione({ user }) {
                     </tr>
                     {aperta && (
                       <tr className="riga-espandibile-dettaglio">
-                        <td colSpan={7} onClick={(e) => e.stopPropagation()} style={{ padding: '10px 14px', borderBottom: '1px solid #eee' }}>
+                        <td colSpan={8} onClick={(e) => e.stopPropagation()} style={{ padding: '10px 14px', borderBottom: '1px solid #eee' }}>
+                          {(() => {
+                            // Il voucher usato a saldo conta come pagamento, pur non essendo una riga di pagamenti.
+                            const righePag = pagamentiPer[chiave(x)] || [];
+                            const incassato = sommaImporti(righePag) + (x.voucher?.valore || 0);
+                            const th = { padding: '4px 10px', fontWeight: 600 };
+                            return (
+                              <>
+                                <div style={titoloDettaglio}>Pagamenti</div>
+                                {righePag.length === 0 && !x.voucher
+                                  ? <p style={{ margin: '0 0 12px 0', color: '#94a3b8' }}>Nessun pagamento registrato.</p>
+                                  : (
+                                    <table style={{ borderCollapse: 'collapse', fontSize: '0.82rem', marginBottom: '12px' }}>
+                                      <thead><tr style={{ color: '#64748b', textAlign: 'left' }}><th style={{ ...th, paddingLeft: 0 }}>Data</th><th style={th}>Da chi</th><th style={{ ...th, textAlign: 'right' }}>Importo</th></tr></thead>
+                                      <tbody>
+                                        {righePag.map(pg => (
+                                          <tr key={pg.id}>
+                                            <td style={{ padding: '4px 10px 4px 0' }}>{formattaDataGGMMAAAA(pg.data)}</td>
+                                            <td style={{ padding: '4px 10px', color: pg.nominativo ? undefined : '#94a3b8' }}>{pg.nominativo || '—'}</td>
+                                            <td style={{ padding: '4px 10px', textAlign: 'right' }}>{euro(pg.importo)}</td>
+                                          </tr>
+                                        ))}
+                                        {x.voucher && (
+                                          <tr>
+                                            <td style={{ padding: '4px 10px 4px 0', color: '#94a3b8' }}>—</td>
+                                            <td style={{ padding: '4px 10px' }}>Voucher {x.voucher.codice}</td>
+                                            <td style={{ padding: '4px 10px', textAlign: 'right' }}>{euro(x.voucher.valore)}</td>
+                                          </tr>
+                                        )}
+                                        {(righePag.length + (x.voucher ? 1 : 0)) > 1 && (
+                                          <tr style={{ borderTop: '1px solid #e2e8f0', fontWeight: 600 }}>
+                                            <td colSpan={2} style={{ padding: '4px 10px 4px 0' }}>Incassato</td>
+                                            <td style={{ padding: '4px 10px', textAlign: 'right' }}>{euro(incassato)}</td>
+                                          </tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                <div style={titoloDettaglio}>Fatture</div>
+                              </>
+                            );
+                          })()}
                           {x.fatture.length === 0
                             ? <p style={{ margin: '0 0 10px 0', color: '#94a3b8' }}>Nessuna fattura registrata.</p>
                             : (
@@ -365,7 +420,7 @@ function Consuntivazione({ user }) {
             {visibili.length > 0 && (
               <tfoot>
                 <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
-                  <td style={cella} colSpan={4}>TOTALE ({visibili.length})</td>
+                  <td style={cella} colSpan={5}>TOTALE ({visibili.length})</td>
                   <td style={destra}>{euro(totali.dovuto)}</td>
                   <td style={destra}>{euro(totali.fatturato)}</td>
                   <td style={cella}></td>

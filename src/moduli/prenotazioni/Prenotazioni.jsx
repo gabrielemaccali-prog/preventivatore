@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
-import { validaCF, formattaDataGGMMAAAA, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina } from '../../lib/utils'
+import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi, ricalcoloCampo, giornataChiusa } from '../../lib/campi'
@@ -28,7 +28,7 @@ const PREN_VUOTA = {
   nominativo: "", email: "", telefono: "",
   campoId: "", campoPrenotato: false, locationNome: "", locationIndirizzo: "", locationCap: "", locationCitta: "", locationProvincia: "",
   operatoriIds: [], senzaOperatori: false, sconto: "0", prezzoManuale: "", prezzoPacchetto: "", giochiAltri: [],
-  tipoRinfresco: "", numeroPartecipanti: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "", clienteSedeId: "", clienteCampoId: "",
+  tipoRinfresco: "", numeroPartecipanti: "", partecipantiEffettivi: "", etaMedia: "", note: "", pagamenti: [], voucherCodice: "", clienteSedeId: "", clienteCampoId: "",
   preventivoCollegato: "", ereditaCosti: false, costoEreditato: "", voci: [],
   fattTipo: "privato",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
@@ -117,6 +117,7 @@ const dettagliGoogleCalendar = (p, giocoNome) => {
   // La descrizione della location sta qui, nel testo: il campo "luogo" di Google e' riservato
   // all'indirizzo, perche' e' quello che apre la mappa e porta l'operatore sul posto.
   if (p.locationNome) righe.push(`Location: ${p.locationNome}`);
+  if (p.partecipantiEffettivi) righe.push(`Numero partecipanti: ${p.partecipantiEffettivi}`);
   if (p.etaMedia) righe.push(`Età media partecipanti: ${p.etaMedia}`);
   if (p.note) righe.push(`Note: ${p.note}`);
 
@@ -242,7 +243,7 @@ const COLONNE_PREN = [
   { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
   // Il valore di ordinamento viene sostituito nel componente, dove il nome del gioco è risolvibile.
   { chiave: 'pacchetto', label: 'Pacchetto · Gioco', valore: (p) => p.pacchettoNome || '' },
-  { chiave: 'location', label: 'Location', valore: (p) => p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '' },
+  { chiave: 'location', label: 'Location', valore: (p) => locationBreveDi(p) },
   { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') || (p.senzaOperatori ? 'non richiesti' : '') },
   { chiave: 'importo', label: 'Pagato / Totale / FT', valore: (p) => parseFloat(p.prezzoVendita) || 0 },
 ];
@@ -719,7 +720,7 @@ function Prenotazioni({ user }) {
       locationNome: p.locationNome || "", locationIndirizzo: p.locationIndirizzo || "", locationCap: p.locationCap || "", locationCitta: p.locationCitta || "", locationProvincia: p.locationProvincia || "",
       operatoriIds: (p.operatori || []).map(o => o.id), senzaOperatori: !!p.senzaOperatori,
       sconto: String(p.sconto ?? "0"), prezzoManuale, prezzoPacchetto,
-      tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
+      tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", partecipantiEffettivi: p.partecipantiEffettivi ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
       pagamenti: p.pagamenti || [], voucherCodice: p.voucherCodice || "", clienteSedeId: p.clienteSedeId || "", clienteCampoId: p.clienteCampoId || "",
       preventivoCollegato: p.preventivoCollegato || "", ereditaCosti: !!p.ereditaCosti, costoEreditato: p.costoEreditato ?? "", voci: p.voci || [],
       // I giochi oltre il primo si rileggono dalle righe: e' li' che erano stati scritti.
@@ -1112,7 +1113,7 @@ function Prenotazioni({ user }) {
             {etichettaBreveDi(p) || '—'}{p.durataOre ? ` (${p.durataOre}h)` : ''}
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>
-            {p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '—'}
+            {locationBreveDi(p) || '—'}
             {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'Campo prenotato' : 'Campo da prenotare'} style={{ marginLeft: '6px', verticalAlign: 'middle' }} />}
           </td>
           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#0288d1' }}>
@@ -1137,7 +1138,13 @@ function Prenotazioni({ user }) {
                   <div><span style={{ color: '#94a3b8' }}>Telefono </span>{p.telefono || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Email </span>{p.email || '—'}</div>
                   {p.tipoRinfresco && <div><span style={{ color: '#94a3b8' }}>Rinfresco </span>{p.tipoRinfresco}{p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} pers` : ''}</div>}
-                  {p.etaMedia && <div><span style={{ color: '#94a3b8' }}>Età media </span>{p.etaMedia}</div>}
+                  {(p.partecipantiEffettivi || p.etaMedia) && (
+                    <div>
+                      {p.partecipantiEffettivi ? <><span style={{ color: '#94a3b8' }}>Partecipanti </span>{p.partecipantiEffettivi}</> : null}
+                      {p.partecipantiEffettivi && p.etaMedia ? <span style={{ color: '#94a3b8' }}> · </span> : null}
+                      {p.etaMedia ? <><span style={{ color: '#94a3b8' }}>Età media </span>{p.etaMedia}</> : null}
+                    </div>
+                  )}
                   <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{[
                     p.voucherCodice ? `voucher ${p.voucherCodice} (€${(parseFloat(p.voucherValore) || 0).toFixed(2)})` : null,
                     ...(p.pagamenti || []).map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${formattaDataGGMMAAAA(pg.data)}`)
@@ -1425,6 +1432,10 @@ function Prenotazioni({ user }) {
     }
     if (pac.prevedeRinfresco && campi.find(c => c.id === f.campoId)?.noRinfresco) return alert("Questo campo non consente pacchetti con rinfresco: cambia campo o pacchetto.");
     if (f.fattTipo === 'privato' && !f.fattStraniero && f.fattCF && !validaCF(f.fattCF)) return alert("Codice Fiscale non valido.");
+    if (f.fattTipo === 'azienda') {
+      const problemaPIva = errorePIva(f.pIva);
+      if (problemaPIva) return alert(problemaPIva);
+    }
     // La provincia va scritta in sigla: si accetta anche il nome (viene convertito), ma non una
     // sigla inesistente, che finirebbe tale e quale in fattura.
     const provinceDaControllare = [f.locationProvincia, f.aziProvincia, ...(f.fattStraniero ? [] : [f.fattProvincia])];
@@ -1491,6 +1502,7 @@ function Prenotazioni({ user }) {
       costoCampo: costoCampoLordo, costoCampoNetto, costoCampoLordo,
       prezzoVendita: prezzoVenditaLordo, prezzoVenditaNetto, prezzoVenditaLordo,
       tipoRinfresco: pac.prevedeRinfresco ? f.tipoRinfresco : null, numeroPartecipanti: numPart,
+      partecipantiEffettivi: numOrNull(f.partecipantiEffettivi),
       costoRinfresco: costoRinfrescoLordo, costoRinfrescoNetto, costoRinfrescoLordo,
       etaMedia: f.etaMedia, note: f.note,
       preventivoCollegato: f.preventivoCollegato || null,
@@ -1744,6 +1756,7 @@ function Prenotazioni({ user }) {
         const ivaRinfrescoFrac = campoSel ? fracIva(campoSel.ivaRinfresco) : IVA;
         const costoRinfrescoLordo = campoIvaInclRinfresco ? costoRinfrescoRaw : costoRinfrescoRaw * (1 + ivaRinfrescoFrac);
         const errCF = formPren.fattTipo === 'privato' && !formPren.fattStraniero && formPren.fattCF && !validaCF(formPren.fattCF);
+        const errPIva = formPren.fattTipo === 'azienda' ? errorePIva(formPren.pIva) : null;
         // Bordo rosso sulle province non riconosciute, senza aspettare il tentativo di salvataggio.
         const stileProvincia = (chiave) => (formPren[chiave] && !provinciaValida(formPren[chiave]))
           ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' }
@@ -1985,6 +1998,12 @@ function Prenotazioni({ user }) {
             </div>
 
             <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '12px' }}>
+              <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nr partecipanti
+                {/* Quanti sono venuti davvero: il pacchetto deluxe è pensato per 20 persone, ma
+                    possono presentarsene 19 o 21. Non tocca i costi -- il rinfresco si calcola sulla
+                    capienza prevista dal pacchetto, che è quella pattuita col campo. */}
+                <input type="number" step="1" min="0" value={formPren.partecipantiEffettivi} onChange={(e) => setF({ partecipantiEffettivi: e.target.value })} placeholder={pac?.numeroPartecipanti != null && pac?.numeroPartecipanti !== "" ? String(pac.numeroPartecipanti) : undefined} style={evidenzia('partecipantiEffettivi')} title="Presenti effettivi: non cambia il costo del rinfresco" />
+              </label>
               <label style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Età media partecipanti
                 <input type="text" value={formPren.etaMedia} onChange={(e) => setF({ etaMedia: e.target.value })} style={evidenzia('etaMedia')} />
               </label>
@@ -2022,8 +2041,8 @@ function Prenotazioni({ user }) {
                           <option value="aperitivo">Aperitivo</option>
                         </select>
                       </label>
-                      <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>N° partecipanti
-                        <input type="number" value={formPren.numeroPartecipanti} readOnly style={{ background: '#f1f5f9', color: '#475569' }} title="Impostato dal pacchetto" />
+                      <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Persone previste
+                        <input type="number" value={formPren.numeroPartecipanti} readOnly style={{ background: '#f1f5f9', color: '#475569' }} title="Capienza prevista dal pacchetto: è su questa che si calcola il rinfresco" />
                       </label>
                       {formPren.tipoRinfresco && campoSel && numPart ? <div style={{ alignSelf: 'end', padding: '10px 0', fontSize: '0.82rem', color: '#777' }}>€{perPersonaRinf.toFixed(2)}/pers × {numPart}</div> : null}
                     </div>
@@ -2179,7 +2198,7 @@ function Prenotazioni({ user }) {
                     <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.aziProvincia} onChange={(e) => setF({ aziProvincia: e.target.value })} onBlur={() => setF({ aziProvincia: siglaProvincia(formPren.aziProvincia) })} style={stileProvincia('aziProvincia')} /></label>
                   </div>
                   <div className="date-grid" style={{ marginTop: '12px' }}>
-                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Partita IVA<input type="text" value={formPren.pIva} onChange={(e) => setF({ pIva: e.target.value })} style={evidenzia('pIva')} /></label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Partita IVA<input type="text" value={formPren.pIva} onChange={(e) => setF({ pIva: e.target.value })} style={errPIva ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('pIva')} /></label>
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice Fiscale<input type="text" value={formPren.cfAzienda} onChange={(e) => setF({ cfAzienda: e.target.value })} style={evidenzia('cfAzienda')} /></label>
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice SDI<input type="text" value={formPren.sdi} onChange={(e) => setF({ sdi: e.target.value })} style={evidenzia('sdi')} /></label>
                   </div>
@@ -3109,6 +3128,7 @@ function Prenotazioni({ user }) {
                     {prenSelezionata.campoNome || luogoLiberoDi(prenSelezionata) || '—'}<br />
                     {prenSelezionata.operatori && prenSelezionata.operatori.length > 0 && <>🧑 {prenSelezionata.operatori.map(o => o.nome).join(', ')}<br /></>}
                     {prenSelezionata.tipoRinfresco && <>🍽️ Rinfresco: {prenSelezionata.tipoRinfresco}{prenSelezionata.numeroPartecipanti ? ` · ${prenSelezionata.numeroPartecipanti} pers` : ''}<br /></>}
+                    {prenSelezionata.partecipantiEffettivi ? <>👥 Partecipanti: {prenSelezionata.partecipantiEffettivi}<br /></> : null}
                     {prenSelezionata.etaMedia && <>🎂 Età media: {prenSelezionata.etaMedia}<br /></>}
                     {prenSelezionata.motivoAnnullamento && <><span style={{ color: '#991b1b' }}>🚫 <em>{prenSelezionata.motivoAnnullamento}</em></span><br /></>}
                     {prenSelezionata.note && <>📝 <em>{prenSelezionata.note}</em><br /></>}

@@ -106,6 +106,19 @@ const validaCFNumerico = (cf) => {
   return (10 - (somma % 10)) % 10 === Number(cf[10]);
 };
 
+// Una partita IVA sono 11 cifre, con la stessa cifra di controllo del codice fiscale numerico, ma
+// non comincia mai per 9: gli 11 numeri che iniziano così sono codici fiscali di enti (associazioni,
+// parrocchie, oratori, condomini). Scritti nel campo partita IVA fanno rifiutare la fattura dal
+// gestionale, che chiede di spostarli nel codice fiscale lasciando vuota la partita IVA.
+export const errorePIva = (valoreRaw) => {
+  const iva = (valoreRaw || "").trim();
+  if (!iva) return null;
+  if (!/^[0-9]{11}$/.test(iva)) return "La partita IVA è di 11 cifre.";
+  if (iva.startsWith('9')) return "Un numero che inizia per 9 è il codice fiscale di un ente, non una partita IVA: spostalo nel campo Codice Fiscale e lascia vuota la partita IVA.";
+  if (!validaCFNumerico(iva)) return "Cifra di controllo errata: la partita IVA non è valida.";
+  return null;
+};
+
 export const validaCF = (cfRaw) => {
   const cf = (cfRaw || "").trim().toUpperCase();
   if (/^[0-9]{11}$/.test(cf)) return validaCFNumerico(cf);
@@ -121,7 +134,8 @@ export const validaCF = (cfRaw) => {
 export const campiFatturazioneMancanti = (p) => (p.fattTipo === 'azienda'
   // Per un'azienda serve anche il codice SDI: è l'indirizzo a cui arriva la fattura elettronica.
   ? [[p.ragioneSociale, 'Ragione sociale'], [p.aziIndirizzo, 'Indirizzo'], [p.aziCap, 'CAP'], [p.aziCitta, 'Città'],
-     [p.aziProvincia, 'Provincia'], [p.pIva, 'P. IVA'], [(p.sdi || '').trim(), 'Codice SDI']]
+     [p.aziProvincia, 'Provincia'], [(p.pIva || '').trim() || (p.cfAzienda || '').trim(), 'P. IVA o Codice Fiscale'],
+     [(p.sdi || '').trim(), 'Codice SDI']]
   : p.fattStraniero
     // Cliente straniero: CAP e provincia non si chiedono (valgono sempre 00000 e EE, scritti al
     // salvataggio) e il codice fiscale italiano non si applica; serve invece lo stato di appartenenza.
@@ -144,6 +158,10 @@ export const fatturazioneCompletaDi = (p) => campiFatturazioneMancanti(p).length
 // riepilogo interno la stessa partita deve chiamarsi allo stesso modo.
 // I nomi dei giochi arrivano già risolti dal catalogo: la prenotazione ne conserva solo gli id, e
 // possono essere più d'uno — un noleggio che porta Bubble e Archery è una partita sola.
+// Dove si gioca, in breve: il nome del campo, oppure città e provincia di una location libera.
+// È la colonna Location dello storico prenotazioni, e la stessa regola vale ovunque la si mostri.
+export const locationBreveDi = (p) => p?.campoNome || [p?.locationCitta, p?.locationProvincia].filter(Boolean).join(' ') || '';
+
 export const etichettaPartita = (pacchettoNome, giochi) => {
   const nomi = Array.isArray(giochi) ? nomiDistinti(giochi).join(' + ') : giochi;
   return [pacchettoNome, nomi].filter(Boolean).join(' · ');
