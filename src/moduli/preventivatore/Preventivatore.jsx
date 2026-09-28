@@ -14,7 +14,8 @@ import {
   moltiplicatoreTargetPer,
   isPartenzaBFM,
   costoVivoDi,
-  formattaIndirizzoPulito
+  formattaIndirizzoPulito,
+  estraiDateDaPeriodo
 } from '../../lib/utils';
 
 // Colore della banda laterale nelle righe di tabella, uno per stato.
@@ -94,14 +95,6 @@ function SelettoreGioco({ giochi, valore, onChange, onCrea, stile }) {
     </select>
   );
 }
-
-// Converte il testo "Dal gg/mm/aaaa al gg/mm/aaaa" nelle due date ISO (yyyy-mm-dd).
-// Sta fuori dal componente perché serve anche all'ordinamento della colonna "Evento".
-const estraiDateDaPeriodo = (periodo) => {
-  const m = (periodo || "").match(/(\d{2})\/(\d{2})\/(\d{4}).*?(\d{2})\/(\d{2})\/(\d{4})/);
-  if (!m) return { inizio: "", fine: "" };
-  return { inizio: `${m[3]}-${m[2]}-${m[1]}`, fine: `${m[6]}-${m[5]}-${m[4]}` };
-};
 
 const colonnePreventivi = (venditaBFM) => [
   { chiave: 'id', label: 'ID', stile: { width: '16%' }, valore: (p) => (typeof p.id === 'object' ? p.id.codice : p.id) || '' },

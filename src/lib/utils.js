@@ -281,3 +281,12 @@ export const formattaDataGGMMAAAA = (valore) => {
 // l'accesso è stato revocato. Servono entrambi: una password senza ruolo aprirebbe una sessione
 // senza permessi, un ruolo senza password non corrisponde a nessuna credenziale.
 export const haAccesso = (u) => !!u?.password && u?.ruolo_id != null && u?.ruolo_id !== '';
+
+// La data dell'evento di un preventivo non ha una colonna sua: vive nel testo del periodo stampato
+// sul documento ("dal 12/07/2026 al 12/07/2026"). Si legge di li', e chi non lo trova non inventa.
+// La usano il preventivatore e le statistiche del cruscotto, che devono leggerla allo stesso modo.
+export const estraiDateDaPeriodo = (periodo) => {
+  const m = (periodo || "").match(/(\d{2})\/(\d{2})\/(\d{4}).*?(\d{2})\/(\d{2})\/(\d{4})/);
+  if (!m) return { inizio: "", fine: "" };
+  return { inizio: `${m[3]}-${m[2]}-${m[1]}`, fine: `${m[6]}-${m[5]}-${m[4]}` };
+};

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
-import { etichettaPartita, etichettaGiochiBreve, formattaDataGGMMAAAA } from '../../lib/utils'
+import { etichettaPartita, etichettaGiochiBreve, formattaDataGGMMAAAA, estraiDateDaPeriodo } from '../../lib/utils'
 import {
   STATO_PREN, etichettaStatoPren, classeBadgeStato, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO,
   costiAnnullamentoDi, generaCompenso, STATO_PREVENTIVO, statoPreventivoDi, GIORNI_VALIDITA_PREVENTIVO,
@@ -64,6 +64,12 @@ const raggruppaPerCentro = (righe, getCentro, getValore) => {
 
 // Come le righe scrivono "non parte da nessun magazzino": un extra, un servizio.
 const SENZA_SEDE = '—';
+
+const toISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const addGiorni = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+// Lunedì della settimana di una data: la settimana lavorativa comincia di lunedì, non di domenica.
+const inizioSettimana = (d) => { const x = new Date(d); const g = x.getDay(); x.setDate(x.getDate() - (g === 0 ? 6 : g - 1)); x.setHours(0, 0, 0, 0); return x; };
+const dataLocale = (iso) => { const [a, m, g] = String(iso).split('-').map(Number); return new Date(a, (m || 1) - 1, g || 1); };
 
 const ESITO = { VINTO: 'vinto', PERSO: 'perso', APERTO: 'aperto' };
 const esitoDi = (p) => {
@@ -245,7 +251,7 @@ function Cruscotto({ user }) {
       supabase.from('op_voci').select('*'),
       supabase.from('op_periodi').select('*'),
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
-      supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, totaleVendita, costoVivoTotale, destinazione, motivoAnnullamento'),
+      supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, periodo, mostraComeOpzioni, totaleVendita, costoVivoTotale, destinazione, motivoAnnullamento'),
       supabase.from('fatture').select('riferimento, importo').eq('tipo', 'prenotazione'),
       supabase.from('voucher').select('codice, importo'),
       supabase.from('cons_periodi').select('controparte, controparte_id, righe'),
@@ -840,11 +846,25 @@ function Cruscotto({ user }) {
   //   aperto   emesso da poco, ancora dentro la validita' dell'offerta: non si sa ancora
   // Gli aperti restano fuori dal calcolo della conversione: contarli fra i persi farebbe sembrare
   // disastroso il mese in corso, dove metà dei preventivi ha appena preso la strada del cliente.
+  // (La regola dell'esito sta a inizio file, in esitoDi: la usa anche chi legge le righe.)
+  //
+  // Un preventivo ha due date, e rispondono a due domande diverse: quando l'abbiamo mandato, e
+  // quando si sarebbe giocato. Si sceglie quale far valere per anno, mese e settimana, invece di
+  // avere due serie di filtri che si intralciano.
+  const [riferimentoPrev, setRiferimentoPrev] = useState('emissione'); // 'emissione' | 'evento'
+  const dataPrevDi = useCallback((p) => (riferimentoPrev === 'evento'
+    ? estraiDateDaPeriodo(p.periodo).inizio
+    : String(p.dataEmissione || '').slice(0, 10)), [riferimentoPrev]);
+  const [settimanaPrev, setSettimanaPrev] = useState("");
+  // Le offerte "con opzioni" propongono al cliente piu' soluzioni fra cui scegliere: una sola
+  // diventera' una partita, quindi contarle tutte gonfia il valore offerto e abbassa la conversione.
+  const [senzaOpzioni, setSenzaOpzioni] = useState(false);
+
   const [annoPrev, setAnnoPrev] = useState(null); // null = non scelto, vale il default calcolato
   const anniPreventivi = useMemo(() => {
-    const anni = new Set(preventivi.filter(p => p.dataEmissione).map(p => String(p.dataEmissione).slice(0, 4)));
+    const anni = new Set(preventivi.map(p => dataPrevDi(p)).filter(Boolean).map(d => d.slice(0, 4)));
     return [...anni].sort().reverse();
-  }, [preventivi]);
+  }, [preventivi, dataPrevDi]);
   const annoPrevSel = annoPrev ?? (anniPreventivi.includes(annoCorrente) ? annoCorrente : (anniPreventivi[0] || ""));
   // Il mese vale solo dentro un anno scelto: "marzo di tutti gli anni" e' una domanda diversa, e
   // la tabella per periodo direbbe una riga sola senza dire di quale anno.
@@ -862,11 +882,16 @@ function Cruscotto({ user }) {
   }, [listino, sedi, giocoPerId]);
 
   const statPreventivi = useMemo(() => {
+    const settimana = settimanaPrev
+      ? { da: settimanaPrev, a: toISO(addGiorni(dataLocale(settimanaPrev), 6)) }
+      : null;
     const nelPeriodo = preventivi.filter(p => {
-      if (!p.dataEmissione) return false;
-      const data = String(p.dataEmissione);
+      if (senzaOpzioni && p.mostraComeOpzioni) return false;
+      const data = dataPrevDi(p);
+      if (!data) return false;
       if (annoPrevSel && data.slice(0, 4) !== annoPrevSel) return false;
       if (mesePrevSel && parseInt(data.slice(5, 7), 10) !== parseInt(mesePrevSel, 10)) return false;
+      if (settimana && !(data >= settimana.da && data <= settimana.a)) return false;
       return true;
     });
     const valore = (p) => parseFloat(p.totaleVendita) || 0;
@@ -886,9 +911,9 @@ function Cruscotto({ user }) {
       totali[esito].n++; totali[esito].valore += valore(p);
       totali.margine += valore(p) - costo(p);
 
-      const anno = String(p.dataEmissione).slice(0, 4);
+      const anno = dataPrevDi(p).slice(0, 4);
       if (!perAnno[anno]) perAnno[anno] = { periodo: anno, emessi: 0, vinto: 0, perso: 0, aperto: 0, valoreVinto: 0, valorePerso: 0, valoreAperto: 0, valore: 0 };
-      const riga = annoPrevSel ? perMese[parseInt(String(p.dataEmissione).slice(5, 7), 10) - 1] : perAnno[anno];
+      const riga = annoPrevSel ? perMese[parseInt(dataPrevDi(p).slice(5, 7), 10) - 1] : perAnno[anno];
       if (riga) {
         riga.emessi++; riga[esito]++; riga.valore += valore(p);
         riga[esito === ESITO.VINTO ? 'valoreVinto' : esito === ESITO.PERSO ? 'valorePerso' : 'valoreAperto'] += valore(p);
@@ -948,7 +973,13 @@ function Cruscotto({ user }) {
       scadutiSenzaRisposta,
       annullati: nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO).length,
     };
-  }, [preventivi, annoPrevSel, mesePrevSel, rigaListino]);
+  }, [preventivi, annoPrevSel, mesePrevSel, settimanaPrev, senzaOpzioni, dataPrevDi, rigaListino]);
+
+  // Dalla settimana mostrata, o da quella di oggi se il filtro e' spento.
+  const spostaSettimanaPrev = (delta) => {
+    const partenza = settimanaPrev ? dataLocale(settimanaPrev) : new Date();
+    setSettimanaPrev(toISO(addGiorni(inizioSettimana(partenza), delta * 7)));
+  };
 
   const percentuale = (v) => (v == null ? '—' : `${v.toFixed(0)}%`);
 
@@ -1526,7 +1557,7 @@ function Cruscotto({ user }) {
         return (
           <div className="schermata-storico no-print">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-              <h2 style={{ margin: 0 }}>Preventivi <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(importi di vendita, per data di emissione)</span></h2>
+              <h2 style={{ margin: 0 }}>Preventivi <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(importi di vendita, per data di {riferimentoPrev})</span></h2>
               <button onClick={esportaPreventivi} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
             </div>
             <p className="descrizione-pagina">
@@ -1537,19 +1568,45 @@ function Cruscotto({ user }) {
             </p>
 
             <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
+              <div className="filtro-group" style={{ flex: '1 1 150px' }}>
+                <label>Filtra per data di:</label>
+                <select value={riferimentoPrev} onChange={(e) => setRiferimentoPrev(e.target.value)}>
+                  <option value="emissione">Emissione</option>
+                  <option value="evento">Evento</option>
+                </select>
+              </div>
               <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-                <label>Anno di emissione:</label>
+                <label>Anno:</label>
                 <select value={annoPrevSel} onChange={(e) => { setAnnoPrev(e.target.value); setMesePrev(""); }}>
                   <option value="">Tutti gli anni</option>
                   {anniPreventivi.map(a => <option key={a} value={a}>{a}</option>)}
                 </select>
               </div>
               <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-                <label>Mese di emissione:</label>
+                <label>Mese:</label>
                 <select value={mesePrevSel} onChange={(e) => setMesePrev(e.target.value)} disabled={!annoPrevSel}>
                   <option value="">Tutti i mesi</option>
                   {MESI.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
                 </select>
+              </div>
+              <div className="filtro-group" style={{ flex: '1 1 250px' }}>
+                <label>Settimana:</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana precedente" onClick={() => spostaSettimanaPrev(-1)}>‹</button>
+                  <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: settimanaPrev ? '#334155' : '#94a3b8' }}>
+                    {settimanaPrev ? `${formattaDataGGMMAAAA(settimanaPrev)} – ${formattaDataGGMMAAAA(toISO(addGiorni(dataLocale(settimanaPrev), 6)))}` : 'tutte'}
+                  </span>
+                  <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana successiva" onClick={() => spostaSettimanaPrev(1)}>›</button>
+                  {settimanaPrev
+                    ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per settimana" onClick={() => setSettimanaPrev("")}>✕</button>
+                    : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana corrente" onClick={() => spostaSettimanaPrev(0)}>Oggi</button>}
+                </div>
+              </div>
+              <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: 0, paddingBottom: '9px' }} title="Le offerte con più soluzioni alternative: una sola può diventare una partita">
+                  <input type="checkbox" checked={senzaOpzioni} onChange={(e) => setSenzaOpzioni(e.target.checked)} />
+                  Rimuovi preventivi con opzioni
+                </label>
               </div>
             </div>
 
