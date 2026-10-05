@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
-import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, fatturazioneCompletaDi, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
+import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi, ricalcoloCampo, giornataChiusa } from '../../lib/campi'
@@ -1084,7 +1084,7 @@ function Prenotazioni({ user }) {
     // Verde vuol dire "da parte nostra non manca niente": confermata, giocata, con i dati per
     // fatturare. Il saldo non c'entra -- una partita che aspetta solo il pagamento sta in "Da
     // saldare", non in "Da completare", e non c'e' niente da sistemare nella scheda.
-    const completata = p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso && fatturazioneCompletaDi(p);
+    const completata = p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso && anagraficaFatturazioneAPosto(p);
     const saldata = p.statoPagamento === 'saldato';
     return (
       <Fragment key={p.id}>
@@ -1772,7 +1772,9 @@ function Prenotazioni({ user }) {
         // valori a schermo, così l'avviso sparisce mentre si compila e non solo dopo il salvataggio). Ha senso solo
         // su una prenotazione già confermata con l'evento passato: prima di allora non c'è niente da "completare".
         const daChiudere = !!codicePrenInModifica && formPren.stato === STATO_PREN.CONFERMATO && !!formPren.data && formPren.data < oggiIso;
-        const mancanzeCompletamento = daChiudere
+        // Coperta per intero da un voucher: niente fattura, quindi niente anagrafica da chiedere.
+        const nienteFattura = prezzoVendita - valoreVoucher <= 0.01;
+        const mancanzeCompletamento = (daChiudere && !nienteFattura)
           ? [
               ...campiFatturazioneMancanti(formPren)
             ]
@@ -2767,8 +2769,9 @@ function Prenotazioni({ user }) {
         // se l'anagrafica di fatturazione è a posto manca solo l'incasso, altrimenti mancano dati.
         // Le due liste sono complementari: ogni prenotazione non conclusa sta in una sola delle due.
         const daChiudere = base.filter(p => p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso && !prenotazioneCompletata(p, oggiIso));
-        const daCompletare = daChiudere.filter(p => campiFatturazioneMancanti(p).length > 0);
-        const daSaldare = daChiudere.filter(p => campiFatturazioneMancanti(p).length === 0);
+        const mancaAnagrafica = (p) => !senzaFatturaDaEmettere(p) && campiFatturazioneMancanti(p).length > 0;
+        const daCompletare = daChiudere.filter(mancaAnagrafica);
+        const daSaldare = daChiudere.filter(p => !mancaAnagrafica(p));
         // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
         // partita annullata non ce n'e'. Si trovano nello Storico.
         // Le schede in ordine, ognuna con la sua lista. Si mostrano solo quelle che hanno qualcosa:

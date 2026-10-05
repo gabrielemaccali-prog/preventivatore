@@ -220,9 +220,21 @@ export const fineEventoDi = (p) => giorniEventoDi(p).slice(-1)[0] || p.data;
 // prenotazioni sia costi/ricavi: una definizione sola, altrimenti le due schede si contraddicono.
 // Una partita commissionata da un fornitore conta come saldata: non si incassa, si compensa con
 // quello che gli dobbiamo, e quel lavoro sta nella consuntivazione dei fornitori.
+// Una partita interamente coperta da un voucher non produce nessuna fattura: il voucher è già
+// stato fatturato quando è stato venduto -- o, se pregresso, nel vecchio sistema. Senza fattura da
+// emettere l'anagrafica di fatturazione non serve, e pretenderla vuol dire tenere la prenotazione
+// per sempre fra quelle da completare chiedendo dati che non useremo mai.
+// "voucherValore" lo aggancia il modulo prenotazioni leggendo l'importo del voucher usato; la
+// tolleranza di un centesimo è la stessa di lib/fatturazione.js, perché i lordi vengono da conti con l'IVA.
+export const senzaFatturaDaEmettere = (p) =>
+  (parseFloat(p?.prezzoVendita) || 0) - (parseFloat(p?.voucherValore) || 0) <= 0.01;
+
+// L'anagrafica di fatturazione serve solo se una fattura va emessa.
+export const anagraficaFatturazioneAPosto = (p) => senzaFatturaDaEmettere(p) || fatturazioneCompletaDi(p);
+
 export const prenotazioneCompletata = (p, oggiIso) =>
   p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso
-  && (p.statoPagamento === 'saldato' || p.statoPagamento === 'compensazione') && fatturazioneCompletaDi(p);
+  && (p.statoPagamento === 'saldato' || p.statoPagamento === 'compensazione') && anagraficaFatturazioneAPosto(p);
 
 // Scompone un risultato Nominatim nei singoli campi indirizzo
 export const parseIndirizzo = (luogo) => {
