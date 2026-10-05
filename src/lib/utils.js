@@ -220,14 +220,22 @@ export const fineEventoDi = (p) => giorniEventoDi(p).slice(-1)[0] || p.data;
 // prenotazioni sia costi/ricavi: una definizione sola, altrimenti le due schede si contraddicono.
 // Una partita commissionata da un fornitore conta come saldata: non si incassa, si compensa con
 // quello che gli dobbiamo, e quel lavoro sta nella consuntivazione dei fornitori.
-// Una partita interamente coperta da un voucher non produce nessuna fattura: il voucher è già
-// stato fatturato quando è stato venduto -- o, se pregresso, nel vecchio sistema. Senza fattura da
-// emettere l'anagrafica di fatturazione non serve, e pretenderla vuol dire tenere la prenotazione
-// per sempre fra quelle da completare chiedendo dati che non useremo mai.
+// Una partita commissionata da un fornitore o da un campo non si fattura a un cliente: il suo
+// importo si compensa con quello che dobbiamo alla controparte, nella sua consuntivazione.
+// È la stessa condizione con cui la consuntivazione decide che cosa è fatturabile.
+export const partitaInCompensazione = (p) => !!(p?.clienteSedeId || p?.clienteCampoId);
+
+// Quando non c'è nessuna fattura da emettere l'anagrafica di fatturazione non serve, e pretenderla
+// vuol dire tenere la prenotazione per sempre fra quelle da completare chiedendo dati che non
+// useremo mai. Succede in due casi:
+//   - la partita è in compensazione con un fornitore o un campo;
+//   - è coperta per intero da un voucher, che è già stato fatturato quando è stato venduto (o, se
+//     pregresso, nel vecchio sistema).
+// I campi restano compilabili: semplicemente non sono più un requisito.
 // "voucherValore" lo aggancia il modulo prenotazioni leggendo l'importo del voucher usato; la
 // tolleranza di un centesimo è la stessa di lib/fatturazione.js, perché i lordi vengono da conti con l'IVA.
-export const senzaFatturaDaEmettere = (p) =>
-  (parseFloat(p?.prezzoVendita) || 0) - (parseFloat(p?.voucherValore) || 0) <= 0.01;
+export const senzaFatturaDaEmettere = (p) => partitaInCompensazione(p)
+  || (parseFloat(p?.prezzoVendita) || 0) - (parseFloat(p?.voucherValore) || 0) <= 0.01;
 
 // L'anagrafica di fatturazione serve solo se una fattura va emessa.
 export const anagraficaFatturazioneAPosto = (p) => senzaFatturaDaEmettere(p) || fatturazioneCompletaDi(p);

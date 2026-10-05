@@ -1783,8 +1783,9 @@ function Prenotazioni({ user }) {
         // valori a schermo, così l'avviso sparisce mentre si compila e non solo dopo il salvataggio). Ha senso solo
         // su una prenotazione già confermata con l'evento passato: prima di allora non c'è niente da "completare".
         const daChiudere = !!codicePrenInModifica && formPren.stato === STATO_PREN.CONFERMATO && !!formPren.data && formPren.data < oggiIso;
-        // Coperta per intero da un voucher: niente fattura, quindi niente anagrafica da chiedere.
-        const nienteFattura = prezzoVendita - valoreVoucher <= 0.01;
+        // Niente fattura da emettere, quindi niente anagrafica da chiedere: in compensazione con
+        // un fornitore o un campo, oppure coperta per intero da un voucher.
+        const nienteFattura = !!(formPren.clienteSedeId || formPren.clienteCampoId) || prezzoVendita - valoreVoucher <= 0.01;
         const mancanzeCompletamento = (daChiudere && !nienteFattura)
           ? [
               ...campiFatturazioneMancanti(formPren)
