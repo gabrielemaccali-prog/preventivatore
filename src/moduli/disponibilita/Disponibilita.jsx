@@ -54,8 +54,8 @@ function Disponibilita({ user }) {
   const [fasce, setFasce] = useState([]);
   const [bubblers, setBubblers] = useState([]);
   const [campi, setCampi] = useState([]);
-  // Nome della colonna che il database non ha ancora; null = schema a posto.
-  const [schemaMancante, setSchemaMancante] = useState(null);
+  // Colonne che il database non ha ancora; vuoto = schema a posto.
+  const [colonneMancanti, setColonneMancanti] = useState([]);
   // Unica sorgente della disponibilità: una riga = utente + campo + data + fascia.
   const [dispCalendario, setDispCalendario] = useState([]);
   // Conferme mensili: una riga = utente + campo + mese 'YYYY-MM'.
@@ -79,13 +79,23 @@ function Disponibilita({ user }) {
   // arriva prima: fra i due, chiedere una colonna che ancora non esiste faceva fallire tutta la
   // query e restare senza bubbler — e senza bubbler il modulo è vuoto dappertutto, non solo dove
   // serve la colonna nuova. Quindi si riprova senza, e il configuratore lo dice (schemaMancante).
+  // Si prova dal set completo e si scende di un gradino per volta: ogni gradino è uno script
+  // SQL non ancora eseguito. Quello che manca si annota, così il configuratore sa cosa non
+  // può mostrare e il salvataggio sa cosa non deve scrivere.
+  const GRADINI_BUBBLER = [
+    { colonne: `${COLONNE_BUBBLER}, senza_ritenuta, rimborso_intestato_a`, mancanti: [] },
+    { colonne: `${COLONNE_BUBBLER}, senza_ritenuta`, mancanti: ['rimborso_intestato_a'] },
+    { colonne: COLONNE_BUBBLER, mancanti: ['rimborso_intestato_a', 'senza_ritenuta'] },
+  ];
   const leggiBubblers = async () => {
-    const conFlag = await supabase.from('utenti').select(`${COLONNE_BUBBLER}, senza_ritenuta`).eq('bubbler', true).order('cognome');
-    // Il codice arriva ora come stringa ora come numero a seconda di come il driver lo
-    // serializza: confrontarlo stretto con '42703' lasciava passare il caso numerico.
-    if (String(conFlag.error?.code ?? '') !== '42703') return conFlag;
-    setSchemaMancante('senza_ritenuta');
-    return supabase.from('utenti').select(COLONNE_BUBBLER).eq('bubbler', true).order('cognome');
+    let ultimo;
+    for (const { colonne, mancanti } of GRADINI_BUBBLER) {
+      ultimo = await supabase.from('utenti').select(colonne).eq('bubbler', true).order('cognome');
+      // Il codice arriva ora come stringa ora come numero a seconda di come il driver lo
+      // serializza: confrontarlo stretto con '42703' lasciava passare il caso numerico.
+      if (String(ultimo.error?.code ?? '') !== '42703') { setColonneMancanti(mancanti); return ultimo; }
+    }
+    return ultimo;
   };
 
   // Anagrafiche: non dipendono dal mese, si leggono una volta sola.
@@ -189,21 +199,58 @@ function Disponibilita({ user }) {
   // L'email si scrive solo alla creazione: è la credenziale con cui la persona entrerà, e dopo non
   // si cambia più da nessuna parte dell'applicazione (se va corretta si interviene sul database).
   // `salvaInlineBubbler` manda a database solo le chiavi di BUBBLER_VUOTO, quindi non può toccarla.
-  const BUBBLER_VUOTO = { nome: '', cognome: '', nome_breve: '', telefono: '', indirizzo: '', cap: '', citta: '', provincia: '', codice_fiscale: '', senza_ritenuta: false };
+  const BUBBLER_VUOTO = { nome: '', cognome: '', nome_breve: '', telefono: '', indirizzo: '', cap: '', citta: '', provincia: '', codice_fiscale: '', senza_ritenuta: false, rimborso_intestato_a: null };
   const OBBLIGATORI_BUBBLER = { nome: 'nome', cognome: 'cognome', telefono: 'telefono', indirizzo: 'indirizzo', cap: 'CAP', citta: 'comune', provincia: 'provincia', codice_fiscale: 'codice fiscale' };
-  const campiMancantiBubbler = (d) => Object.entries(OBBLIGATORI_BUBBLER).filter(([k]) => !(d[k] || '').trim()).map(([, etichetta]) => etichetta);
+  // Residenza e codice fiscale esistono per una ragione sola: finire in testa al documento di
+  // rimborso. Chi non ne riceve uno — perché è senza ritenuta, o perché il suo compenso finisce
+  // sulla ricevuta di un altro — per quei campi resta facoltativo, e pretenderli vorrebbe dire
+  // inventarseli pur di salvare l'anagrafica.
+  const SOLO_PER_DOCUMENTO = ['indirizzo', 'cap', 'citta', 'provincia', 'codice_fiscale'];
+  const servePerDocumento = (d) => !d.senza_ritenuta && !d.rimborso_intestato_a;
+  const campiMancantiBubbler = (d) => Object.entries(OBBLIGATORI_BUBBLER)
+    .filter(([k]) => servePerDocumento(d) || !SOLO_PER_DOCUMENTO.includes(k))
+    .filter(([k]) => !(d[k] || '').trim())
+    .map(([, etichetta]) => etichetta);
+  // L'asterisco nei campi segnala l'obbligo: deve sparire insieme all'obbligo.
+  const etichettaBubbler = (d, k, testo) => (servePerDocumento(d) || !SOLO_PER_DOCUMENTO.includes(k)) ? `${testo} *` : testo;
+  // Il codice fiscale si valida solo se c'è: quando è obbligatorio ci pensa campiMancantiBubbler,
+  // e per chi è senza ritenuta può legittimamente restare vuoto.
+  const cfValido = (d) => !(d.codice_fiscale || '').trim() || validaCF(d.codice_fiscale);
   // senza_ritenuta è l'unico campo non testuale dell'anagrafica: resta booleano, mentre gli altri
   // si normalizzano a null quando sono vuoti.
+  // I campi non testuali dell'anagrafica stanno fuori dalla normalizzazione a null, e si scrivono
+  // solo se il database ha la colonna: altrimenti fallirebbe tutto il salvataggio, anagrafica
+  // compresa, per un campo che intanto non si può nemmeno impostare.
+  const NON_TESTUALI = ['senza_ritenuta', 'rimborso_intestato_a'];
+  // Una colonna che il database non ha non si mostra né si scrive: resterebbe sempre vuota e non
+  // si potrebbe nemmeno impostare.
+  const haColonna = (c) => !colonneMancanti.includes(c);
   const pulisciBubbler = (d) => ({
-    ...Object.fromEntries(Object.keys(BUBBLER_VUOTO).filter(k => k !== 'senza_ritenuta').map(k => [k, (d[k] || '').trim() || null])),
-    // Finché la colonna non esiste non la si scrive: altrimenti fallirebbe tutto il salvataggio,
-    // anagrafica compresa, per un campo che intanto non si può nemmeno spuntare.
-    ...(schemaMancante === 'senza_ritenuta' ? {} : { senza_ritenuta: !!d.senza_ritenuta }),
+    ...Object.fromEntries(Object.keys(BUBBLER_VUOTO).filter(k => !NON_TESTUALI.includes(k)).map(k => [k, (d[k] || '').trim() || null])),
+    ...(haColonna('senza_ritenuta') ? { senza_ritenuta: !!d.senza_ritenuta } : {}),
+    ...(haColonna('rimborso_intestato_a') ? { rimborso_intestato_a: d.rimborso_intestato_a || null } : {}),
   });
 
-  // La colonna si mostra solo se il database ce l'ha: una colonna sempre vuota, che non si può
-  // nemmeno spuntare, confonde e basta.
-  const mostraSenzaRitenuta = schemaMancante !== 'senza_ritenuta';
+  const mostraRimborso = haColonna('senza_ritenuta');
+
+  // --- modalità di rimborso: una sola fra tre, scelta da un'unica tendina ---
+  // Tenerle in un valore solo è ciò che le rende esclusive per costruzione: non esiste lo stato
+  // "senza ritenuta e insieme intestato a un altro", che a database sarebbe scrivibile.
+  const modalitaDi = (d) => d.rimborso_intestato_a ? `a:${d.rimborso_intestato_a}` : (d.senza_ritenuta ? 'senza' : '');
+  const applicaModalita = (d, valore) => ({
+    ...d,
+    senza_ritenuta: valore === 'senza',
+    rimborso_intestato_a: valore.startsWith('a:') ? Number(valore.slice(2)) : null,
+  });
+  // Si può intestare il rimborso solo a chi una ricevuta la emette davvero: chi è senza ritenuta
+  // non ne produce nessuna, e chi a sua volta è intestato a un terzo creerebbe una catena che
+  // nessuno saprebbe più leggere. Né, ovviamente, a sé stessi.
+  const intestatariPossibili = (idEscluso) => bubblers.filter(b =>
+    b.id !== idEscluso && !b.senza_ritenuta && !b.rimborso_intestato_a);
+  // Come si legge la modalità in tabella.
+  const descriviModalita = (b) => b.rimborso_intestato_a
+    ? `→ ${nomeBubbler(b.rimborso_intestato_a)}`
+    : (b.senza_ritenuta ? 'Senza ritenuta' : 'Ricevuta propria');
 
   const [datiBubblerInline, setDatiBubblerInline] = useState(BUBBLER_VUOTO);
   const iniziaInlineBubbler = (b) => {
@@ -211,12 +258,13 @@ function Disponibilita({ user }) {
     setDatiBubblerInline({
       ...Object.fromEntries(Object.keys(BUBBLER_VUOTO).map(k => [k, b[k] || ''])),
       senza_ritenuta: !!b.senza_ritenuta,
+      rimborso_intestato_a: b.rimborso_intestato_a || null,
     });
   };
   const salvaInlineBubbler = async () => {
     const mancanti = campiMancantiBubbler(datiBubblerInline);
     if (mancanti.length) return alert(`Compila: ${mancanti.join(', ')}.`);
-    if (!validaCF(datiBubblerInline.codice_fiscale)) return alert('Il codice fiscale non è valido.');
+    if (!cfValido(datiBubblerInline)) return alert('Il codice fiscale non è valido.');
     const { error } = await supabase.from('utenti').update(pulisciBubbler(datiBubblerInline)).eq('id', idBubblerInline);
     if (error) { return segnalaErrore('Errore salvataggio bubbler', error); }
     setIdBubblerInline(null); fetchTutto();
@@ -228,7 +276,7 @@ function Disponibilita({ user }) {
     const email = (nuovoBubbler.email || '').trim().toLowerCase();
     const mancanti = [...(email ? [] : ['email']), ...campiMancantiBubbler(nuovoBubbler)];
     if (mancanti.length) return alert(`Compila: ${mancanti.join(', ')}.`);
-    if (!validaCF(nuovoBubbler.codice_fiscale)) return alert('Il codice fiscale non è valido.');
+    if (!cfValido(nuovoBubbler)) return alert('Il codice fiscale non è valido.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return alert("L'email non è valida.");
     if (!window.confirm(`Creare il bubbler con email ${email}?\n\nL'email non si potrà più modificare.`)) return;
     const { error } = await supabase.from('utenti').insert([{
@@ -567,16 +615,20 @@ function Disponibilita({ user }) {
             <h2 style={{ margin: 0 }}>Bubbler</h2>
             <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={() => setNuovoBubbler({ ...BUBBLER_VUOTO, email: '' })}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
           </div>
-          <p className="descrizione-pagina">Anagrafica dei bubbler. Questo elenco è la fonte degli operatori selezionabili in Prenotazioni; residenza e codice fiscale finiscono in testa al documento di rimborso, in Compensi. Un bubbler creato qui non può ancora entrare nell'applicazione: l'accesso lo abilita un amministratore in Impostazioni &gt; Utenti. L'email, una volta salvata, non si modifica più.</p>
+          <p className="descrizione-pagina">Anagrafica dei bubbler. Questo elenco è la fonte degli operatori selezionabili in Prenotazioni; residenza e codice fiscale finiscono in testa al documento di rimborso, in Compensi, e non si chiedono a chi è senza ritenuta, che quel documento non lo riceve. Un bubbler creato qui non può ancora entrare nell'applicazione: l'accesso lo abilita un amministratore in Impostazioni &gt; Utenti. L'email, una volta salvata, non si modifica più.</p>
 
           {/* Senza la colonna la spunta non si può né leggere né salvare, ma il resto
               dell'anagrafica funziona: meglio dirlo qui che lasciarla sparita senza spiegazioni. */}
-          {schemaMancante === 'senza_ritenuta' && (
+          {colonneMancanti.length > 0 && (
             <div style={{ margin: '10px 0 14px 0', padding: '12px 16px', background: '#fff8e1', border: '1px solid #f0d999', borderLeft: '4px solid #f0a000', borderRadius: '4px' }}>
               <strong style={{ display: 'block', marginBottom: '3px' }}>Schema del database non ancora aggiornato</strong>
               <span style={{ fontSize: '0.85rem', color: '#555' }}>
-                Esegui <code>sql/bubbler_senza_ritenuta.sql</code> nell&apos;SQL Editor di Supabase: finché manca,
-                la colonna &quot;Senza ritenuta&quot; non compare e tutti i compensi continuano a passare da Elabora rimborsi.
+                Esegui nell&apos;SQL Editor di Supabase{' '}
+                {colonneMancanti.includes('senza_ritenuta') && <><code>sql/bubbler_senza_ritenuta.sql</code> e </>}
+                <code>sql/rimborso_intestato.sql</code>: finché mancano, la colonna &quot;Rimborso&quot;
+                {colonneMancanti.includes('senza_ritenuta')
+                  ? ' non compare e tutti i compensi continuano a passare da Elabora rimborsi.'
+                  : ' non offre la voce "Intestato a", e i compensi si chiudono solo con ricevuta propria o senza ritenuta.'}
               </span>
             </div>
           )}
@@ -603,19 +655,26 @@ function Disponibilita({ user }) {
                     </div>
                     <RicercaIndirizzo placeholder="Cerca la residenza..." onSelect={(a) => setNuovoBubbler(d => ({ ...d, ...a }))} />
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: '10px' }}>
-                      {campo('indirizzo', 'Via e civico *')}
-                      {campo('cap', 'CAP *')}
-                      {campo('citta', 'Comune *')}
-                      {campo('provincia', 'Prov. *')}
+                      {campo('indirizzo', etichettaBubbler(nuovoBubbler, 'indirizzo', 'Via e civico'))}
+                      {campo('cap', etichettaBubbler(nuovoBubbler, 'cap', 'CAP'))}
+                      {campo('citta', etichettaBubbler(nuovoBubbler, 'citta', 'Comune'))}
+                      {campo('provincia', etichettaBubbler(nuovoBubbler, 'provincia', 'Prov.'))}
                     </div>
-                    <input type="text" placeholder="Codice fiscale *" value={nuovoBubbler.codice_fiscale} onChange={(e) => setNuovoBubbler({ ...nuovoBubbler, codice_fiscale: e.target.value.toUpperCase() })} style={{ ...stileInput, textTransform: 'uppercase' }} />
-                    {mostraSenzaRitenuta && (
-                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '0.85rem', cursor: 'pointer' }}>
-                        <input type="checkbox" checked={!!nuovoBubbler.senza_ritenuta} onChange={(e) => setNuovoBubbler({ ...nuovoBubbler, senza_ritenuta: e.target.checked })} style={{ width: '16px', height: '16px', marginTop: '2px', cursor: 'pointer', flexShrink: 0 }} />
-                        <span>
-                          Senza ritenuta d&apos;acconto
-                          <span style={{ display: 'block', color: '#777', fontSize: '0.78rem' }}>Il compenso si chiude in un passaggio solo, senza documento di rimborso.</span>
-                        </span>
+                    <input type="text" placeholder={etichettaBubbler(nuovoBubbler, 'codice_fiscale', 'Codice fiscale')} value={nuovoBubbler.codice_fiscale} onChange={(e) => setNuovoBubbler({ ...nuovoBubbler, codice_fiscale: e.target.value.toUpperCase() })} style={{ ...stileInput, textTransform: 'uppercase' }} />
+                    {mostraRimborso && (
+                      <label style={{ display: 'block', fontSize: '0.85rem' }}>
+                        Rimborso
+                        <select
+                          value={modalitaDi(nuovoBubbler)}
+                          onChange={(e) => setNuovoBubbler(applicaModalita(nuovoBubbler, e.target.value))}
+                          style={{ ...stileInput, marginTop: '4px' }}
+                        >
+                          <option value="">Ricevuta propria</option>
+                          <option value="senza">Senza ritenuta — si chiude in un passaggio solo</option>
+                          {haColonna('rimborso_intestato_a') && intestatariPossibili(null).map(x => (
+                            <option key={x.id} value={`a:${x.id}`}>Intestato a {nomeBubbler(x.id)}</option>
+                          ))}
+                        </select>
                       </label>
                     )}
                     <button type="submit" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Crea bubbler</button>
@@ -634,7 +693,7 @@ function Disponibilita({ user }) {
                   <th style={{ padding: '10px 12px' }}>Email</th>
                   <th style={{ padding: '10px 12px' }}>Residenza</th>
                   <th style={{ padding: '10px 12px' }}>Codice fiscale</th>
-                  {mostraSenzaRitenuta && <th style={{ padding: '10px 12px', textAlign: 'center', width: '110px' }} title="Il compenso si chiude in un passaggio solo, senza ritenuta e senza documento di rimborso">Senza ritenuta</th>}
+                  {mostraRimborso && <th style={{ padding: '10px 12px', width: '150px' }} title="Come si chiude il compenso: con una ricevuta propria, senza ritenuta, oppure sulla ricevuta di un altro bubbler">Rimborso</th>}
                   <th style={{ padding: '10px 12px', textAlign: 'center', width: '130px' }}>Azioni</th>
                 </tr>
               </thead>
@@ -660,16 +719,27 @@ function Disponibilita({ user }) {
                             onSelect={(a) => setDatiBubblerInline(d => ({ ...d, ...a }))}
                           />
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px', gap: '5px', marginTop: '5px' }}>
-                            <input type="text" className="table-input" placeholder="Via e civico *" value={datiBubblerInline.indirizzo} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, indirizzo: e.target.value })} style={{ width: '100%', height: '30px' }} />
-                            <input type="text" className="table-input" placeholder="CAP *" value={datiBubblerInline.cap} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, cap: e.target.value })} style={{ width: '100%', height: '30px' }} />
-                            <input type="text" className="table-input" placeholder="Comune *" value={datiBubblerInline.citta} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, citta: e.target.value })} style={{ width: '100%', height: '30px' }} />
-                            <input type="text" className="table-input" placeholder="Prov. *" value={datiBubblerInline.provincia} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, provincia: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                            <input type="text" className="table-input" placeholder={etichettaBubbler(datiBubblerInline, 'indirizzo', 'Via e civico')} value={datiBubblerInline.indirizzo} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, indirizzo: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                            <input type="text" className="table-input" placeholder={etichettaBubbler(datiBubblerInline, 'cap', 'CAP')} value={datiBubblerInline.cap} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, cap: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                            <input type="text" className="table-input" placeholder={etichettaBubbler(datiBubblerInline, 'citta', 'Comune')} value={datiBubblerInline.citta} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, citta: e.target.value })} style={{ width: '100%', height: '30px' }} />
+                            <input type="text" className="table-input" placeholder={etichettaBubbler(datiBubblerInline, 'provincia', 'Prov.')} value={datiBubblerInline.provincia} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, provincia: e.target.value })} style={{ width: '100%', height: '30px' }} />
                           </div>
                         </td>
-                        <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" placeholder="Codice fiscale *" value={datiBubblerInline.codice_fiscale} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, codice_fiscale: e.target.value.toUpperCase() })} style={{ width: '100%', height: '30px', textTransform: 'uppercase' }} /></td>
-                        {mostraSenzaRitenuta && (
-                          <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                            <input type="checkbox" aria-label="Senza ritenuta" title="Il compenso si chiude in un passaggio solo, senza ritenuta e senza documento di rimborso" checked={!!datiBubblerInline.senza_ritenuta} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, senza_ritenuta: e.target.checked })} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
+                        <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" placeholder={etichettaBubbler(datiBubblerInline, 'codice_fiscale', 'Codice fiscale')} value={datiBubblerInline.codice_fiscale} onChange={(e) => setDatiBubblerInline({ ...datiBubblerInline, codice_fiscale: e.target.value.toUpperCase() })} style={{ width: '100%', height: '30px', textTransform: 'uppercase' }} /></td>
+                        {mostraRimborso && (
+                          <td style={{ padding: '10px 12px' }}>
+                            <select
+                              aria-label="Rimborso"
+                              value={modalitaDi(datiBubblerInline)}
+                              onChange={(e) => setDatiBubblerInline(applicaModalita(datiBubblerInline, e.target.value))}
+                              style={{ width: '100%', height: '30px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.82rem' }}
+                            >
+                              <option value="">Ricevuta propria</option>
+                              <option value="senza">Senza ritenuta</option>
+                              {haColonna('rimborso_intestato_a') && intestatariPossibili(idBubblerInline).map(x => (
+                                <option key={x.id} value={`a:${x.id}`}>Intestato a {nomeBubbler(x.id)}</option>
+                              ))}
+                            </select>
                           </td>
                         )}
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
@@ -687,11 +757,16 @@ function Disponibilita({ user }) {
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.email || '—'}</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{righeResidenza(b).join(' — ') || '—'}</td>
                         <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{b.codice_fiscale || '—'}</td>
-                        {mostraSenzaRitenuta && (
-                          <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
-                            {b.senza_ritenuta
-                              ? <span title="Il compenso si chiude in un passaggio solo, senza ritenuta e senza documento di rimborso" style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#fff', background: '#7c3aed', borderRadius: '4px', padding: '2px 7px', whiteSpace: 'nowrap' }}>SÌ</span>
-                              : <span style={{ color: '#bbb' }}>—</span>}
+                        {mostraRimborso && (
+                          <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>
+                            {b.senza_ritenuta || b.rimborso_intestato_a
+                              ? <span
+                                  title={b.rimborso_intestato_a
+                                    ? `Il compenso finisce sulla ricevuta di ${nomeBubbler(b.rimborso_intestato_a)}, che ne paga la ritenuta`
+                                    : 'Il compenso si chiude in un passaggio solo, senza ritenuta e senza documento di rimborso'}
+                                  style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#fff', background: b.rimborso_intestato_a ? '#0e7490' : '#7c3aed', borderRadius: '4px', padding: '2px 7px', whiteSpace: 'nowrap' }}
+                                >{descriviModalita(b)}</span>
+                              : <span style={{ color: '#bbb' }}>Ricevuta propria</span>}
                           </td>
                         )}
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
@@ -701,7 +776,7 @@ function Disponibilita({ user }) {
                     )}
                   </tr>
                 ))}
-                {bubblers.length === 0 && <tr><td colSpan={mostraSenzaRitenuta ? 8 : 7} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun bubbler. Crealo con Nuovo, oppure attiva il flag "Bubbler" modificando un utente esistente in Impostazioni &gt; Utenti.</td></tr>}
+                {bubblers.length === 0 && <tr><td colSpan={mostraRimborso ? 8 : 7} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun bubbler. Crealo con Nuovo, oppure attiva il flag "Bubbler" modificando un utente esistente in Impostazioni &gt; Utenti.</td></tr>}
               </tbody>
             </table>
           </div>

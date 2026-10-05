@@ -122,12 +122,22 @@ const intervalloPartita = (p) => {
 // dello script SQL — e chiederla farebbe fallire tutta la query lasciando il modulo senza nomi:
 // in quel caso si rilegge senza, e tutti i compensi si comportano come prima.
 const COLONNE_ANAGRAFICA = 'id, username, nome, cognome, indirizzo, cap, citta, provincia, codice_fiscale';
+// Si scende di un gradino per volta finché il database risponde: ogni gradino è uno script SQL
+// non ancora eseguito, e senza questa scala il modulo resterebbe del tutto senza nomi.
+const GRADINI_ANAGRAFICA = [
+  `${COLONNE_ANAGRAFICA}, senza_ritenuta, rimborso_intestato_a`,
+  `${COLONNE_ANAGRAFICA}, senza_ritenuta`,
+  COLONNE_ANAGRAFICA,
+];
 const leggiAnagrafiche = async () => {
-  const conFlag = await supabase.from('utenti').select(`${COLONNE_ANAGRAFICA}, senza_ritenuta`).eq('bubbler', true);
-  // Il codice arriva ora come stringa ora come numero a seconda di come il driver lo
-  // serializza: confrontarlo stretto con '42703' lasciava passare il caso numerico.
-  if (String(conFlag.error?.code ?? '') !== '42703') return conFlag;
-  return supabase.from('utenti').select(COLONNE_ANAGRAFICA).eq('bubbler', true);
+  let ultimo;
+  for (const colonne of GRADINI_ANAGRAFICA) {
+    ultimo = await supabase.from('utenti').select(colonne).eq('bubbler', true);
+    // Il codice arriva ora come stringa ora come numero a seconda di come il driver lo
+    // serializza: confrontarlo stretto con '42703' lasciava passare il caso numerico.
+    if (String(ultimo.error?.code ?? '') !== '42703') return ultimo;
+  }
+  return ultimo;
 };
 
 function Compensi({ user }) {
@@ -172,6 +182,12 @@ function Compensi({ user }) {
   // si chiude in un passaggio solo. È una proprietà della persona, spuntata nell'anagrafica
   // (Disponibilità > Configuratore), non una scelta da rifare a ogni consuntivazione.
   const senzaRitenuta = (utenteId) => !!anagrafiche.find(a => a.id === utenteId)?.senza_ritenuta;
+  // Chi firma la ricevuta per questo bubbler: un altro utente, oppure lui stesso.
+  // Il compenso di chi ha un intestatario non si chiude da solo — aspetta la ricevuta dell'altro,
+  // perché è lì dentro che viene pagato e che se ne calcola la ritenuta.
+  const intestatarioDi = (utenteId) => anagrafiche.find(a => a.id === utenteId)?.rimborso_intestato_a || null;
+  const haIntestatario = (utenteId) => !!intestatarioDi(utenteId);
+  const firmatarioDi = (utenteId) => intestatarioDi(utenteId) || utenteId;
   const nomeOperatore = (utenteId) => {
     const u = anagrafiche.find(a => a.id === utenteId);
     return u ? ([u.nome, u.cognome].filter(Boolean).join(' ') || u.username) : `utente ${utenteId}`;
@@ -348,12 +364,18 @@ function Compensi({ user }) {
     // Per chi è senza ritenuta non c'è niente da calcolare dopo e nessun documento da emettere:
     // il periodo nasce già evaso, saltando "Elabora rimborsi".
     const diretto = senzaRitenuta(op.id);
+    // Chi ha un intestatario invece il periodo lo chiude come tutti, ma non risulta pagato finché
+    // non esce la ricevuta dell'altro: è quel documento a contenerlo. Segnarlo pagato adesso
+    // vorrebbe dire contare lo stesso importo due volte, qui e dentro quel totale.
+    const intestatario = intestatarioDi(op.id);
     if (!window.confirm(
       `Consuntivare ${op.nome || nomeOperatore(op.id)} dal ${dataBreve(dal)} al ${dataBreve(al)}?\n\n`
       + `${euro(op.compenso + op.spese)} da pagare su ${op.giornate.length} giornate.\n\n`
       + (diretto
         ? `Senza ritenuta: il periodo risulta subito pagato e finisce fra i rimborsi evasi, senza documento.`
-        : `Il periodo passa fra i consuntivati e le sue giornate non accettano più modifiche.`)
+        : intestatario
+          ? `Il compenso finisce sulla ricevuta di ${nomeOperatore(intestatario)}: il periodo resta in attesa finché quella ricevuta non viene emessa.`
+          : `Il periodo passa fra i consuntivati e le sue giornate non accettano più modifiche.`)
     )) return;
 
     setInCorso(`consuntiva-${op.id}`);
@@ -482,7 +504,13 @@ function Compensi({ user }) {
     const dentro = evasi.filter(p => (p.evaso_il || '').slice(0, 4) === indAnno);
     const per = new Map();
     for (const p of dentro) {
-      const r = per.get(p.operatore_id) || { operatoreId: p.operatore_id, rimborsi: 0, giornate: 0, netto: 0, ritenuta: 0 };
+      // Un periodo confluito nella ricevuta di un altro è già dentro quel totale: contarlo di
+      // nuovo gonfierebbe netto e giornate di importi che nessuno ha pagato due volte.
+      if (p.confluito_in) continue;
+      // Il compenso si attribuisce a chi firma la ricevuta: è lui che lo dichiara e di cui conta
+      // la soglia annuale. Chi ha materialmente lavorato resta scritto nel proprio periodo.
+      const chiave = p.rimborso?.intestatario_id ?? p.operatore_id;
+      const r = per.get(chiave) || { operatoreId: chiave, rimborsi: 0, giornate: 0, netto: 0, ritenuta: 0 };
       r.rimborsi += 1;
       // Un periodo consuntivato diretto non ha documento: giornate e netto si leggono da quello che
       // è stato congelato nel periodo stesso. Senza, questi compensi risulterebbero pagati a zero e
@@ -500,7 +528,7 @@ function Compensi({ user }) {
         r.netto = arrotonda2(r.netto + (parseFloat(p.compenso_netto) || 0));
         r.ritenuta = arrotonda2(r.ritenuta + (parseFloat(p.ritenuta) || 0));
       }
-      per.set(p.operatore_id, r);
+      per.set(chiave, r);
     }
     // Il totale è il compenso lordo: netto più ritenuta, cioè le due colonne accanto. Si somma qui
     // e non si legge dal documento, così la riga torna a occhio anche quando gli arrotondamenti
@@ -542,26 +570,55 @@ function Compensi({ user }) {
     };
   };
 
-  const apriElaborazione = (p) => {
-    // Le giornate si propongono dalle partite del periodo: una riga per data e luogo, come le
-    // scriverebbe a mano il manager. Da lì si correggono o si tolgono.
-    // La trasferta è un attributo della giornata, non un conteggio a parte: si va in un posto
-    // diverso ogni volta, e due giornate possono valere importi diversi.
-    const daPartite = [];
-    for (const g of (p.dettaglio?.giornate || [])) {
-      const luoghi = [...new Set(g.blocchi.flatMap(b => b.partite.map(x => indirizzoDi(x.partita, campi))))];
-      daPartite.push({ data: g.data, luogo: luoghi.filter(Boolean).join(' · '), trasferta: '' });
-    }
+  // Le giornate che un periodo propone al documento: una riga per data e luogo, come le
+  // scriverebbe a mano il manager. Da lì si correggono o si tolgono.
+  // La trasferta è un attributo della giornata, non un conteggio a parte: si va in un posto
+  // diverso ogni volta, e due giornate possono valere importi diversi.
+  const giornateProposte = (p) => {
     const salvate = p.rimborso?.giornate;
+    if (salvate?.length) return salvate.map(g => ({ ...g, trasferta: String(g.trasferta ?? '') }));
+    return (p.dettaglio?.giornate || []).map(g => {
+      const luoghi = [...new Set(g.blocchi.flatMap(b => b.partite.map(x => indirizzoDi(x.partita, campi))))];
+      return { data: g.data, luogo: luoghi.filter(Boolean).join(' · '), trasferta: '' };
+    });
+  };
+
+  // Una ricevuta può pagare più periodi: quello del firmatario e quelli di chi gli ha intestato
+  // il proprio rimborso. Il totale su cui si calcola la ritenuta è la loro somma, perché il
+  // documento è uno solo e lo firma una persona sola.
+  const periodiPagabiliCon = (p) => {
+    const firmatario = firmatarioDi(p.operatore_id);
+    const altri = daElaborare.filter(x => x.id !== p.id && firmatarioDi(x.operatore_id) === firmatario);
+    return [p, ...altri.sort((a, b) => (a.dal || '').localeCompare(b.dal || ''))];
+  };
+
+  const apriElaborazione = (p) => {
+    // Su un documento già emesso si riaprono esattamente i periodi che aveva pagato, non quelli
+    // che oggi sarebbero pagabili: una ristampa deve restare identica all'originale.
+    // Un documento già emesso prima che esistessero i gruppi non ha l'elenco dei periodi pagati:
+    // vale da solo. Senza questo ramo, riaprirlo ci infilerebbe dentro i periodi in attesa di oggi,
+    // che quella ricevuta non ha mai pagato.
+    const candidati = p.rimborso?.periodi?.length
+      ? p.rimborso.periodi.map(id => consuntivati.find(x => x.id === id)).filter(Boolean)
+      : (p.evaso_il ? [p] : periodiPagabiliCon(p));
+    const firmatario = p.rimborso?.intestatario_id ?? firmatarioDi(p.operatore_id);
     setElaborazione({
       periodo: p,
-      giornate: (salvate?.length ? salvate : daPartite).map(g => ({ ...g, trasferta: String(g.trasferta ?? '') })),
+      firmatario,
+      candidati,
+      // Si propongono tutti spuntati: il caso normale è pagarli insieme, ed è togliendone uno
+      // che si fa una scelta, non includendolo.
+      inclusi: candidati.map(x => x.id),
+      // Le giornate restano appese al periodo che le ha prodotte: così togliere e rimettere la
+      // spunta a un periodo non fa perdere le correzioni fatte sulle giornate degli altri.
+      giornatePer: Object.fromEntries(candidati.map(x => [x.id, giornateProposte(x)])),
       // Data e anagrafica si congelano solo quando il documento è stato emesso: una ristampa deve
       // restare identica all'originale anche se nel frattempo il bubbler ha cambiato casa. Finché
       // il rimborso è da elaborare si rilegge invece sempre l'anagrafica di adesso, altrimenti un
       // periodo riaperto si porterebbe dietro i dati di quando non erano ancora stati compilati.
       dataDocumento: (p.evaso_il && p.rimborso?.data) || dataConsuntivoDi(p) || oggiIso(),
-      anagrafica: (p.evaso_il && p.rimborso?.anagrafica) || anagraficaDi(p.operatore_id),
+      // L'anagrafica è quella di chi firma, che può non essere chi ha lavorato.
+      anagrafica: (p.evaso_il && p.rimborso?.anagrafica) || anagraficaDi(firmatario),
     });
   };
 
@@ -572,21 +629,42 @@ function Compensi({ user }) {
 
   const importiElaborazione = useMemo(() => {
     if (!elaborazione) return null;
-    const p = elaborazione.periodo;
-    const elencoSpese = speseDelPeriodo(p);
+    const inclusi = elaborazione.candidati.filter(x => elaborazione.inclusi.includes(x.id));
+    if (inclusi.length === 0) return null;
+    // Il periodo che porta il documento: quello di chi firma, se ha lavorato anche lui, altrimenti
+    // il primo incluso. È su questo che si salva la ricevuta, e gli altri vi confluiscono.
+    const portante = inclusi.find(x => x.operatore_id === elaborazione.firmatario) || inclusi[0];
+    const elencoSpese = inclusi.flatMap(x => speseDelPeriodo(x));
+    const giornate = inclusi.flatMap(x => elaborazione.giornatePer[x.id] || []);
     // Ogni giornata porta il suo importo di trasferta, e sul documento diventa una riga a sé
     // col proprio comune: due trasferte sono due spostamenti distinti, non un conteggio.
-    const righeTrasferta = elaborazione.giornate
+    const righeTrasferta = giornate
       .map(g => ({ comune: comuneDa(g.luogo), data: g.data, importo: arrotonda2(parseFloat(g.trasferta) || 0) }))
       .filter(r => r.importo > 0);
     const trasferte = arrotonda2(righeTrasferta.reduce((s, r) => s + r.importo, 0));
-    // Il totale a pagare è quello deciso consuntivando e non si muove: compenso più spese.
-    // I rimborsi si scorporano da dentro, non si aggiungono sopra.
-    const daPagare = arrotonda2((parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0));
-    return {
-      ...importiRimborso({ daPagare, spese: sommaDi(elencoSpese), trasferte }, p.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta),
-      trasferte, elencoSpese, righeTrasferta,
-    };
+    // Il totale a pagare è quello deciso consuntivando e non si muove: compenso più spese,
+    // sommati su tutti i periodi che questa ricevuta paga. I rimborsi si scorporano da dentro,
+    // non si aggiungono sopra.
+    const nettoDi = (x) => arrotonda2((parseFloat(x.compenso_netto) || 0) + (parseFloat(x.spese) || 0));
+    const daPagare = arrotonda2(inclusi.reduce((s, x) => s + nettoDi(x), 0));
+    const aliquota = portante.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta;
+    const importi = importiRimborso({ daPagare, spese: sommaDi(elencoSpese), trasferte }, aliquota);
+
+    // La ritenuta si calcola sul totale, ma ogni periodo deve portarsi la propria quota: le colonne
+    // del periodo restano sommabili fra loro e il costo resta attribuito a chi ha lavorato, che è
+    // quello che il Cruscotto legge. Si riparte in proporzione a quanto ciascuno pesa sul totale,
+    // e l'ultimo assorbe il resto perché la somma torni al centesimo.
+    const quoteRitenuta = {};
+    let assegnato = 0;
+    inclusi.forEach((x, i) => {
+      const quota = i === inclusi.length - 1
+        ? arrotonda2(importi.ritenuta - assegnato)
+        : arrotonda2(importi.ritenuta * (daPagare > 0 ? nettoDi(x) / daPagare : 0));
+      quoteRitenuta[x.id] = quota;
+      assegnato = arrotonda2(assegnato + quota);
+    });
+
+    return { ...importi, trasferte, elencoSpese, righeTrasferta, giornate, inclusi, portante, aliquota, quoteRitenuta, nettoDi };
   }, [elaborazione, speseDelPeriodo, parametri]);
 
   const scaricaDocumentoRimborso = (nomeFile) => {
@@ -605,43 +683,69 @@ function Compensi({ user }) {
     const e = elaborazione;
     const i = importiElaborazione;
     if (!e || !i) return;
-    if (e.giornate.length === 0) return alert("Indica almeno una giornata: il documento deve dire per cosa si paga.");
+    if (i.giornate.length === 0) return alert("Indica almeno una giornata: il documento deve dire per cosa si paga.");
 
     setInCorso('rimborso');
-    // Le trasferte spostano una fetta di compenso fuori dall'imponibile, quindi la ritenuta di ogni
-    // riga cambia: le righe congelate si riscrivono con gli importi del documento appena emesso.
-    const aliquotaDoc = e.periodo.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta;
-    const righeAggiornate = righeConsuntivo(
-      (e.periodo.righe || []).map(r => ({ riferimento: r.riferimento, data: r.data, ore: r.ore, base: r.base, rettifiche: r.rettifiche, spese: r.spese })),
-      { aliquota: aliquotaDoc, trasfertePerData: { ...trasfertePerData({ trasferte: { righe: i.righeTrasferta } }) } }
-    );
-    const { error } = await supabase.from('op_periodi').update({
-      evaso_il: new Date().toISOString(),
-      ...(righeAggiornate.length > 0 ? { righe: righeAggiornate } : {}),
-      // La ritenuta e il costo per l'azienda nascono qui: alla consuntivazione non erano ancora
-      // decisi. Finivano solo dentro il documento, e le due colonne restavano a zero -- chiunque le
-      // leggesse senza aprire il jsonb vedeva un costo più basso del vero.
-      ritenuta: i.ritenuta,
-      costo_azienda: arrotonda2(i.totale + i.ritenuta),
-      // La data scritta sul documento è a tutti gli effetti la data di consuntivazione del periodo:
-      // è quella che si vede in elenco e quella che il bubbler ha in mano.
-      data_consuntivo: e.dataDocumento,
-      // Il contenuto del documento si congela: serve a ristamparlo identico, non a rifarci i conti.
-      rimborso: {
-        giornate: e.giornate,
-        data: e.dataDocumento,
-        anagrafica: e.anagrafica,
-        // Una riga per trasferta col suo comune, come compaiono sul documento, più il totale.
-        trasferte: { righe: i.righeTrasferta, totale: i.trasferte },
-        spese: i.elencoSpese.map(v => ({ descrizione: v.descrizione, importo: v.importo, data: v.data })),
-        imponibile: i.imponibile, ritenuta: i.ritenuta, netto: i.netto, rimborsi: i.rimborsi, totale: i.totale,
-        aliquota: e.periodo.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta,
-      },
-    }).eq('id', e.periodo.id);
+    const adesso = new Date().toISOString();
+    // Ogni periodo si aggiorna per conto suo, perché i numeri che porta sono i suoi: le righe per
+    // partita, la quota di ritenuta e il costo che il Cruscotto attribuirà a chi ha lavorato.
+    // Il documento invece è uno solo e si salva sul portante; gli altri gli confluiscono dentro.
+    for (const x of i.inclusi) {
+      // Le trasferte spostano una fetta di compenso fuori dall'imponibile, quindi la ritenuta di
+      // ogni riga cambia: le righe congelate si riscrivono con gli importi del documento appena
+      // emesso, usando però le sole trasferte delle giornate di questo periodo.
+      const trasferteSue = (e.giornatePer[x.id] || [])
+        .map(g => ({ data: g.data, importo: arrotonda2(parseFloat(g.trasferta) || 0) }))
+        .filter(r => r.importo > 0);
+      const righeAggiornate = righeConsuntivo(
+        (x.righe || []).map(r => ({ riferimento: r.riferimento, data: r.data, ore: r.ore, base: r.base, rettifiche: r.rettifiche, spese: r.spese })),
+        { aliquota: i.aliquota, trasfertePerData: { ...trasfertePerData({ trasferte: { righe: trasferteSue } }) } }
+      );
+      const ritenutaSua = i.quoteRitenuta[x.id] ?? 0;
+      const portante = x.id === i.portante.id;
+      const { error } = await supabase.from('op_periodi').update({
+        evaso_il: adesso,
+        ...(righeAggiornate.length > 0 ? { righe: righeAggiornate } : {}),
+        // La ritenuta e il costo per l'azienda nascono qui: alla consuntivazione non erano ancora
+        // decisi. Finivano solo dentro il documento, e le due colonne restavano a zero -- chiunque
+        // le leggesse senza aprire il jsonb vedeva un costo più basso del vero.
+        ritenuta: ritenutaSua,
+        costo_azienda: arrotonda2(i.nettoDi(x) + ritenutaSua),
+        // La data scritta sul documento è a tutti gli effetti la data di consuntivazione del
+        // periodo: è quella che si vede in elenco e quella che il bubbler ha in mano.
+        data_consuntivo: e.dataDocumento,
+        // Chi non porta il documento ne registra solo l'appartenenza: è quel "confluito_in" a dire
+        // che questo importo è già stato pagato là dentro, e a tenerlo fuori dai conteggi.
+        confluito_in: portante ? null : i.portante.id,
+        // Il contenuto del documento si congela: serve a ristamparlo identico, non a rifarci i conti.
+        ...(portante ? {
+          rimborso: {
+            giornate: i.giornate,
+            data: e.dataDocumento,
+            anagrafica: e.anagrafica,
+            // Chi firma la ricevuta, che può non essere chi ha lavorato: è l'informazione che
+            // permette agli indicatori di attribuire il compenso alla persona giusta.
+            intestatario_id: e.firmatario,
+            // I periodi che questa ricevuta ha pagato: serve a riaprirla identica e a sapere
+            // cosa sganciare se la si annulla.
+            periodi: i.inclusi.map(y => y.id),
+            // Una riga per trasferta col suo comune, come compaiono sul documento, più il totale.
+            trasferte: { righe: i.righeTrasferta, totale: i.trasferte },
+            spese: i.elencoSpese.map(v => ({ descrizione: v.descrizione, importo: v.importo, data: v.data })),
+            imponibile: i.imponibile, ritenuta: i.ritenuta, netto: i.netto, rimborsi: i.rimborsi, totale: i.totale,
+            aliquota: i.aliquota,
+          },
+        } : {}),
+      }).eq('id', x.id);
+      if (error) {
+        setInCorso(null);
+        console.error(error);
+        return alert(`Errore nel salvataggio del rimborso di ${nomeOperatore(x.operatore_id)}.`);
+      }
+    }
     setInCorso(null);
-    if (error) { console.error(error); return alert("Errore nel salvataggio del rimborso."); }
 
-    scaricaDocumentoRimborso(`rimborso-${nomeOperatore(e.periodo.operatore_id).replace(/\s+/g, '-')}-${e.periodo.dal}`);
+    scaricaDocumentoRimborso(`rimborso-${nomeOperatore(e.firmatario).replace(/\s+/g, '-')}-${i.portante.dal}`);
     setElaborazione(null);
     fetchPartite();
   };
@@ -656,26 +760,39 @@ function Compensi({ user }) {
   };
 
   const riapriRimborso = async (p) => {
+    // Una ricevuta può aver pagato più periodi: riaprirla deve sganciarli tutti, altrimenti
+    // resterebbero segnati pagati da un documento che non vale più.
+    const confluiti = consuntivati.filter(x => x.confluito_in === p.id);
+    const tutti = [p, ...confluiti];
     if (!window.confirm(
-      `Riaprire l'elaborazione del rimborso di ${nomeOperatore(p.operatore_id)}?\n\n`
-      + `Il periodo torna fra quelli da elaborare. Il documento salvato resta come bozza, `
-      + `così ripartendo ritrovi giornate e trasferte già impostate.`
+      `Riaprire l'elaborazione del rimborso di ${nomeOperatore(p.rimborso?.intestatario_id ?? p.operatore_id)}?\n\n`
+      + (confluiti.length > 0
+        ? `Tornano fra quelli da elaborare anche i ${confluiti.length} periodi pagati dalla stessa ricevuta `
+          + `(${[...new Set(confluiti.map(x => nomeOperatore(x.operatore_id)))].join(', ')}).\n\n`
+        : '')
+      + `Il documento salvato resta come bozza, così ripartendo ritrovi giornate e trasferte già impostate.`
     )) return;
     setInCorso(`riapri-rimborso-${p.id}`);
     // Ritenuta e costo azienda tornano come erano prima dell'elaborazione, insieme alle righe: il
     // documento resta come bozza, ma quello che è stato pagato non lo è più.
-    const righeRiaperte = righeConsuntivo(
-      (p.righe || []).map(r => ({ riferimento: r.riferimento, data: r.data, ore: r.ore, base: r.base, rettifiche: r.rettifiche, spese: r.spese })),
-      { aliquota: p.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta }
-    );
-    const { error } = await supabase.from('op_periodi').update({
-      evaso_il: null,
-      ...(righeRiaperte.length > 0 ? { righe: righeRiaperte } : {}),
-      ritenuta: 0,
-      costo_azienda: arrotonda2((parseFloat(p.compenso_netto) || 0) + (parseFloat(p.spese) || 0)),
-    }).eq('id', p.id);
+    for (const x of tutti) {
+      const righeRiaperte = righeConsuntivo(
+        (x.righe || []).map(r => ({ riferimento: r.riferimento, data: r.data, ore: r.ore, base: r.base, rettifiche: r.rettifiche, spese: r.spese })),
+        { aliquota: x.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta }
+      );
+      const { error } = await supabase.from('op_periodi').update({
+        evaso_il: null,
+        ...(righeRiaperte.length > 0 ? { righe: righeRiaperte } : {}),
+        ritenuta: 0,
+        costo_azienda: arrotonda2((parseFloat(x.compenso_netto) || 0) + (parseFloat(x.spese) || 0)),
+        confluito_in: null,
+      }).eq('id', x.id);
+      if (error) {
+        setInCorso(null); console.error(error);
+        return alert(`Errore nella riapertura del rimborso di ${nomeOperatore(x.operatore_id)}.`);
+      }
+    }
     setInCorso(null);
-    if (error) { console.error(error); return alert("Errore nella riapertura del rimborso."); }
     fetchPartite();
   };
 
@@ -928,6 +1045,13 @@ function Compensi({ user }) {
                     <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                       <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
                       <strong>{nomeOperatore(p.operatore_id)}</strong>
+                      {/* In attesa, dire subito dove finirà questo compenso: elaborandolo si apre
+                          la ricevuta di un altro, e senza avviso sembrerebbe uno sbaglio. */}
+                      {!evasi && haIntestatario(p.operatore_id) && (
+                        <span title={`Elaborandolo si emette la ricevuta di ${nomeOperatore(intestatarioDi(p.operatore_id))}, che pagherà anche questo periodo`} style={{ marginLeft: '8px', fontSize: '0.66rem', fontWeight: 'bold', color: '#fff', background: '#0e7490', borderRadius: '4px', padding: '2px 6px', whiteSpace: 'nowrap' }}>
+                          → {nomeOperatore(intestatarioDi(p.operatore_id))}
+                        </span>
+                      )}
                       {/* Un periodo senza documento si legge diversamente dagli altri: ritenuta a
                           zero in colonna e nessuna ristampa fra le azioni. */}
                       {evasi && !p.rimborso && (
@@ -952,6 +1076,14 @@ function Compensi({ user }) {
                       {/* Come nelle righe da consuntivare: prima il ritorno indietro in outline,
                           poi in blu l'azione che porta avanti il periodo. */}
                       {evasi ? (
+                        // Un periodo confluito è stato pagato dalla ricevuta di un altro: non si
+                        // tocca da qui, o lo si sgancerebbe da un documento che continua a
+                        // dichiararlo. Si riapre quella ricevuta, e questo torna indietro con lei.
+                        p.confluito_in ? (
+                          <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                            pagato dalla ricevuta di {nomeOperatore(consuntivati.find(x => x.id === p.confluito_in)?.rimborso?.intestatario_id ?? consuntivati.find(x => x.id === p.confluito_in)?.operatore_id)}
+                          </span>
+                        ) : (
                         // Un periodo consuntivato diretto non è passato dall'elaborazione e non ha
                         // documento: non c'è niente da ristampare, e riaprirlo lo riporta fra quelli
                         // da consuntivare, perché la fase intermedia per lui non esiste.
@@ -982,6 +1114,7 @@ function Compensi({ user }) {
                           >
                             <Icona nome="riporta" size={14} style={{ marginRight: '5px' }} />Ripristina
                           </button>
+                        )
                         )
                       ) : (
                         <>
@@ -1029,14 +1162,15 @@ function Compensi({ user }) {
   // Il documento di rimborso. È lo stesso nodo che html2pdf cattura, quindi l'anteprima a video
   // e il PDF non possono divergere: quello che si vede è quello che si stampa.
   const documentoRimborso = (e, i) => {
-    const periodo = e.periodo;
-    const giornate = e.giornate;
+    // La ricevuta la intesta e la firma una persona sola, che può non essere chi ha lavorato:
+    // le giornate sono quelle di tutti i periodi che il documento paga.
+    const giornate = i.giornate;
     const a = e.anagrafica || {};
     return (
     <div className="documento-preventivo" id="documento-rimborso" style={{ background: '#fff', padding: '34px 40px', maxWidth: '820px', color: '#000', fontSize: '0.9rem', lineHeight: 1.6 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '40px', marginBottom: '34px' }}>
         <div>
-          <div style={{ fontWeight: 'bold' }}>{nomeOperatore(periodo.operatore_id)}</div>
+          <div style={{ fontWeight: 'bold' }}>{nomeOperatore(e.firmatario)}</div>
           {righeResidenza(a).map((r, k) => <div key={k}>{r}</div>)}
           {a.codice_fiscale && <div>{a.codice_fiscale}</div>}
         </div>
@@ -1065,7 +1199,7 @@ function Compensi({ user }) {
             <td style={{ padding: '3px 0', textAlign: 'right', width: '150px' }}>{euro(i.imponibile)}</td>
           </tr>
           <tr>
-            <td style={{ padding: '3px 0' }}>A DEDURRE RITENUTA D'ACCONTO {periodo.parametri?.aliquota_ritenuta ?? parametri.aliquota_ritenuta}%</td>
+            <td style={{ padding: '3px 0' }}>A DEDURRE RITENUTA D'ACCONTO {i.aliquota}%</td>
             <td style={{ padding: '3px 0', textAlign: 'right' }}>{euro(i.ritenuta)}</td>
           </tr>
           <tr>
@@ -1288,6 +1422,11 @@ function Compensi({ user }) {
                               perché va detto accanto al nome, non solo nel messaggio di conferma. */}
                           {senzaRitenuta(op.id) && (
                             <span title="Nessuna ritenuta e nessun documento: si chiude in un passaggio solo" style={{ fontSize: '0.68rem', fontWeight: 'bold', color: '#fff', background: '#7c3aed', borderRadius: '4px', padding: '2px 7px', whiteSpace: 'nowrap' }}>SENZA RITENUTA</span>
+                          )}
+                          {haIntestatario(op.id) && (
+                            <span title={`Il compenso finisce sulla ricevuta di ${nomeOperatore(intestatarioDi(op.id))}, insieme al suo`} style={{ fontSize: '0.68rem', fontWeight: 'bold', color: '#fff', background: '#0e7490', borderRadius: '4px', padding: '2px 7px', whiteSpace: 'nowrap' }}>
+                              → {nomeOperatore(intestatarioDi(op.id))}
+                            </span>
                           )}
                           <span style={{ color: '#888', fontSize: '0.8rem' }}>{op.giornate.length} giornat{op.giornate.length === 1 ? 'a' : 'e'}</span>
                         </div>
@@ -1520,7 +1659,7 @@ function Compensi({ user }) {
           <div className="modal-form-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px' }}>
             <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setElaborazione(null)}>✕</button>
             <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>
-              Rimborso · {nomeOperatore(elaborazione.periodo.operatore_id)}
+              Rimborso · {nomeOperatore(elaborazione.firmatario)}
             </h3>
             <p style={{ margin: '0 0 15px 0', fontSize: '0.8rem', color: '#777' }}>
               Quello che scrivi qui finisce nel documento. Le giornate sono proposte dalle partite del periodo:
@@ -1546,7 +1685,7 @@ function Compensi({ user }) {
                 prima di generarlo, che scoprirlo guardando il PDF. */}
             {righeResidenza(elaborazione.anagrafica).length === 0 || !elaborazione.anagrafica?.codice_fiscale ? (
               <p style={{ margin: '0 0 16px 0', fontSize: '0.8rem', color: '#c62828' }}>
-                Di {nomeOperatore(elaborazione.periodo.operatore_id)} manca{' '}
+                Di {nomeOperatore(elaborazione.firmatario)} manca{' '}
                 {righeResidenza(elaborazione.anagrafica).length === 0 && !elaborazione.anagrafica?.codice_fiscale
                   ? 'la residenza e il codice fiscale'
                   : righeResidenza(elaborazione.anagrafica).length === 0 ? 'la residenza' : 'il codice fiscale'}:
@@ -1567,38 +1706,79 @@ function Compensi({ user }) {
               <span style={{ width: '34px' }} />
             </div>
 
+            {/* Le giornate restano raggruppate per periodo: una ricevuta può pagare più persone,
+                e il manager deve vedere quali giornate sta pagando a chi prima di firmarle tutte
+                sotto un nome solo. Con un periodo solo il raggruppamento non si nota. */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {elaborazione.giornate.map((g, i) => (
-                <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <input
-                    type="date" value={g.data}
-                    onChange={(e) => setElaborazione(s => ({ ...s, giornate: s.giornate.map((x, j) => j === i ? { ...x, data: e.target.value } : x) }))}
-                    style={{ ...stileInput, width: '160px' }}
-                  />
-                  <input
-                    type="text" value={g.luogo} placeholder="indirizzo, comune (prov)"
-                    onChange={(e) => setElaborazione(s => ({ ...s, giornate: s.giornate.map((x, j) => j === i ? { ...x, luogo: e.target.value } : x) }))}
-                    style={{ ...stileInput, flex: '1 1 260px' }}
-                  />
-                  <input
-                    type="number" min="0" step="any" value={g.trasferta} placeholder="0,00"
-                    onChange={(e) => setElaborazione(s => ({ ...s, giornate: s.giornate.map((x, j) => j === i ? { ...x, trasferta: e.target.value } : x) }))}
-                    style={{ ...stileInput, width: '120px', textAlign: 'right' }}
-                  />
-                  <button
-                    type="button" className="btn-icon-action" aria-label="Togli la giornata" title="Togli la giornata"
-                    onClick={() => setElaborazione(s => ({ ...s, giornate: s.giornate.filter((_, j) => j !== i) }))}
-                  >
-                    <Icona nome="elimina" size={14} style={{ marginRight: 0 }} />
-                  </button>
-                </div>
-              ))}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
-                <button
-                  type="button"
-                  onClick={() => setElaborazione(s => ({ ...s, giornate: [...s.giornate, { data: s.periodo.dal, luogo: '', trasferta: '' }] }))}
-                  style={{ background: 'none', border: 'none', color: '#0288d1', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}
-                >+ giornata</button>
+              {elaborazione.candidati.map(per => {
+                const incluso = elaborazione.inclusi.includes(per.id);
+                const righe = elaborazione.giornatePer[per.id] || [];
+                const aggiorna = (fn) => setElaborazione(s => ({ ...s, giornatePer: { ...s.giornatePer, [per.id]: fn(s.giornatePer[per.id] || []) } }));
+                const soloUno = elaborazione.candidati.length === 1;
+                return (
+                  <div key={per.id} style={soloUno ? undefined : { border: '1px solid #e6e6e6', borderRadius: '6px', padding: '10px 12px', background: incluso ? '#fff' : '#fafafa' }}>
+                    {!soloUno && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: incluso ? '10px' : 0, cursor: 'pointer', fontSize: '0.85rem' }}>
+                        {/* L'ultimo incluso non si può togliere: un documento che non paga niente
+                            non esiste, e lasciarlo spuntabile faceva sparire l'anteprima. */}
+                        <input
+                          type="checkbox" checked={incluso}
+                          disabled={incluso && elaborazione.inclusi.length === 1}
+                          title={incluso && elaborazione.inclusi.length === 1 ? 'La ricevuta deve pagare almeno un periodo' : undefined}
+                          onChange={() => setElaborazione(s => ({
+                            ...s,
+                            inclusi: incluso
+                              ? (s.inclusi.length === 1 ? s.inclusi : s.inclusi.filter(id => id !== per.id))
+                              : [...s.inclusi, per.id],
+                          }))}
+                          style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                        />
+                        <strong>{nomeOperatore(per.operatore_id)}</strong>
+                        <span style={{ color: '#777' }}>
+                          {per.dal === per.al ? dataBreve(per.dal) : `${dataBreve(per.dal)} → ${dataBreve(per.al)}`}
+                          {' · '}{euro((parseFloat(per.compenso_netto) || 0) + (parseFloat(per.spese) || 0))}
+                        </span>
+                        {per.operatore_id !== elaborazione.firmatario && (
+                          <span style={{ fontSize: '0.68rem', fontWeight: 'bold', color: '#fff', background: '#0e7490', borderRadius: '4px', padding: '2px 7px' }}>INTESTATO QUI</span>
+                        )}
+                      </label>
+                    )}
+                    {incluso && righe.map((g, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '8px' }}>
+                        <input
+                          type="date" value={g.data}
+                          onChange={(e) => aggiorna(r => r.map((x, j) => j === i ? { ...x, data: e.target.value } : x))}
+                          style={{ ...stileInput, width: '160px' }}
+                        />
+                        <input
+                          type="text" value={g.luogo} placeholder="indirizzo, comune (prov)"
+                          onChange={(e) => aggiorna(r => r.map((x, j) => j === i ? { ...x, luogo: e.target.value } : x))}
+                          style={{ ...stileInput, flex: '1 1 260px' }}
+                        />
+                        <input
+                          type="number" min="0" step="any" value={g.trasferta} placeholder="0,00"
+                          onChange={(e) => aggiorna(r => r.map((x, j) => j === i ? { ...x, trasferta: e.target.value } : x))}
+                          style={{ ...stileInput, width: '120px', textAlign: 'right' }}
+                        />
+                        <button
+                          type="button" className="btn-icon-action" aria-label="Togli la giornata" title="Togli la giornata"
+                          onClick={() => aggiorna(r => r.filter((_, j) => j !== i))}
+                        >
+                          <Icona nome="elimina" size={14} style={{ marginRight: 0 }} />
+                        </button>
+                      </div>
+                    ))}
+                    {incluso && (
+                      <button
+                        type="button"
+                        onClick={() => aggiorna(r => [...r, { data: per.dal, luogo: '', trasferta: '' }])}
+                        style={{ background: 'none', border: 'none', color: '#0288d1', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}
+                      >+ giornata</button>
+                    )}
+                  </div>
+                );
+              })}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
                 {importiElaborazione.trasferte > 0 && (
                   <span style={{ fontSize: '0.85rem', color: '#666' }}>
                     totale trasferte <strong>{euro(importiElaborazione.trasferte)}</strong>
