@@ -1308,9 +1308,21 @@ function Prenotazioni({ user }) {
 
   const selezionaPacchettoPren = (id) => {
     const p = pacchetti.find(x => x.id === id);
+    const pacPrecedente = pacchetti.find(x => x.id === formPren.pacchettoId);
+    // I presenti effettivi partono da quanti ne prevede il pacchetto: nove volte su dieci sono
+    // quelli, e chi inserisce non deve riscrivere un numero che l'app già conosce. Si sovrascrive
+    // quando la festa è passata e si sa chi è venuto davvero -- e allora quel numero non si tocca
+    // più: si eredita solo se il campo è vuoto o se contiene ancora il previsto del vecchio pacchetto.
+    const effettiviEreditati = (prev) => {
+      const previstiNuovi = (p && p.numeroPartecipanti != null && p.numeroPartecipanti !== "") ? String(p.numeroPartecipanti) : "";
+      const previstiVecchi = (pacPrecedente && pacPrecedente.numeroPartecipanti != null) ? String(pacPrecedente.numeroPartecipanti) : "";
+      const attuale = String(prev.partecipantiEffettivi ?? "");
+      return (attuale === "" || attuale === previstiVecchi) ? previstiNuovi : prev.partecipantiEffettivi;
+    };
     setFormPren(prev => ({
       ...prev,
       pacchettoId: id,
+      partecipantiEffettivi: effettiviEreditati(prev),
       // Cambiando pacchetto il gioco può non essere più proponibile — passando a un pacchetto da
       // campo, un gonfiabile da noleggio non lo è: si azzera invece di restare scelto di nascosto.
       giocoId: giochiSelezionabili(p, prev.giocoId).some(g => String(g.id) === String(prev.giocoId)) ? prev.giocoId : "",
@@ -2042,10 +2054,10 @@ function Prenotazioni({ user }) {
                           <option value="aperitivo">Aperitivo</option>
                         </select>
                       </label>
-                      <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Persone previste
-                        <input type="number" value={formPren.numeroPartecipanti} readOnly style={{ background: '#f1f5f9', color: '#475569' }} title="Capienza prevista dal pacchetto: è su questa che si calcola il rinfresco" />
-                      </label>
-                      {formPren.tipoRinfresco && campoSel && numPart ? <div style={{ alignSelf: 'end', padding: '10px 0', fontSize: '0.82rem', color: '#777' }}>€{perPersonaRinf.toFixed(2)}/pers × {numPart}</div> : null}
+                      {/* Le persone previste non si digitano qui: sono l'accordo col campo, e si
+                          cambiano solo sul pacchetto. Il conto però si mostra per intero, perché è
+                          quello che finisce nei costi. */}
+                      {formPren.tipoRinfresco && campoSel && numPart ? <div style={{ alignSelf: 'end', padding: '10px 0', fontSize: '0.82rem', color: '#777' }}>€{perPersonaRinf.toFixed(2)}/pers × {numPart} previste dal pacchetto</div> : null}
                     </div>
                   )}
 

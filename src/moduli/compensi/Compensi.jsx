@@ -117,6 +117,19 @@ const intervalloPartita = (p) => {
   return `${oraDiMinuti(inizio)}–${oraDiMinuti(inizio + oreDiPartita(p) * 60)}`;
 };
 
+// Residenza e codice fiscale del bubbler, che vanno in testa al documento, più la spunta
+// "senza ritenuta". Quest'ultima può non esistere ancora a database — il deploy arriva prima
+// dello script SQL — e chiederla farebbe fallire tutta la query lasciando il modulo senza nomi:
+// in quel caso si rilegge senza, e tutti i compensi si comportano come prima.
+const COLONNE_ANAGRAFICA = 'id, username, nome, cognome, indirizzo, cap, citta, provincia, codice_fiscale';
+const leggiAnagrafiche = async () => {
+  const conFlag = await supabase.from('utenti').select(`${COLONNE_ANAGRAFICA}, senza_ritenuta`).eq('bubbler', true);
+  // Il codice arriva ora come stringa ora come numero a seconda di come il driver lo
+  // serializza: confrontarlo stretto con '42703' lasciava passare il caso numerico.
+  if (String(conFlag.error?.code ?? '') !== '42703') return conFlag;
+  return supabase.from('utenti').select(COLONNE_ANAGRAFICA).eq('bubbler', true);
+};
+
 function Compensi({ user }) {
   const primaScheda = ['config', 'gestione', 'indicatori'].find(s => puoVedere(user, 'compensi', s)) || 'config';
   const [currentView, setCurrentView] = useState(primaScheda);
@@ -155,6 +168,10 @@ function Compensi({ user }) {
   const nomeGiocoPerId = Object.fromEntries(giochi.map(g => [g.id, g.nome]));
   // I periodi portano l'id dell'operatore, non il suo nome: il nome si chiede all'anagrafica,
   // così cambiarlo si riflette ovunque invece di lasciare in giro copie vecchie.
+  // Per alcuni collaboratori non c'è ritenuta da versare né ricevuta da emettere: il loro compenso
+  // si chiude in un passaggio solo. È una proprietà della persona, spuntata nell'anagrafica
+  // (Disponibilità > Configuratore), non una scelta da rifare a ogni consuntivazione.
+  const senzaRitenuta = (utenteId) => !!anagrafiche.find(a => a.id === utenteId)?.senza_ritenuta;
   const nomeOperatore = (utenteId) => {
     const u = anagrafiche.find(a => a.id === utenteId);
     return u ? ([u.nome, u.cognome].filter(Boolean).join(' ') || u.username) : `utente ${utenteId}`;
@@ -191,7 +208,10 @@ function Compensi({ user }) {
       supabase.from('pren_campi').select('id, nome, indirizzo, cap, citta, provincia'),
       // Residenza e codice fiscale del bubbler, che vanno in testa al documento: si compilano in
       // Disponibilità > Configuratore. I periodi e le voci puntano a utenti.id.
-      supabase.from('utenti').select('id, username, nome, cognome, indirizzo, cap, citta, provincia, codice_fiscale').eq('bubbler', true),
+      // senza_ritenuta è l'ultima colonna arrivata: finché sql/bubbler_senza_ritenuta.sql non è
+      // stato eseguito chiederla farebbe fallire tutta la query e lascerebbe il modulo senza nomi.
+      // Si riprova senza, e tutti i compensi continuano a passare da Elabora rimborsi come prima.
+      leggiAnagrafiche(),
       supabase.from('giochi').select('id, nome'),
     ]);
     setCaricamentoPartite(false);
@@ -325,25 +345,37 @@ function Compensi({ user }) {
     if (date.length === 0) return alert("Niente da consuntivare per questo operatore.");
     const dal = date[0];
     const al = date[date.length - 1];
+    // Per chi è senza ritenuta non c'è niente da calcolare dopo e nessun documento da emettere:
+    // il periodo nasce già evaso, saltando "Elabora rimborsi".
+    const diretto = senzaRitenuta(op.id);
     if (!window.confirm(
       `Consuntivare ${op.nome || nomeOperatore(op.id)} dal ${dataBreve(dal)} al ${dataBreve(al)}?\n\n`
       + `${euro(op.compenso + op.spese)} da pagare su ${op.giornate.length} giornate.\n\n`
-      + `Il periodo passa fra i consuntivati e le sue giornate non accettano più modifiche.`
+      + (diretto
+        ? `Senza ritenuta: il periodo risulta subito pagato e finisce fra i rimborsi evasi, senza documento.`
+        : `Il periodo passa fra i consuntivati e le sue giornate non accettano più modifiche.`)
     )) return;
 
     setInCorso(`consuntiva-${op.id}`);
     // Le righe per partita si congelano qui: dopo, ricostruirle vorrebbe dire rifare il conto sui
     // dati di domani, e un consuntivo che si riscrive da solo non è un consuntivo (vedi calcolo.js).
-    const aliquota = parametri.aliquota_ritenuta;
+    // Senza ritenuta l'aliquota è zero, così le righe nascono già con la ritenuta a zero invece di
+    // portarsi dietro un importo che non verrà mai versato.
+    const aliquota = diretto ? 0 : parametri.aliquota_ritenuta;
     const { error } = await supabase.from('op_periodi').insert([{
       operatore_id: op.id, dal, al,
       compenso_netto: op.compenso, spese: op.spese,
       righe: righeConsuntivo(quotePartite(op), { aliquota }),
       // Il costo azienda qui è il solo esborso verso l'operatore: la ritenuta si aggiunge
-      // quando si elabora il rimborso, non adesso.
+      // quando si elabora il rimborso, non adesso. Per i diretti non si aggiungerà mai.
       costo_azienda: op.compenso + op.spese,
       // Snapshot dei parametri: ritoccarli domani non deve riscrivere questo consuntivo.
-      parametri,
+      // L'aliquota congelata è quella davvero applicata, cioè zero per i diretti: così anche
+      // riaprendo il periodo i conti si rifanno senza ritenuta.
+      parametri: { ...parametri, aliquota_ritenuta: aliquota },
+      // Il periodo diretto nasce pagato: niente fase intermedia, niente documento da congelare.
+      // Resta senza "rimborso", ed è proprio la sua assenza a dire che documento non ce n'è.
+      ...(diretto ? { evaso_il: new Date().toISOString(), data_consuntivo: oggiIso(), ritenuta: 0 } : {}),
     }]);
     setInCorso(null);
     if (error) {
@@ -452,9 +484,22 @@ function Compensi({ user }) {
     for (const p of dentro) {
       const r = per.get(p.operatore_id) || { operatoreId: p.operatore_id, rimborsi: 0, giornate: 0, netto: 0, ritenuta: 0 };
       r.rimborsi += 1;
-      r.giornate += p.rimborso?.giornate?.length || 0;
-      r.netto = arrotonda2(r.netto + (parseFloat(p.rimborso?.netto) || 0));
-      r.ritenuta = arrotonda2(r.ritenuta + (parseFloat(p.rimborso?.ritenuta) || 0));
+      // Un periodo consuntivato diretto non ha documento: giornate e netto si leggono da quello che
+      // è stato congelato nel periodo stesso. Senza, questi compensi risulterebbero pagati a zero e
+      // l'operatore sparirebbe dalla tabella pur essendo stato pagato.
+      if (p.rimborso) {
+        r.giornate += p.rimborso.giornate?.length || 0;
+        r.netto = arrotonda2(r.netto + (parseFloat(p.rimborso.netto) || 0));
+        r.ritenuta = arrotonda2(r.ritenuta + (parseFloat(p.rimborso.ritenuta) || 0));
+      } else {
+        // Le giornate sono quelle davvero lavorate, contate una volta sola anche quando in un
+        // giorno ci sono più partite.
+        r.giornate += new Set((p.righe || []).map(x => x.data)).size;
+        // Solo il compenso, come fa il documento: le spese sono rimborsi e nel netto degli altri
+        // periodi non ci sono: sommarle qui renderebbe le righe non confrontabili fra loro.
+        r.netto = arrotonda2(r.netto + (parseFloat(p.compenso_netto) || 0));
+        r.ritenuta = arrotonda2(r.ritenuta + (parseFloat(p.ritenuta) || 0));
+      }
       per.set(p.operatore_id, r);
     }
     // Il totale è il compenso lordo: netto più ritenuta, cioè le due colonne accanto. Si somma qui
@@ -883,6 +928,11 @@ function Compensi({ user }) {
                     <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                       <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
                       <strong>{nomeOperatore(p.operatore_id)}</strong>
+                      {/* Un periodo senza documento si legge diversamente dagli altri: ritenuta a
+                          zero in colonna e nessuna ristampa fra le azioni. */}
+                      {evasi && !p.rimborso && (
+                        <span title="Consuntivato diretto: nessuna ritenuta, nessun documento di rimborso" style={{ marginLeft: '8px', fontSize: '0.66rem', fontWeight: 'bold', color: '#fff', background: '#7c3aed', borderRadius: '4px', padding: '2px 6px', whiteSpace: 'nowrap' }}>DIRETTO</span>
+                      )}
                     </td>
                     <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                       {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
@@ -891,7 +941,7 @@ function Compensi({ user }) {
                       {dataBreve(dataConsuntivoDi(p))}
                     </td>
                     <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>
-                      {evasi ? euro(p.rimborso?.totale) : euro(p.costo_azienda)}
+                      {euro(evasi ? (p.rimborso?.totale ?? p.costo_azienda) : p.costo_azienda)}
                     </td>
                     {evasi && (
                       <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>
@@ -902,6 +952,10 @@ function Compensi({ user }) {
                       {/* Come nelle righe da consuntivare: prima il ritorno indietro in outline,
                           poi in blu l'azione che porta avanti il periodo. */}
                       {evasi ? (
+                        // Un periodo consuntivato diretto non è passato dall'elaborazione e non ha
+                        // documento: non c'è niente da ristampare, e riaprirlo lo riporta fra quelli
+                        // da consuntivare, perché la fase intermedia per lui non esiste.
+                        p.rimborso ? (
                         <>
                           <button
                             type="button" className="btn-outline-annulla" style={btnRiga}
@@ -919,6 +973,16 @@ function Compensi({ user }) {
                             <Icona nome="stampa" size={14} style={{ marginRight: '5px' }} />Ristampa
                           </button>
                         </>
+                        ) : (
+                          <button
+                            type="button" className="btn-outline-annulla" style={btnRiga}
+                            title="Ripristina: il periodo torna fra quelli da consuntivare"
+                            disabled={inCorso === `riapri-${p.id}`}
+                            onClick={(e) => { e.stopPropagation(); annullaConsuntivo(p); }}
+                          >
+                            <Icona nome="riporta" size={14} style={{ marginRight: '5px' }} />Ripristina
+                          </button>
+                        )
                       ) : (
                         <>
                           <button
@@ -1220,6 +1284,11 @@ function Compensi({ user }) {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ fontSize: '0.7rem', color: '#888' }}>{espanso ? '▼' : '▶'}</span>
                           <strong style={{ fontSize: '1rem' }}>{op.nome || nomeOperatore(op.id)}</strong>
+                          {/* Il pulsante di questa riga si comporta diversamente dagli altri: il
+                              perché va detto accanto al nome, non solo nel messaggio di conferma. */}
+                          {senzaRitenuta(op.id) && (
+                            <span title="Nessuna ritenuta e nessun documento: si chiude in un passaggio solo" style={{ fontSize: '0.68rem', fontWeight: 'bold', color: '#fff', background: '#7c3aed', borderRadius: '4px', padding: '2px 7px', whiteSpace: 'nowrap' }}>SENZA RITENUTA</span>
+                          )}
                           <span style={{ color: '#888', fontSize: '0.8rem' }}>{op.giornate.length} giornat{op.giornate.length === 1 ? 'a' : 'e'}</span>
                         </div>
                         <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.85rem', flexWrap: 'wrap' }}>
@@ -1243,9 +1312,13 @@ function Compensi({ user }) {
                             type="button"
                             onClick={(e) => { e.stopPropagation(); consuntiva(op); }}
                             disabled={inCorso === `consuntiva-${op.id}`}
+                            title={senzaRitenuta(op.id)
+                              ? "Chiude il periodo e lo segna pagato: niente ritenuta, niente documento di rimborso"
+                              : "Chiude il periodo: passa poi da Elabora rimborsi"}
                             style={{ ...btnSalva, padding: '6px 12px', fontSize: '0.78rem' }}
                           >
-                            <Icona nome="consuntivati" size={14} style={{ marginRight: '5px' }} />Consuntiva
+                            <Icona nome="consuntivati" size={14} style={{ marginRight: '5px' }} />
+                            {senzaRitenuta(op.id) ? 'Consuntiva diretto' : 'Consuntiva'}
                           </button>
                         </div>
                       </div>
@@ -1562,8 +1635,8 @@ function Compensi({ user }) {
       {gestioneTab === "evasi" && puoVedere(user, 'compensi', 'gestione', 'evasi') && (
         <>
           <p className="descrizione-pagina">
-            Periodi con la ricevuta già emessa. Il documento si ristampa identico a com'era stato generato:
-            i suoi importi sono congelati, non ricalcolati.
+            Periodi pagati. Il documento si ristampa identico a com'era stato generato:
+            i suoi importi sono congelati, non ricalcolati. I periodi segnati DIRETTO sono di bubbler senza ritenuta: sono stati chiusi in un passaggio solo e non hanno un documento da ristampare.
           </p>
           {tabellaPeriodi(evasi, "Nessun rimborso evaso.", true)}
         </>
@@ -1576,7 +1649,7 @@ function Compensi({ user }) {
           <h2 style={{ margin: 0 }}>Indicatori</h2>
           <p className="descrizione-pagina">
             Quanto è stato pagato ai bubbler nell&apos;anno e per quante giornate. Le giornate sono quelle
-            scritte sui documenti di rimborso, non quelle calcolate dalle partite: contano i documenti emessi.
+            scritte sui documenti di rimborso; per i consuntivi diretti, che un documento non ce l'hanno, sono i giorni lavorati del periodo.
           </p>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>

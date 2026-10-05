@@ -5,7 +5,7 @@ import {
   IconDeviceGamepad2, IconPuzzle, IconUser, IconUsers, IconTable, IconChartLine, IconCircleCheck,
   IconChartBar, IconShield, IconApps, IconCircle, IconPower, IconBook2,
   IconEdit, IconTrash, IconPlus, IconCheck, IconX, IconFolderOpen, IconArrowBackUp,
-  IconPrinter, IconGift, IconLayoutList, IconListCheck, IconCoins, IconFileInvoice, IconChecklist, IconTruck, IconNotes, IconGauge
+  IconPrinter, IconGift, IconLayoutList, IconListCheck, IconCoins, IconFileInvoice, IconChecklist, IconTruck, IconNotes, IconGauge, IconCopy
 } from '@tabler/icons-react';
 
 // Registro centrale: nome semantico -> componente icona. Un solo punto da aggiornare per cambiare set di icone.
@@ -62,6 +62,7 @@ const REGISTRO_ICONE = {
   modifica: IconEdit,
   elimina: IconTrash,
   nuovo: IconPlus,
+  duplica: IconCopy,
   salva: IconCheck,
   annulla: IconX,
   apri: IconFolderOpen,

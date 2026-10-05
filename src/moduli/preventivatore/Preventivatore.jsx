@@ -148,6 +148,9 @@ function Preventivatore({ user }) {
   const [configTabAdmin, setConfigTabAdmin] = useState(primaSottoschedaAdmin); // sedi | gonfiabili | extra
   const [showFormSede, setShowFormSede] = useState(false);
   const [showFormGonfiabile, setShowFormGonfiabile] = useState(false);
+  // Nome del gioco da cui si sta duplicando: serve solo a intitolare il form, così si capisce
+  // che i campi già pieni non sono un residuo ma una copia voluta.
+  const [duplicaDa, setDuplicaDa] = useState(null);
   const [showFormExtra, setShowFormExtra] = useState(false);
 
   // --- STATI DI MODIFICA IN LINEA ---
@@ -1236,6 +1239,7 @@ function Preventivatore({ user }) {
     const { error } = await supabase.from('gonfiabili').insert([newG]);
     if (!error) { 
       setNuovoGonfiabile({ giocoId: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: "" });
+      setDuplicaDa(null);
       setShowFormGonfiabile(false);
       fetchData();
     }
@@ -1279,6 +1283,19 @@ function Preventivatore({ user }) {
 
   const rimuoviSede = async (id) => { await supabase.from('sedi').delete().eq('id', id); fetchData(); };
   const rimuoviGonfiabile = async (id) => { await supabase.from('gonfiabili').delete().eq('id', id); fetchData(); };
+
+  // Lo stesso gioco compare a listino una volta per fornitore. Duplicare apre il form di una voce
+  // nuova già compilata con gioco, prezzo e scheda tecnica, e lascia vuota la sede: è l'unica cosa
+  // che deve cambiare, e lasciarla da scegliere evita di creare due righe identiche.
+  const duplicaGonfiabile = (g) => {
+    setNuovoGonfiabile({
+      giocoId: g.giocoId ?? "", prezzo: g.prezzo ?? "", locationId: "",
+      giocatori: g.giocatori || "", etaConsigliata: g.etaConsigliata || "", dimensioni: g.dimensioni || "",
+      superficie: g.superficie || "", alimentazione: g.alimentazione || "", tempoMontaggio: g.tempoMontaggio || "",
+    });
+    setDuplicaDa(nomeDi(g));
+    setShowFormGonfiabile(true);
+  };
   const rimuoviExtra = async (id) => { await supabase.from('extras').delete().eq('id', id); fetchData(); };
 
   const nomiUniciGonfiabili = Array.from(new Set(gonfiabili.map(nomeDi).filter(Boolean)));
@@ -2334,14 +2351,27 @@ function Preventivatore({ user }) {
           <div className="admin-sezione-fullwidth" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '15px' }}>
             <div style={{ order: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <h3 style={{ margin: 0 }}>Listino ({gonfiabili.length} voci)</h3>
-              <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={() => setShowFormGonfiabile(true)}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
+              <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={() => {
+                // Una voce nuova parte sempre vuota, anche se l'ultima volta si era duplicato.
+                setNuovoGonfiabile({ giocoId: "", prezzo: "", locationId: "", giocatori: "", etaConsigliata: "", dimensioni: "", superficie: "", alimentazione: "", tempoMontaggio: "" });
+                setDuplicaDa(null);
+                setShowFormGonfiabile(true);
+              }}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
             </div>
 
             {showFormGonfiabile && (
-              <div className="modal-form-backdrop" onClick={() => setShowFormGonfiabile(false)}>
+              <div className="modal-form-backdrop" onClick={() => { setShowFormGonfiabile(false); setDuplicaDa(null); }}>
                 <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" className="modal-form-close" onClick={() => setShowFormGonfiabile(false)} aria-label="Chiudi">✕</button>
-                  <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem' , color: '#0288d1' }}>Aggiungi voce di listino</h3>
+                  <button type="button" className="modal-form-close" onClick={() => { setShowFormGonfiabile(false); setDuplicaDa(null); }} aria-label="Chiudi">✕</button>
+                  <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem' , color: '#0288d1' }}>
+                    {duplicaDa ? `Duplica ${duplicaDa}` : 'Aggiungi voce di listino'}
+                  </h3>
+                  {duplicaDa && (
+                    <p style={{ margin: '0 0 15px 0', fontSize: '0.8rem', color: '#777' }}>
+                      Prezzo e scheda tecnica sono quelli della voce di partenza: scegli la sede del nuovo fornitore e correggi il prezzo se cambia.
+                    </p>
+                  )}
+                  {!duplicaDa && <div style={{ marginBottom: '15px' }} />}
                   <form onSubmit={addGonfiabile}>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '15px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'end' }}>
@@ -2447,6 +2477,9 @@ function Preventivatore({ user }) {
                                       alimentazione: g.alimentazione || "", tempoMontaggio: g.tempoMontaggio || ""
                                     });
                                   }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                                  {/* Lo stesso gioco sta a listino una volta per fornitore: duplicare
+                                      ricopia gioco, prezzo e scheda tecnica e lascia da scegliere la sede. */}
+                                  <button className="btn-icon-action" aria-label="Duplica per un altro fornitore" title="Duplica per un altro fornitore" onClick={() => duplicaGonfiabile(g)}><Icona nome="duplica" size={16} style={{ marginRight: 0 }} /></button>
                                   <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviGonfiabile(g.id)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                                 </div>
                               </td>
