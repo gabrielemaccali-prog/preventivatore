@@ -115,6 +115,7 @@ const dataValidita = (dataEmissione) => {
 const COLONNE_VOUCHER = [
   { chiave: 'codice', label: 'Codice', valore: (v) => v.codice || '' },
   { chiave: 'data', label: 'Data', valore: (v) => v.dataEmissione || '' },
+  { chiave: 'stato', label: 'Stato', valore: (v) => v.stato || '' },
   { chiave: 'intestatario', label: 'Intestatario', valore: (v) => v.nominativo || '' },
   { chiave: 'pacchetto', label: 'Pacchetto', valore: (v) => v.pacchettoNome || '' },
   { chiave: 'importo', label: 'Pagato / Totale / FT', valore: (v) => parseFloat(v.importo) || 0 },
@@ -554,6 +555,7 @@ function Voucher({ user }) {
             {v.pregresso && <span className="badge-stato pregresso" style={{ marginLeft: '6px' }}>pregresso</span>}
           </td>
           <td style={{ padding: '12px', color: '#777', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{formattaDataIT(v.dataEmissione)}</td>
+          <td style={{ padding: '12px' }}><span className={`badge-stato badge-mini ${classeBadgeStato(v.stato)}`}>{etichettaStatoVoucher(v.stato)}</span></td>
           <td style={{ padding: '12px' }}>👤 {v.nominativo}</td>
           <td style={{ padding: '12px', fontSize: '0.85rem', color: '#555' }}>{v.pacchettoNome ? `${v.pacchettoNome} — ` : ''}€{(parseFloat(v.importo) || 0).toFixed(2)}</td>
           <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
@@ -570,10 +572,9 @@ function Voucher({ user }) {
         </tr>
         {espansa && (
           <tr className="riga-espandibile-dettaglio" style={{ borderLeft: `3px solid ${coloreStatoRiga}` }}>
-            <td colSpan={5} onClick={(e) => e.stopPropagation()}>
+            <td colSpan={COLONNE_VOUCHER.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
-                  <div style={{ marginBottom: '2px' }}><span className={`badge-stato ${classeBadgeStato(v.stato)}`}>{etichettaStatoVoucher(v.stato)}</span></div>
                   {(v.telefono || v.email) && (
                     <div><span style={{ color: '#94a3b8' }}>Contatti </span>{[v.telefono, v.email].filter(Boolean).join(' · ')}</div>
                   )}
@@ -622,7 +623,7 @@ function Voucher({ user }) {
         </thead>
         <tbody>
           {righe.length === 0
-            ? <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            ? <tr><td colSpan={COLONNE_VOUCHER.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
             : ordina(righe).map(rigaTabellaVoucher)}
         </tbody>
       </table>

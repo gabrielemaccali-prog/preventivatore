@@ -699,11 +699,11 @@ function Cruscotto({ user }) {
 
   const COLONNE_CRUSCOTTO = [
     { chiave: 'data', label: 'Data evento', valore: (p) => `${p.data || ''}T${p.oraInizio || ''}` },
+    { chiave: 'stato', label: 'Stato', valore: (p) => p.stato || '' },
     { chiave: 'id', label: 'ID', valore: (p) => String(p.id || '') },
     { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
     { chiave: 'partita', label: 'Partita', valore: (p) => etichettaDi(p) },
     { chiave: 'location', label: 'Location', valore: (p) => p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '' },
-    { chiave: 'stato', label: 'Stato', valore: (p) => p.stato || '' },
     { chiave: 'ricavo', label: 'Ricavo', destra: true, valore: (p) => analisiPartite[p.id]?.ricavoEff ?? 0 },
     { chiave: 'costo', label: 'Costi', destra: true, valore: (p) => analisiPartite[p.id]?.costoEff ?? 0 },
     { chiave: 'margine', label: 'Margine', destra: true, valore: (p) => analisiPartite[p.id]?.margineEff ?? 0 },
@@ -1279,11 +1279,11 @@ function Cruscotto({ user }) {
                             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
                             {formattaDataGGMMAAAA(p.data) || '—'}
                           </td>
+                          <td style={{ padding: '8px 10px' }}><span className={`badge-stato badge-mini ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
                           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#64748b', whiteSpace: 'nowrap' }}>{p.id}</td>
                           <td style={{ padding: '8px 10px' }}><strong>{p.nominativo}</strong></td>
                           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>{etichettaDi(p)}</td>
                           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>{p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '—'}</td>
-                          <td style={{ padding: '8px 10px' }}><span className={`badge-stato badge-mini ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
                           <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>{cellaImportoCr(a.ricavoEff, a.statoRicavo, '#1e293b')}</td>
                           <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                             {a.statoCosto === 'vuoto' ? <span style={{ color: '#94a3b8' }}>—</span> : importoCr(a.costoEff, a.statoCosto, '#c62828')}

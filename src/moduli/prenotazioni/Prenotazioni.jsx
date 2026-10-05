@@ -239,6 +239,7 @@ const colorePagamento = (stato) => ({ saldato: '#16a34a', acconto: '#ca8a04', co
 // "Pagato / Totale" ordina sul totale, cioè sul valore della prenotazione.
 const COLONNE_PREN = [
   { chiave: 'createdAt', label: 'Inserito il', valore: (p) => p.createdAt || '' },
+  { chiave: 'stato', label: 'Stato', valore: (p) => p.stato || '' },
   { chiave: 'data', label: 'Data evento', valore: (p) => `${p.data || ''}T${p.oraInizio || ''}` }, // eventi senza orario: prima degli altri dello stesso giorno
   { chiave: 'nominativo', label: 'Nominativo', valore: (p) => p.nominativo || '' },
   // Il valore di ordinamento viene sostituito nel componente, dove il nome del gioco è risolvibile.
@@ -1097,6 +1098,7 @@ function Prenotazioni({ user }) {
             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             {formattaDataGGMMAA(p.createdAt) || '—'}
           </td>
+          <td style={{ padding: '8px 10px' }}><span className={`badge-stato badge-mini ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
             {formattaDataGGMMAA(p.data)}
             {giorniEventoDi(p).length > 1 && (
@@ -1129,12 +1131,9 @@ function Prenotazioni({ user }) {
         </tr>
         {espansa && (
           <tr className="riga-espandibile-dettaglio">
-            <td colSpan={7} onClick={(e) => e.stopPropagation()}>
+            <td colSpan={COLONNE_PREN.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
-                  {/* Lo stato in testa, come nel dettaglio dei preventivi: aprendo una riga e' la prima
-                      cosa che si vuole sapere, prima di chi e' il cliente. */}
-                  <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></div>
                   <div><span style={{ color: '#94a3b8' }}>Telefono </span>{p.telefono || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Email </span>{p.email || '—'}</div>
                   {p.tipoRinfresco && <div><span style={{ color: '#94a3b8' }}>Rinfresco </span>{p.tipoRinfresco}{p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} pers` : ''}</div>}
@@ -1208,7 +1207,7 @@ function Prenotazioni({ user }) {
         </thead>
         <tbody>
           {righe.length === 0
-            ? <tr><td colSpan="7" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            ? <tr><td colSpan={COLONNE_PREN.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
             : ordina(righe).map(rigaTabellaPren)}
         </tbody>
       </table>

@@ -99,6 +99,7 @@ function SelettoreGioco({ giochi, valore, onChange, onCrea, stile }) {
 const colonnePreventivi = (venditaBFM) => [
   { chiave: 'id', label: 'ID', stile: { width: '16%' }, valore: (p) => (typeof p.id === 'object' ? p.id.codice : p.id) || '' },
   { chiave: 'data', label: 'Emissione', stile: { width: '10%' }, valore: (p) => p.dataEmissione || '' },
+  { chiave: 'stato', label: 'Stato', valore: (p) => statoPreventivo(p) || '' },
   // La data dell'evento non ha una colonna sua a database: vive nel testo del periodo stampato sul documento.
   { chiave: 'evento', label: 'Evento', stile: { width: '10%' }, valore: (p) => estraiDateDaPeriodo(p.periodo).inizio },
   { chiave: 'destinazione', label: 'Destinazione', valore: (p) => (p.destinazione || '').split(',').pop().trim() },
@@ -1954,6 +1955,7 @@ function Preventivatore({ user }) {
           <td style={{ padding: '8px 10px', color: '#777', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
             {formattaDataIT(p.dataEmissione)}
           </td>
+          <td style={{ padding: '8px 10px' }}><span className={`badge-stato badge-mini ${classeBadgeStato(stato)}`}>{etichettaStatoPreventivo(stato)}</span></td>
           <td style={{ padding: '8px 10px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
             {(() => {
               const { inizio } = estraiDateDaPeriodo(p.periodo);
@@ -1992,7 +1994,6 @@ function Preventivatore({ user }) {
             <td colSpan={colonnePrev.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155', minWidth: 0, flex: 1 }}>
-                  <div><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato ${classeBadgeStato(stato)}`}>{etichettaStatoPreventivo(stato)}</span></div>
                   {p.motivoAnnullamento && <div><span style={{ color: '#94a3b8' }}>Motivo annullamento </span><em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
                   <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{p.destinazione || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Periodo </span>{p.periodo || '—'}</div>
