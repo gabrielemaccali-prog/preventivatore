@@ -67,6 +67,10 @@ export function quadratura(chiusura, righe) {
   return { pos, contanti, incassato, specificato, nonSpecificato, quota };
 }
 
+// Una giornata chiusa a cui manca parte del dettaglio: c'è un residuo che le voci non spiegano.
+// Le giornate aperte non contano: POS e contanti si scrivono solo alla chiusura.
+export const daSpecificare = (chiusura, q) => !!chiusura?.chiusa_il && q.nonSpecificato > 0;
+
 // Una giornata chiusa non si modifica, nemmeno dall'amministratore: prima la riapre.
 export const chiusuraModificabile = (chiusura) => !chiusura?.chiusa_il;
 

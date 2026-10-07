@@ -2,7 +2,7 @@
 //   npm run prova:albatros
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
-  quadratura, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
+  quadratura, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
   rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo,
 } from './calcolo.js';
 
@@ -27,6 +27,10 @@ verifica("righe oltre l'incassato: non specificato negativo", -10, quadratura({ 
 verifica('quota limitata a 1', 1, quadratura({ pos: 10, contanti: 0 }, [{ quantita: 1, prezzo: 20 }]).quota);
 verifica('giornata vuota', 0, quadratura({}, []).quota);
 verifica('pos e contanti vuoti valgono zero', 0, quadratura({ pos: null, contanti: null }, []).incassato);
+
+verifica('chiusa con residuo: da specificare', true, daSpecificare({ chiusa_il: 'x' }, quadratura(ch, righe)));
+verifica('chiusa tutta spiegata: no', false, daSpecificare({ chiusa_il: 'x' }, quadratura({ pos: 175, contanti: 0 }, righe)));
+verifica('aperta: no', false, daSpecificare({ chiusa_il: null }, quadratura(ch, righe)));
 
 // ---------- data della serata ----------
 verifica("all'una di notte è ancora ieri", '2026-10-06', giornataDiLavoro(new Date(2026, 9, 7, 1, 30)));

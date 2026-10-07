@@ -1115,3 +1115,9 @@ input.valore-proposto {
 .albatros-icone-scelta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 0 10px 0; }
 .albatros-scorri { display: inline-flex; align-items: center; gap: 8px; font-size: 0.92rem; font-weight: 600; color: #0f172a; flex-wrap: wrap; }
 .albatros-periodo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; align-self: flex-end; }
+.albatros-badge + .albatros-badge { margin-left: 4px; }
+.albatros-badge.da-specificare { background: #ffedd5; color: #9a3412; }
+.albatros-badge.oltre { background: #fee2e2; color: #991b1b; }
+.albatros-chip-avviso { border-color: #fdba74; color: #9a3412; }
+.albatros-chip-avviso.attivo { background: #ea580c; border-color: #ea580c; color: #fff; }
+.albatros-chip:disabled { opacity: 0.5; cursor: default; }

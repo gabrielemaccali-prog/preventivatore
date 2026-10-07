@@ -2,19 +2,24 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
-import { quadratura, euro, periodoIniziale, intervalloPeriodo } from './calcolo'
+import { quadratura, daSpecificare, euro, periodoIniziale, intervalloPeriodo } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 
 // ============================================================
 // Scheda Chiusure: le giornate di un mese o di una settimana (da lunedì a domenica), con
 // incassato e battuto. Toccando una giornata la si
 // apre nella scheda Giornata; l'amministratore da qui riapre una giornata chiusa.
+// Le giornate chiuse con un residuo non spiegato sono segnate "Da specificare" e si possono
+// vedere da sole.
 // ============================================================
 
-function StoricoChiusure({ puoCorreggere, onApri }) {
+const oraDi = (ts) => new Date(ts).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
   const [periodo, setPeriodo] = useState(periodoIniziale);
   const [giorni, setGiorni] = useState([]);
   const [inCorso, setInCorso] = useState(false);
+  const [soloDaSpecificare, setSoloDaSpecificare] = useState(false);
 
   const [da, al] = intervalloPeriodo(periodo);
 
@@ -41,34 +46,49 @@ function StoricoChiusure({ puoCorreggere, onApri }) {
   };
 
   const tot = (k) => giorni.reduce((s, g) => s + g[k], 0);
+  const incomplete = giorni.filter(g => daSpecificare(g.chiusura, g));
+  const visibili = soloDaSpecificare ? incomplete : giorni;
 
   return (
     <div className="albatros-pagina no-print">
       <div className="albatros-card">
         <div className="albatros-testata">
           <FiltroPeriodo periodo={periodo} onChange={setPeriodo} />
+          <button type="button" className={`albatros-chip albatros-chip-avviso ${soloDaSpecificare ? 'attivo' : ''}`} style={{ alignSelf: 'flex-end' }}
+            disabled={!soloDaSpecificare && incomplete.length === 0} onClick={() => setSoloDaSpecificare(!soloDaSpecificare)}>
+            Da specificare ({incomplete.length})
+          </button>
           <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: '0.88rem' }}>
             <div>Incassato {periodo.tipo === 'settimana' ? 'della settimana' : 'del mese'}: <strong>{euro(tot('incassato'))}</strong></div>
             <div className="albatros-tenue">Battuto {euro(tot('specificato'))}</div>
           </div>
         </div>
 
-        {giorni.length === 0 && <p className="albatros-vuoto">Nessuna giornata in {periodo.tipo === 'settimana' ? 'questa settimana' : 'questo mese'}.</p>}
-        {giorni.length > 0 && (
+        {visibili.length === 0 && <p className="albatros-vuoto">{soloDaSpecificare ? 'Nessuna giornata da specificare' : 'Nessuna giornata'} in {periodo.tipo === 'settimana' ? 'questa settimana' : 'questo mese'}.</p>}
+        {visibili.length > 0 && (
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
             <table className="albatros-tabella">
               <thead>
-                <tr><th>Giornata</th><th className="num">POS</th><th className="num">Contanti</th><th className="num">Incassato</th><th className="num">Battuto</th><th>Stato</th>{puoCorreggere && <th></th>}</tr>
+                <tr><th>Giornata</th><th className="num">POS</th><th className="num">Contanti</th><th className="num">Incassato</th><th className="num">Battuto</th><th>Stato</th><th>Chiusa da</th>{puoCorreggere && <th></th>}</tr>
               </thead>
               <tbody>
-                {giorni.map(g => (
+                {visibili.map(g => (
                   <tr key={g.chiusura.id} onClick={() => onApri(g.chiusura.data)} title="Apri la giornata">
                     <td>{formattaDataGGMMAAAA(g.chiusura.data)}</td>
                     <td className="num">{euro(g.pos)}</td>
                     <td className="num">{euro(g.contanti)}</td>
                     <td className="num"><strong>{euro(g.incassato)}</strong></td>
                     <td className="num">{euro(g.specificato)} <span className="albatros-tenue">({Math.round(g.quota * 100)}%)</span></td>
-                    <td>{g.chiusura.chiusa_il ? <span className="albatros-badge chiusa mini">Chiusa</span> : <span className="albatros-badge aperta mini">Aperta</span>}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {g.chiusura.chiusa_il ? <span className="albatros-badge chiusa mini">Chiusa</span> : <span className="albatros-badge aperta mini">Aperta</span>}
+                      {daSpecificare(g.chiusura, g) && <span className="albatros-badge da-specificare mini" title={`Residuo non spiegato: ${euro(g.nonSpecificato)}`}>Da specificare {euro(g.nonSpecificato)}</span>}
+                      {g.chiusura.chiusa_il && g.nonSpecificato < 0 && <span className="albatros-badge oltre mini" title="Il battuto supera l'incassato">Battuto oltre {euro(-g.nonSpecificato)}</span>}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {g.chiusura.chiusa_il
+                        ? <>{utenti[g.chiusura.chiusa_da] || '—'} <span className="albatros-tenue">· {oraDi(g.chiusura.chiusa_il)}</span></>
+                        : <span className="albatros-tenue">—</span>}
+                    </td>
                     {puoCorreggere && (
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {g.chiusura.chiusa_il && (
