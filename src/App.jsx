@@ -9,6 +9,7 @@ import Cruscotto from './moduli/cruscotto/Cruscotto';
 import Disponibilita from './moduli/disponibilita/Disponibilita';
 import Compensi from './moduli/compensi/Compensi';
 import Consuntivazione from './moduli/consuntivazione/Consuntivazione';
+import Albatros from './moduli/albatros/Albatros';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
 import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
 import { haAccesso } from './lib/utils';
@@ -431,6 +432,8 @@ function App() {
       {currentModule === "compensi" && <Compensi user={user} />}
 
       {currentModule === "consuntivazione" && <Consuntivazione user={user} />}
+
+      {currentModule === "albatros" && <Albatros user={user} />}
 
       {currentModule === "impostazioni" && isAdmin && (
         <Impostazioni

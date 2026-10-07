@@ -1033,3 +1033,85 @@ input.valore-proposto {
   -webkit-text-fill-color: #94a3b8 !important;
   font-style: italic;
 }
+
+/* --- ALBATROS: cassa del centro sportivo. Si usa da telefono e da PC al banco, quindi le
+   griglie si impilano sotto i 720px e i campi restano alti abbastanza per il pollice. --- */
+.albatros-pagina { display: flex; flex-direction: column; gap: 16px; }
+.albatros-card { background: #fff; padding: 18px 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); min-width: 0; }
+.albatros-testata { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.albatros-stato { padding-bottom: 8px; }
+.albatros-titolo { margin: 0 0 10px 0; font-size: 0.78rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; }
+.albatros-etichetta { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; font-weight: 600; color: #334155; min-width: 0; }
+.albatros-campo { width: 100%; height: 40px; box-sizing: border-box; padding: 6px 10px; margin: 0; font-size: 0.95rem; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
+.albatros-campo:disabled { background: #f1f5f9; color: #475569; }
+.albatros-importo { text-align: right; font-variant-numeric: tabular-nums; }
+.albatros-bottone { height: 40px; padding: 0 16px; font-size: 0.88rem; white-space: nowrap; }
+.albatros-griglia-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.albatros-form-riga { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 6px; }
+.albatros-col-voce { flex: 2 1 200px; }
+.albatros-col-qta { flex: 0 1 100px; }
+.albatros-riga { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
+.albatros-riga-testo { flex: 1; min-width: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.albatros-riga-importo { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.albatros-qta { display: flex; gap: 4px; }
+.albatros-tenue { color: #94a3b8; }
+.albatros-vuoto { color: #94a3b8; font-size: 0.88rem; margin: 6px 0; }
+.albatros-nota { font-size: 0.78rem; color: #64748b; margin: 8px 0 0 0; }
+.albatros-avviso { padding: 10px 14px; border-radius: 6px; border: 1px solid #f59e0b; background: #fffbeb; color: #92400e; font-size: 0.88rem; }
+.albatros-link { background: none; border: none; padding: 0; color: #0284c7; text-decoration: underline; cursor: pointer; font-size: inherit; }
+.albatros-badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; }
+.albatros-badge.mini { padding: 2px 8px; font-size: 0.7rem; }
+.albatros-badge.aperta { background: #fef3c7; color: #92400e; }
+.albatros-badge.chiusa { background: #dcfce7; color: #166534; }
+.albatros-voce-q { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+.albatros-voce-q.totale { border-top: 1px solid #e2e8f0; margin-top: 4px; padding-top: 8px; font-weight: 700; font-size: 1.05rem; }
+.albatros-chiudi { width: 100%; margin-top: 16px; height: 46px; background: #0f172a; color: #fff; font-size: 0.95rem; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
+.albatros-chiudi:disabled { opacity: 0.6; }
+.albatros-tabella { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.albatros-tabella th { text-align: left; padding: 8px 10px; background: #f8fafc; color: #475569; font-weight: 600; border-bottom: 2px solid #e2e8f0; white-space: nowrap; }
+.albatros-tabella td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+.albatros-tabella .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.albatros-tabella tbody tr { cursor: pointer; }
+.albatros-tabella tbody tr:hover { background: #f8fafc; }
+.albatros-tabella tbody tr.selezionata { background: #e0f2fe; }
+
+@media (max-width: 720px) {
+  .albatros-card { padding: 14px; }
+  .albatros-col-qta { flex: 1 1 calc(50% - 4px); }
+  .albatros-form-riga .albatros-bottone { flex: 1 1 100%; }
+}
+
+/* Albatros, la giornata: griglia del listino da toccare, battuto, overlay di chiusura. */
+.albatros-battuto-testata { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
+.albatros-battuto-testata span { font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
+.albatros-battuto-testata strong { font-size: 1.5rem; color: #0f172a; font-variant-numeric: tabular-nums; }
+.albatros-filtri-listino { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+.albatros-chip { padding: 6px 12px; border-radius: 999px; border: 1px solid #cbd5e1; background: #fff; color: #334155; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+.albatros-chip.attivo { background: #0f172a; border-color: #0f172a; color: #fff; }
+.albatros-cerca { flex: 1 1 140px; max-width: 240px; height: 34px; margin-left: auto; }
+.albatros-griglia-listino { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.albatros-tasto { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; gap: 6px; min-height: 68px; padding: 10px 12px; background: #f1f5f9; color: #0f172a; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer; text-align: left; touch-action: manipulation; user-select: none; }
+.albatros-tasto:hover { background: #e2e8f0; }
+.albatros-tasto:active { background: #bae6fd; border-color: #38bdf8; transform: scale(0.97); }
+.albatros-tasto-nome { font-size: 0.9rem; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.albatros-tasto-prezzo { font-size: 0.78rem; color: #475569; font-variant-numeric: tabular-nums; }
+.albatros-riepilogo-chiusura { margin-top: 14px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
+.albatros-overlay { max-width: 620px; background: #fff; }
+.albatros-importo-grande { height: 48px; font-size: 1.25rem; font-weight: 600; }
+@media (max-width: 720px) {
+  .albatros-griglia-listino { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+  .albatros-cerca { max-width: none; margin-left: 0; flex-basis: 100%; }
+  .albatros-battuto-testata strong { font-size: 1.25rem; }
+}
+.albatros-icona-categoria { display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 7px; margin-right: 6px; vertical-align: middle; }
+.albatros-con-icona { display: inline-flex; align-items: center; }
+.albatros-tasto-nome { display: flex; align-items: flex-start; }
+.albatros-chip { display: inline-flex; align-items: center; }
+.albatros-chip .albatros-icona-categoria { margin-right: 5px; }
+.albatros-scelta-icona { padding: 3px; background: #fff; border: 1px solid #e2e8f0; border-radius: 9px; cursor: pointer; line-height: 0; }
+.albatros-scelta-icona .albatros-icona-categoria { margin-right: 0; }
+.albatros-scelta-icona:disabled { cursor: default; border-color: transparent; }
+.albatros-scelta-icona.attiva { border-color: #0f172a; box-shadow: 0 0 0 1px #0f172a; }
+.albatros-icone-scelta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 0 10px 0; }
+.albatros-scorri { display: inline-flex; align-items: center; gap: 8px; font-size: 0.92rem; font-weight: 600; color: #0f172a; flex-wrap: wrap; }
+.albatros-periodo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; align-self: flex-end; }

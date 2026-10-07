@@ -11,6 +11,8 @@ export const MODULI_REGISTRY = [
   // Quello che e' davvero successo dopo il preventivo. Per ora le fatture; qui arriveranno anche
   // compensi, campi e servizi.
   { id: 'consuntivazione', label: 'Consuntivazione', icon: 'consuntivazione' },
+  // La cassa del centro sportivo Albatros: chiusure serali, spese, listino del bar e dei campi.
+  { id: 'albatros', label: 'Albatros', icon: 'albatros' },
   // Il catalogo è la base da cui leggono listino e prenotazioni, ma non è lavoro quotidiano:
   // sta in fondo perché l'ordine di questo registro decide anche su quale modulo si atterra
   // dopo l'accesso, e chi entra deve trovarsi al lavoro, non in una pagina di configurazione.
@@ -19,6 +21,16 @@ export const MODULI_REGISTRY = [
 
 // --- REGISTRO SCHEDE/SOTTOSCHEDE PER MODULO (usato per costruire la matrice permessi in Impostazioni > Ruoli) ---
 export const SCHEDE_REGISTRY = {
+  albatros: {
+    schede: [
+      // Si chiama Giornata, ma l'id resta 'chiusure': è la chiave già salvata nei permessi dei ruoli.
+      { id: 'chiusure', label: 'Giornata' },
+      { id: 'storico', label: 'Chiusure' },
+      { id: 'spese', label: 'Spese' },
+      { id: 'listino', label: 'Listino' },
+      { id: 'configuratore', label: 'Configuratore' },
+    ],
+  },
   consuntivazione: {
     schede: [
       { id: 'fatture', label: 'Fatture' },
