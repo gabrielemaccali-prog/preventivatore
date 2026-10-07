@@ -110,7 +110,7 @@ const colonnePreventivi = (venditaBFM) => [
   { chiave: 'flag', label: 'Flag', stile: { width: '50px' } },
 ];
 
-function Preventivatore({ user }) {
+function Preventivatore({ user, onTrasformaInPrenotazione }) {
   // --- NAVIGAZIONE INTERNA AL MODULO ---
   const primaSchedaVisibile = ['admin', 'gestione', 'storico'].find(s => puoVedere(user, 'preventivatore', s)) || 'gestione';
   const [currentView, setCurrentView] = useState(primaSchedaVisibile);
@@ -2082,6 +2082,11 @@ function Preventivatore({ user }) {
                   )}
                   {p.stato === STATO_PREVENTIVO.ANNULLATO && (
                     <button type="button" className="btn-icon-action" title="Ripristina: torna fra i registrati" onClick={() => ripristinaPreventivo(codice)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                  )}
+                  {/* La prenotazione la crea il modulo Prenotazioni: qui si va solo a aprirne una nuova
+                      con questo preventivo già collegato. Manca a chi il modulo non lo vede. */}
+                  {p.stato === STATO_PREVENTIVO.CONFERMATO && onTrasformaInPrenotazione && (
+                    <button type="button" className="btn-icon-action success" title="Trasforma in prenotazione" onClick={() => onTrasformaInPrenotazione(codice)}><Icona nome="prenotazioni" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => onApri(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
                   {user.isAdmin && (

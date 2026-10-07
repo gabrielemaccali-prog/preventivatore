@@ -320,7 +320,7 @@ const CampoFormFields = ({ formCampo, setFormCampo }) => (
   </>
 );
 
-function Prenotazioni({ user }) {
+function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }) {
   const primaSchedaPren = ['gestione', 'config', 'calendario'].find(s => puoVedere(user, 'prenotazioni', s)) || 'gestione';
   const [currentView, setCurrentView] = useState(primaSchedaPren); // config | gestione | calendario
   const primaSottoschedaConfigPren = ['pacchetti', 'campi'].find(s => puoVedere(user, 'prenotazioni', 'config', s)) || 'pacchetti';
@@ -689,6 +689,57 @@ function Prenotazioni({ user }) {
 
   // Apre il form di nuova prenotazione come overlay compatto (richiamato da Gestione), invece che come scheda a pagina intera.
   const nuovaPrenotazioneOverlay = () => { nuovaPrenotazione(); setShowFormGestione(true); };
+
+  // Selezionando un preventivo si eredita subito costo e prezzo di vendita (restano poi modificabili a mano),
+  // e si propone il gioco della sua prima riga: su un noleggio è quasi sempre quello giusto,
+  // e resta correggibile. Un gioco già scelto a mano non viene sovrascritto.
+  //
+  // Lavora sempre sul form di prima (prev), mai su quello a video: così la chiamano anche la tendina
+  // del form e l'arrivo dal Preventivatore, che il form lo ha appena azzerato.
+  const applicaPreventivoCollegato = (codice) => {
+    const pv = preventivi.find(p => String(p.codice) === String(codice));
+    if (!pv) {
+      // Togliendo il preventivo si azzera anche il gioco che aveva compilato lui: era suo, e
+      // lasciarlo lì farebbe sembrare scelta una strada che non è stata scelta. Il resto —
+      // luogo, date, contatti — resta: è roba della prenotazione, ormai, e cancellarla
+      // sarebbe una sorpresa.
+      setFormPren(prev => ({ ...prev, preventivoCollegato: "", ereditaCosti: false, giocoId: "", costoEreditato: "", voci: [] }));
+      return;
+    }
+    const luogo = scomponiDestinazione(pv.destinazione);
+    const { inizio, fine } = dateDelPeriodo(pv.periodo);
+    // I giorni in mezzo si riempiono solo se il preventivo copre un periodo: sono quelli
+    // che l'offerta dichiara. Restano poi togliibili uno a uno come sempre.
+    const giorniInMezzo = [];
+    if (inizio && fine && fine > inizio) {
+      for (let d = addGiorni(dataOraLocale(inizio), 1); toISODate(d) <= fine; d = addGiorni(d, 1)) giorniInMezzo.push(toISODate(d));
+    }
+    setFormPren(prev => {
+      // Solo dove è vuoto: quello che hai già scritto vince sempre sul preventivo.
+      const seVuoto = (attuale, dalPreventivo) => (attuale ? attuale : (dalPreventivo || attuale));
+      return {
+        ...prev,
+        preventivoCollegato: codice, ereditaCosti: true,
+        voci: vociDalPreventivo(codice), sconto: "0",
+        giocoId: giocoDelPreventivo(codice) || prev.giocoId,
+        data: seVuoto(prev.data, inizio),
+        piuGiorni: prev.piuGiorni || giorniInMezzo.length > 0,
+        altriGiorni: prev.altriGiorni.length > 0 ? prev.altriGiorni : giorniInMezzo,
+        oraInizio: seVuoto(prev.oraInizio, pv.oraInizio),
+        oraFine: seVuoto(prev.oraFine, pv.oraFine),
+        nominativo: seVuoto(prev.nominativo, pv.nomeReferente),
+        email: seVuoto(prev.email, pv.emailReferente),
+        telefono: seVuoto(prev.telefono, pv.telefonoReferente),
+        note: seVuoto(prev.note, pv.note),
+        locationIndirizzo: seVuoto(prev.locationIndirizzo, luogo.indirizzo),
+        locationCap: seVuoto(prev.locationCap, luogo.cap),
+        locationCitta: seVuoto(prev.locationCitta, luogo.citta),
+        locationProvincia: seVuoto(prev.locationProvincia, luogo.provincia),
+      };
+    });
+  };
+
+
 
   // Chiude l'overlay di Gestione, chiedendo conferma se ci sono modifiche non salvate.
   const chiudiFormGestione = () => {
@@ -1337,6 +1388,31 @@ function Prenotazioni({ user }) {
     }));
   };
 
+  // Un preventivo confermato trasformato in prenotazione dal Preventivatore: si apre il form nuovo
+  // con il preventivo già collegato e tutto quello che l'offerta sa già dentro. Non si salva niente
+  // da soli: quello che una prenotazione vuole e un preventivo non ha — il pacchetto, gli operatori —
+  // lo mette chi compila, e finché non salva la prenotazione non esiste.
+  //
+  // Si aspetta che i preventivi siano arrivati da Supabase: il modulo si monta adesso, e per un
+  // istante la lista è vuota.
+  /* eslint-disable react-hooks/set-state-in-effect -- l'apertura del form dipende da dati che
+     arrivano dopo il montaggio: non c'è un evento a cui agganciarla. */
+  useEffect(() => {
+    if (!preventivoDaTrasformare) return;
+    if (!preventivi.some(p => String(p.codice) === String(preventivoDaTrasformare))) return;
+    nuovaPrenotazione();
+    setCurrentView('gestione');
+    setShowFormGestione(true);
+    // Un preventivo è sempre un noleggio, ma il pacchetto con cui si vende lo decide chi compila:
+    // qui si sceglie da soli solo quando di noleggio ce n'è uno solo, cioè quando non c'è niente
+    // da decidere. Con più pacchetti di noleggio la tendina resta vuota, in attesa.
+    const noleggiAttivi = pacchetti.filter(p => p.attivo !== false && eUnNoleggio(p));
+    if (noleggiAttivi.length === 1) selezionaPacchettoPren(noleggiAttivi[0].id);
+    applicaPreventivoCollegato(preventivoDaTrasformare);
+    onPreventivoTrasformato?.();
+  }, [preventivoDaTrasformare, preventivi, pacchetti]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   // I giorni in più si aggiungono uno alla volta: possono essere sparsi (es. due sabati di fila),
   // quindi non basta un intervallo da-a. Il primo giorno resta quello del campo "Data".
   const aggiungiGiornoPren = () => {
@@ -1425,14 +1501,29 @@ function Prenotazioni({ user }) {
     const luogoMancante = luogoDaCampi
       ? !f.campoId
       : ![f.locationIndirizzo, f.locationCitta].some(x => (x || '').trim());
-    // Tutti i giochi che il pacchetto chiede, non solo il primo.
-    const giochiRichiestiMancanti = [f.giocoId, ...(f.giochiAltri || [])].slice(0, quantiRichiesti).filter(Boolean).length < quantiRichiesti;
-    const mancaCampoObbligatorio = !f.data || !pac || !f.nominativo.trim() || giochiRichiestiMancanti || luogoMancante
-      || (!senzaOrario && !f.oraInizio) || (!senzaOrario && !durataFissa && !f.oraFine)
-      || (!!pac?.prevedeRinfresco && !f.tipoRinfresco);
-    if (mancaCampoObbligatorio) {
+    // Tutti i giochi che il pacchetto chiede, non solo il primo. Ma su un noleggio con un
+    // preventivo collegato i giochi stanno nel preventivo, e il form non li chiede nemmeno: la
+    // casella sparisce appena scegli il preventivo. Pretenderli lo stesso rendeva il salvataggio
+    // impossibile — "compila i campi in rosso" senza niente in rosso, perché il campo che mancava
+    // non era a video. Che il noleggio dica di cosa parla lo controlla già noleggioIncompleto.
+    const giochiDalPreventivo = noleggioPac && !!f.preventivoCollegato;
+    const giochiRichiestiMancanti = !giochiDalPreventivo
+      && [f.giocoId, ...(f.giochiAltri || [])].slice(0, quantiRichiesti).filter(Boolean).length < quantiRichiesti;
+    // Elencati per nome, non solo evidenziati: un campo obbligatorio può non essere a video — lo
+    // nasconde il pacchetto, o il preventivo — e allora il rosso da solo non dice niente.
+    const mancanti = [
+      [!f.data, 'Data'],
+      [!pac, 'Pacchetto'],
+      [!f.nominativo.trim(), 'Nominativo'],
+      [giochiRichiestiMancanti, quantiRichiesti > 1 ? 'Giochi' : 'Gioco'],
+      [luogoMancante, luogoDaCampi ? 'Campo' : 'Luogo (indirizzo o città)'],
+      [!senzaOrario && !f.oraInizio, 'Ora inizio'],
+      [!senzaOrario && !durataFissa && !f.oraFine, 'Ora fine'],
+      [!!pac?.prevedeRinfresco && !f.tipoRinfresco, 'Tipo di rinfresco'],
+    ].filter(([manca]) => manca).map(([, nome]) => nome);
+    if (mancanti.length > 0) {
       setMostraErroriValidazione(true);
-      return alert("Compila i campi obbligatori evidenziati in rosso.");
+      return alert(`Mancano dei dati obbligatori:\n\n• ${mancanti.join('\n• ')}`);
     }
     if (!senzaOrario && (oraInizio === null || oraFine === null)) return alert("Orario non valido: usa il formato 24h, es. 19:00 (i minuti si possono omettere: 19 diventa 19:00).");
     // Un noleggio deve dire di cosa parla: o il preventivo, o un gioco nostro. Senza nessuno dei
@@ -1825,7 +1916,9 @@ function Prenotazioni({ user }) {
         // sono a video tutte e due. Il preventivo ha la precedenza perché sceglierlo compila da
         // sé anche il gioco, e senza questa priorità la casella si nasconderebbe da sola.
         const noleggio = eUnNoleggio(pac);
-        const mostraPreventivo = noleggio && (!!formPren.preventivoCollegato || !formPren.giocoId);
+        // Un preventivo già collegato si vede comunque, anche prima che il pacchetto sia scelto:
+        // altrimenti arrivando dal Preventivatore sembrerebbe che il collegamento non ci sia.
+        const mostraPreventivo = (noleggio || !!formPren.preventivoCollegato) && (!!formPren.preventivoCollegato || !formPren.giocoId);
         const mostraGioco = !noleggio || (!formPren.preventivoCollegato && (!!formPren.giocoId || !formPren.preventivoCollegato));
         const scegliereUnaStrada = noleggioIncompleto(pac, formPren.giocoId, formPren.preventivoCollegato);
         // Su un pacchetto da campo il gioco è sempre obbligatorio; su un noleggio lo è solo se
@@ -1838,49 +1931,6 @@ function Prenotazioni({ user }) {
         const oraInizioMancante = !senzaOrarioAttivo && !formPren.oraInizio;
         const oraFineMancante = !senzaOrarioAttivo && !durataFissa && !formPren.oraFine;
         const tipoRinfrescoMancante = !!pac?.prevedeRinfresco && !formPren.tipoRinfresco;
-
-        // Selezionando un preventivo si eredita subito costo e prezzo di vendita (restano poi modificabili a mano),
-        // e si propone il gioco della sua prima riga: su un noleggio è quasi sempre quello giusto,
-        // e resta correggibile. Un gioco già scelto a mano non viene sovrascritto.
-        const onCambiaPreventivoCollegato = (codice) => {
-          const pv = preventivi.find(p => String(p.codice) === String(codice));
-          if (pv) {
-            const luogo = scomponiDestinazione(pv.destinazione);
-            const { inizio, fine } = dateDelPeriodo(pv.periodo);
-            // I giorni in mezzo si riempiono solo se il preventivo copre un periodo: sono quelli
-            // che l'offerta dichiara. Restano poi togliibili uno a uno come sempre.
-            const giorniInMezzo = [];
-            if (inizio && fine && fine > inizio) {
-              for (let d = addGiorni(dataOraLocale(inizio), 1); toISODate(d) <= fine; d = addGiorni(d, 1)) giorniInMezzo.push(toISODate(d));
-            }
-            // Solo dove è vuoto: quello che hai già scritto vince sempre sul preventivo.
-            const seVuoto = (attuale, dalPreventivo) => (attuale ? attuale : (dalPreventivo || attuale));
-            setF({
-              preventivoCollegato: codice, ereditaCosti: true,
-              voci: vociDalPreventivo(codice), sconto: "0",
-              giocoId: giocoDelPreventivo(codice) || formPren.giocoId,
-              data: seVuoto(formPren.data, inizio),
-              piuGiorni: formPren.piuGiorni || giorniInMezzo.length > 0,
-              altriGiorni: formPren.altriGiorni.length > 0 ? formPren.altriGiorni : giorniInMezzo,
-              oraInizio: seVuoto(formPren.oraInizio, pv.oraInizio),
-              oraFine: seVuoto(formPren.oraFine, pv.oraFine),
-              nominativo: seVuoto(formPren.nominativo, pv.nomeReferente),
-              email: seVuoto(formPren.email, pv.emailReferente),
-              telefono: seVuoto(formPren.telefono, pv.telefonoReferente),
-              note: seVuoto(formPren.note, pv.note),
-              locationIndirizzo: seVuoto(formPren.locationIndirizzo, luogo.indirizzo),
-              locationCap: seVuoto(formPren.locationCap, luogo.cap),
-              locationCitta: seVuoto(formPren.locationCitta, luogo.citta),
-              locationProvincia: seVuoto(formPren.locationProvincia, luogo.provincia),
-            });
-            return;
-          }
-          // Togliendo il preventivo si azzera anche il gioco che aveva compilato lui: era suo, e
-          // lasciarlo lì farebbe sembrare scelta una strada che non è stata scelta. Il resto —
-          // luogo, date, contatti — resta: è roba della prenotazione, ormai, e cancellarla
-          // sarebbe una sorpresa.
-          setF({ preventivoCollegato: "", ereditaCosti: false, giocoId: "", costoEreditato: "", voci: [] });
-        };
 
         return (
         <div className={`schermata-inserimento no-print form-pren ${compatto ? 'form-pren-compatto' : ''}`}>
@@ -1910,7 +1960,7 @@ function Prenotazioni({ user }) {
                   <select
                     className={`dropdown-gonfiabili ${campoRosso('preventivoCollegato', scegliereUnaStrada).className}`}
                     style={campoRosso('preventivoCollegato', scegliereUnaStrada).style}
-                    value={formPren.preventivoCollegato} onChange={(e) => onCambiaPreventivoCollegato(e.target.value)}
+                    value={formPren.preventivoCollegato} onChange={(e) => applicaPreventivoCollegato(e.target.value)}
                   >
                     <option value="">-- Nessuno --</option>
                     {preventivi.filter(pv => pv.stato === STATO_PREVENTIVO.CONFERMATO || String(pv.codice) === String(formPren.preventivoCollegato))

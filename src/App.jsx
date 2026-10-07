@@ -63,6 +63,9 @@ function App() {
 
   // --- NAVIGAZIONE TRA MODULI ---
   const [currentModule, setCurrentModule] = useState("preventivatore");
+  // Il preventivo che il Preventivatore ha chiesto di trasformare in prenotazione: lo consuma il
+  // modulo Prenotazioni appena montato, e poi si azzera.
+  const [preventivoDaTrasformare, setPreventivoDaTrasformare] = useState(null);
   const [sidebarAperta, setSidebarAperta] = useState(false);
 
   // --- CONFIGURAZIONE MODULI (flag sperimentale, badge SP in sidebar) ---
@@ -402,11 +405,24 @@ function App() {
       {/* --- MODULO ATTIVO --- */}
       {currentModule === "catalogo" && <Catalogo user={user} />}
 
-      {currentModule === "preventivatore" && <Preventivatore user={user} />}
+      {currentModule === "preventivatore" && (
+        <Preventivatore
+          user={user}
+          onTrasformaInPrenotazione={moduloVisibile(user, 'prenotazioni')
+            ? (codice) => { setPreventivoDaTrasformare(codice); setCurrentModule("prenotazioni"); }
+            : undefined}
+        />
+      )}
 
       {currentModule === "voucher" && <Voucher user={user} />}
 
-      {currentModule === "prenotazioni" && <Prenotazioni user={user} />}
+      {currentModule === "prenotazioni" && (
+        <Prenotazioni
+          user={user}
+          preventivoDaTrasformare={preventivoDaTrasformare}
+          onPreventivoTrasformato={() => setPreventivoDaTrasformare(null)}
+        />
+      )}
 
       {currentModule === "costiricavi" && <Cruscotto user={user} />}
 
