@@ -1121,3 +1121,4 @@ input.valore-proposto {
 .albatros-chip-avviso { border-color: #fdba74; color: #9a3412; }
 .albatros-chip-avviso.attivo { background: #ea580c; border-color: #ea580c; color: #fff; }
 .albatros-chip:disabled { opacity: 0.5; cursor: default; }
+.albatros-badge-select { padding: 3px 8px; border-radius: 999px; border: 1px solid #fdba74; background: #ffedd5; color: #9a3412; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
