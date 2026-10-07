@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
-import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, prenotazioneCompletata, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
+import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi, ricalcoloCampo, giornataChiusa } from '../../lib/campi'
@@ -1870,16 +1870,18 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const statoPag = statoPagamentoDi(formPren.pagamenti, prezzoVendita, valoreVoucher, formPren.clienteSedeId || formPren.clienteCampoId);
         const setF = (patch) => setFormPren(prev => ({ ...prev, ...patch }));
 
-        // Cosa manca perché la prenotazione risulti completata (stessa regola di prenotazioneCompletata, ma sui
-        // valori a schermo, così l'avviso sparisce mentre si compila e non solo dopo il salvataggio). Ha senso solo
-        // su una prenotazione già confermata con l'evento passato: prima di allora non c'è niente da "completare".
-        const daChiudere = !!codicePrenInModifica && formPren.stato === STATO_PREN.CONFERMATO && !!formPren.data && formPren.data < oggiIso;
+        // Cosa manca perché la prenotazione risulti completata, letto sui valori a schermo così
+        // l'avviso sparisce mentre si compila e non solo dopo il salvataggio. Vale su ogni
+        // prenotazione confermata, anche prima che la partita si giochi: è lo stesso elenco che
+        // la tiene nelle schede "Da completare" e "Da saldare" di Gestione.
+        const daChiudere = !!codicePrenInModifica && formPren.stato === STATO_PREN.CONFERMATO;
         // Niente fattura da emettere, quindi niente anagrafica da chiedere: in compensazione con
         // un fornitore o un campo, oppure coperta per intero da un voucher.
         const nienteFattura = !!(formPren.clienteSedeId || formPren.clienteCampoId) || prezzoVendita - valoreVoucher <= 0.01;
-        const mancanzeCompletamento = (daChiudere && !nienteFattura)
+        const mancanzeCompletamento = daChiudere
           ? [
-              ...campiFatturazioneMancanti(formPren)
+              ...(nienteFattura ? [] : campiFatturazioneMancanti(formPren)),
+              ...(!formPren.senzaOperatori && (formPren.operatoriIds || []).length === 0 ? ['Operatori'] : []),
             ]
           : [];
 
@@ -2827,13 +2829,25 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const inAttesaPagamento = forseVive.filter(p => !p.statoPagamento || p.statoPagamento === 'in attesa');
         const daConfermare = forseVive.filter(p => p.statoPagamento && p.statoPagamento !== 'in attesa');
         const partiteAttive = base.filter(p => p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) >= oggiIso);
-        // Partite giocate ma non ancora chiuse, divise per il tipo di lavoro che resta da fare:
-        // se l'anagrafica di fatturazione è a posto manca solo l'incasso, altrimenti mancano dati.
-        // Le due liste sono complementari: ogni prenotazione non conclusa sta in una sola delle due.
-        const daChiudere = base.filter(p => p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso && !prenotazioneCompletata(p, oggiIso));
+        // Partite confermate su cui resta del lavoro. Le due schede dicono due cose diverse — cosa
+        // manca da sapere e cosa manca da incassare — e non si spartiscono le prenotazioni: a chi
+        // mancano tutti e due compare in tutte e due, perché sono due lavori, non uno.
+        //
+        // Non si aspetta nemmeno che la partita sia stata giocata: anagrafica e saldo si possono
+        // chiedere prima, e prima li si chiede meglio è — a cose fatte il cliente risponde più a
+        // fatica. Una partita ancora da giocare sta quindi anche fra le "Partite attive", che
+        // risponde a un'altra domanda ancora: cosa c'è in calendario.
+        const confermate = base.filter(p => p.stato === STATO_PREN.CONFERMATO);
+        // L'anagrafica serve solo se una fattura va emessa: in compensazione, o con il prezzo
+        // coperto da un voucher, non manca niente.
         const mancaAnagrafica = (p) => !senzaFatturaDaEmettere(p) && campiFatturazioneMancanti(p).length > 0;
-        const daCompletare = daChiudere.filter(mancaAnagrafica);
-        const daSaldare = daChiudere.filter(p => !mancaAnagrafica(p));
+        // Chi la fa, la partita: senza operatori assegnati manca un dato come gli altri. L'elenco
+        // vuoto da solo non basta a dirlo — "senza operatori" è una scelta dichiarata, e chi l'ha
+        // spuntata ha già risposto alla domanda.
+        const mancanoOperatori = (p) => !p.senzaOperatori && (p.operatori || []).length === 0;
+        const mancaIncasso = (p) => p.statoPagamento !== 'saldato' && p.statoPagamento !== 'compensazione';
+        const daCompletare = confermate.filter(p => mancaAnagrafica(p) || mancanoOperatori(p));
+        const daSaldare = confermate.filter(mancaIncasso);
         // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
         // partita annullata non ce n'e'. Si trovano nello Storico.
         // Le schede in ordine, ognuna con la sua lista. Si mostrano solo quelle che hanno qualcosa:
@@ -2844,8 +2858,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           { chiave: 'daAnnullarePosticipare', etichetta: 'Da annullare o posticipare', icona: 'annulla', lista: daAnnullarePosticipare, titolo: "In forse con la data già passata: da annullare, o da posticipare se c'è un acconto" },
           { chiave: 'daConfermare', etichetta: 'Da confermare', icona: 'daConfermare', lista: daConfermare },
           { chiave: 'partiteAttive', etichetta: 'Partite attive', icona: 'partiteAttive', lista: partiteAttive },
-          { chiave: 'daCompletare', etichetta: 'Da completare', icona: 'daCompletare', lista: daCompletare, titolo: 'Mancano dati di fatturazione (e forse anche il saldo)' },
-          { chiave: 'daSaldare', etichetta: 'Da saldare', icona: 'attesaPagamento', lista: daSaldare, titolo: "Anagrafica di fatturazione completa: manca solo l'incasso" },
+          { chiave: 'daCompletare', etichetta: 'Da completare', icona: 'daCompletare', lista: daCompletare, titolo: 'Confermate a cui mancano dati di fatturazione o gli operatori' },
+          { chiave: 'daSaldare', etichetta: 'Da saldare', icona: 'attesaPagamento', lista: daSaldare, titolo: "Confermate non ancora saldate per intero" },
         ];
         const visibili = schede.filter(sc => sc.lista.length > 0);
         // Se la scheda scelta si e' svuotata -- l'ultima prenotazione e' stata confermata, o un filtro
@@ -2859,7 +2873,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
               <h2 style={{ margin: 0 }}>Gestione</h2>
               <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovaPrenotazioneOverlay}>➕ Nuovo</button>
             </div>
-            <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento, chiusura di quelle rimaste in forse o completamento dati. Una partita già giocata sta in "Da completare" se mancano dati di fatturazione, in "Da saldare" se resta solo da incassare.</p>
+            <p className="descrizione-pagina">Prenotazioni che richiedono un'azione: conferma, sollecito pagamento, chiusura di quelle rimaste in forse o completamento dati. Una partita confermata sta in "Da completare" se mancano dati di fatturazione o gli operatori, e in "Da saldare" se manca l'incasso, anche quando non è ancora stata giocata: a chi manca tutti e due compare in tutte e due.</p>
             {visibili.length > 0 && (
               <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
                 {visibili.map(sc => (
