@@ -4,7 +4,7 @@ import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   categorieDi, idCategoriaScelta, num, r2, euro, giornataDiLavoro,
-  quadratura, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita, sommaRighe, totaleRiga, rigaDaIncrementare, vociFrequenti, voceDiNome,
+  quadratura, fondoProposto, fondoDaSpecificare, ENTI_RITIRO, etichettaEnte, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita, sommaRighe, totaleRiga, rigaDaIncrementare, vociFrequenti, voceDiNome,
 } from './calcolo'
 import SceltaCategoria from './SceltaCategoria'
 import IconaCategoria from './IconaCategoria'
@@ -13,8 +13,9 @@ import IconaCategoria from './IconaCategoria'
 // La giornata del centro (scheda Giornata; l'elenco delle chiusure sta in StoricoChiusure).
 // Durante la serata si toccano le voci del listino e si forma il
 // "battuto", il preventivo di quanto dovrebbe esserci in cassa. A fine serata "Chiudi la giornata"
-// apre la chiusura: si scrivono POS e contanti, si confrontano col battuto e, se avanza un
-// residuo, lo si può spiegare con altre voci prima di confermare.
+// apre la chiusura: si scrivono POS e tutti i contanti contati, si conferma il fondo cassa con cui
+// si era partiti e si dice quanto se ne lascia per domani; il resto lo ritira Lama o BFM. L'incasso
+// si confronta col battuto e, se avanza un residuo, lo si può spiegare con altre voci.
 //
 // Finché la giornata è aperta la composizione si modifica liberamente. Chiusa, il totale è fissato
 // da POS e contanti: si possono ancora aggiungere voci per spiegare il residuo, senza superarlo,
@@ -78,6 +79,8 @@ function FormVoce({ listino, categorie, inCorso, onAggiungi, prezzoProposto }) {
 // La data la tiene il modulo: la scheda Chiusure apre qui la giornata che si tocca nell'elenco.
 function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreggere, data, setData }) {
   const [chiusura, setChiusura] = useState(null);
+  // L'ultima chiusura prima di questa giornata con un fondo lasciato: da lì parte il fondo.
+  const [precedente, setPrecedente] = useState(null);
   const [righe, setRighe] = useState([]);
   const [recenti, setRecenti] = useState([]);
   const [righeRecenti, setRigheRecenti] = useState([]);
@@ -86,13 +89,20 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
   const [altraVoce, setAltraVoce] = useState(false);
   // La chiusura in corso: null = overlay chiuso; altrimenti i valori scritti, salvati solo alla conferma.
   const [inChiusura, setInChiusura] = useState(null);
+  // Il fondo cassa di una giornata già chiusa che non ce l'ha: null = finestra chiusa.
+  const [inFondo, setInFondo] = useState(null);
   const [inCorso, setInCorso] = useState(false);
 
   const caricaGiorno = async (giorno) => {
     const { data: ch } = await supabase.from('albatros_chiusure').select('*').eq('data', giorno).maybeSingle();
-    const rg = ch ? await supabase.from('albatros_righe').select('*').eq('chiusura_id', ch.id).order('id') : { data: [] };
+    const [rg, pr] = await Promise.all([
+      ch ? supabase.from('albatros_righe').select('*').eq('chiusura_id', ch.id).order('id') : Promise.resolve({ data: [] }),
+      supabase.from('albatros_chiusure').select('*').lt('data', giorno).not('fondo_lasciato', 'is', null)
+        .order('data', { ascending: false }).limit(1).maybeSingle(),
+    ]);
     setChiusura(ch || null);
     setRighe(rg.data || []);
+    setPrecedente(pr.data || null);
   };
 
   // Le ultime chiusure: servono per le voci più usate e per segnalare le giornate rimaste aperte.
@@ -163,7 +173,7 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
   const oltreIlResiduo = (aggiunta) => {
     const battuto = sommaRighe(righeAttuali.current);
     if (aggiuntaConsentita(chiusura, battuto, aggiunta)) return false;
-    alert(`La giornata è chiusa: si può specificare solo il residuo (${euro(Math.max(r2(num(chiusura.pos) + num(chiusura.contanti) - battuto), 0))}), senza superarlo.`);
+    alert(`La giornata è chiusa: si può specificare solo il residuo (${euro(Math.max(r2(quadratura(chiusura, []).incassato - battuto), 0))}), senza superarlo.`);
     return true;
   };
 
@@ -228,24 +238,68 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
   });
 
   // --- Chiusura e riapertura ---
-  const apriChiusura = () => setInChiusura({ pos: mostraImporto(chiusura?.pos ?? null), contanti: mostraImporto(chiusura?.contanti ?? null) });
+  // Il fondo di partenza si propone da quello lasciato all'ultima chiusura, e lo stesso valore si
+  // propone come fondo da lasciare: di solito si conferma e basta.
+  const apriChiusura = () => {
+    const partenza = chiusura?.fondo_partenza ?? fondoProposto(precedente);
+    setInChiusura({
+      pos: mostraImporto(chiusura?.pos ?? null),
+      contanti: mostraImporto(chiusura?.contanti ?? null),
+      fondo_partenza: mostraImporto(partenza),
+      fondo_lasciato: mostraImporto(chiusura?.fondo_lasciato ?? partenza),
+      ritirato_da: chiusura?.ritirato_da || '',
+    });
+  };
+
+  const apriFondo = () => {
+    const partenza = fondoProposto(precedente);
+    setInFondo({ fondo_partenza: mostraImporto(partenza), fondo_lasciato: mostraImporto(partenza), ritirato_da: '' });
+  };
+
+  // Scrive solo il fondo: POS e contanti restano quelli della chiusura.
+  const salvaFondo = () => esegui(async () => {
+    const [fondoPartenza, fondoLasciato] = ['fondo_partenza', 'fondo_lasciato'].map(k => leggiImporto(inFondo[k]));
+    if (fondoPartenza == null || fondoLasciato == null) { alert('Scrivi il fondo di partenza e quello lasciato (anche 0).'); return; }
+    if ([fondoPartenza, fondoLasciato].some(v => Number.isNaN(v) || v < 0)) { alert('Importo non valido.'); return; }
+    const contanti = r2(num(chiusura.contanti));
+    if (fondoLasciato > contanti) { alert(`Non si può lasciare in cassa più dei contanti contati (${euro(contanti)}).`); return; }
+    const ritirato = r2(contanti - fondoLasciato);
+    if (ritirato > 0 && !inFondo.ritirato_da) { alert(`Scegli chi ha ritirato i ${euro(ritirato)}.`); return; }
+    const { error } = await supabase.from('albatros_chiusure')
+      .update({ fondo_partenza: fondoPartenza, fondo_lasciato: fondoLasciato, ritirato_da: ritirato > 0 ? inFondo.ritirato_da : null })
+      .eq('id', chiusura.id).is('fondo_lasciato', null);
+    if (error) { alert(`Errore: ${error.message}`); return; }
+    setInFondo(null);
+    await ricarica();
+  });
 
   const confermaChiusura = () => esegui(async () => {
-    const pos = leggiImporto(inChiusura.pos);
-    const contanti = leggiImporto(inChiusura.contanti);
-    if (pos == null || contanti == null) { alert('Scrivi POS e contanti (anche 0).'); return; }
-    if (Number.isNaN(pos) || Number.isNaN(contanti) || pos < 0 || contanti < 0) { alert('Importo non valido.'); return; }
+    const [pos, contanti, fondoPartenza, fondoLasciato] = ['pos', 'contanti', 'fondo_partenza', 'fondo_lasciato'].map(k => leggiImporto(inChiusura[k]));
+    if ([pos, contanti, fondoPartenza, fondoLasciato].some(v => v == null)) { alert('Scrivi POS, contanti, fondo di partenza e fondo lasciato (anche 0).'); return; }
+    if ([pos, contanti, fondoPartenza, fondoLasciato].some(v => Number.isNaN(v) || v < 0)) { alert('Importo non valido.'); return; }
+    if (fondoLasciato > contanti) { alert('Non si può lasciare in cassa più dei contanti contati.'); return; }
+    const ritirato = r2(contanti - fondoLasciato);
+    if (ritirato > 0 && !inChiusura.ritirato_da) { alert(`Scegli chi ritira i ${euro(ritirato)}.`); return; }
+    if (contanti < fondoPartenza && !window.confirm(`In cassa ci sono meno contanti (${euro(contanti)}) del fondo di partenza (${euro(fondoPartenza)}). Confermi lo stesso?`)) return;
     const ch = await assicuraChiusura();
     if (!ch) return;
     const { error } = await supabase.from('albatros_chiusure')
-      .update({ pos, contanti, chiusa_il: new Date().toISOString(), chiusa_da: user.id }).eq('id', ch.id);
+      .update({
+        pos, contanti, fondo_partenza: fondoPartenza, fondo_lasciato: fondoLasciato,
+        ritirato_da: ritirato > 0 ? inChiusura.ritirato_da : null,
+        chiusa_il: new Date().toISOString(), chiusa_da: user.id,
+      }).eq('id', ch.id);
     if (error) { alert(`Errore: ${error.message}`); return; }
     setInChiusura(null);
     await ricarica();
   });
 
-  // Il residuo nella chiusura: incassato scritto meno battuto.
-  const qc = inChiusura ? quadratura({ pos: leggiImporto(inChiusura.pos) || 0, contanti: leggiImporto(inChiusura.contanti) || 0 }, righe) : null;
+  // I conti del fondo in corso di scrittura, sulla chiusura già fatta.
+  const qf = inFondo ? quadratura({ ...chiusura, fondo_partenza: leggiImporto(inFondo.fondo_partenza) || 0, fondo_lasciato: leggiImporto(inFondo.fondo_lasciato) || 0 }, righe) : null;
+
+  // I conti della chiusura in corso, con i numeri scritti finora.
+  const qc = inChiusura ? quadratura(Object.fromEntries(['pos', 'contanti', 'fondo_partenza', 'fondo_lasciato'].map(k => [k, leggiImporto(inChiusura[k]) || 0])), righe) : null;
+  const fondoIeri = fondoProposto(precedente);
   const campoCassa = (campo, etichetta) => (
     <label className="albatros-etichetta">{etichetta}
       <input type="text" inputMode="decimal" value={inChiusura[campo]} placeholder="0,00" autoFocus={campo === 'pos'}
@@ -303,8 +357,8 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
         <div className="albatros-griglia-listino">
           {griglia.map(v => (
             <button key={v.id} type="button" className="albatros-tasto" onClick={() => toccaVoce(v)}>
-              <span className="albatros-tasto-nome"><IconaCategoria categoria={categoriaDi(v)} size={13} />{v.nome}</span>
-              <span className="albatros-tasto-prezzo">{euro(v.prezzo)}</span>
+              <span className="albatros-tasto-nome">{v.nome}</span>
+              <span className="albatros-tasto-prezzo"><IconaCategoria categoria={categoriaDi(v)} size={12} />{euro(v.prezzo)}</span>
             </button>
           ))}
         </div>
@@ -347,30 +401,113 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
         ) : (
           <div className="albatros-riepilogo-chiusura">
             <div className="albatros-voce-q"><span>POS</span><span>{euro(q.pos)}</span></div>
-            <div className="albatros-voce-q"><span>Contanti</span><span>{euro(q.contanti)}</span></div>
+            <div className="albatros-voce-q"><span>Contanti contati</span><span>{euro(q.contantiContati)}</span></div>
+            <div className="albatros-voce-q"><span>− Fondo di partenza</span><span>{euro(q.fondoPartenza)}</span></div>
             <div className="albatros-voce-q totale"><span>Incassato</span><span>{euro(q.incassato)}</span></div>
             <div className="albatros-voce-q"><span>Battuto</span><span>{euro(q.specificato)}</span></div>
             <div className="albatros-voce-q" style={{ fontWeight: 700, color: q.nonSpecificato < 0 ? '#b91c1c' : q.nonSpecificato > 0 ? '#b45309' : '#15803d' }}>
               <span>{q.nonSpecificato < 0 ? 'Battuto oltre l\'incassato' : 'Residuo non specificato'}</span><span>{euro(Math.abs(q.nonSpecificato))}</span>
             </div>
+            <p className="albatros-nota">
+              {fondoDaSpecificare(chiusura) ? 'Fondo cassa non specificato.' : <>
+                Lasciati in cassa {euro(q.fondoLasciato)}
+                {q.ritirato > 0 && <> · ritirati {euro(q.ritirato)}{chiusura.ritirato_da ? ` da ${etichettaEnte(chiusura.ritirato_da)}` : ''}</>}
+              </>}
+            </p>
+            {fondoDaSpecificare(chiusura) && (
+              <button type="button" className="btn-outline-annulla albatros-bottone" style={{ marginTop: '8px' }} disabled={inCorso} onClick={apriFondo}>Specifica il fondo cassa</button>
+            )}
           </div>
         )}
       </div>
+
+      {inFondo && (
+        <div className="modal-form-backdrop" onClick={() => setInFondo(null)}>
+          <div className="modal-form-box albatros-overlay" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setInFondo(null)}>✕</button>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0f172a' }}>Fondo cassa del {formattaDataGGMMAAAA(data)}</h3>
+            <p className="albatros-nota" style={{ marginTop: 0 }}>
+              La giornata è chiusa con {euro(q.contantiContati)} di contanti contati. Scrivi con quanti si era partiti e quanti ne sono rimasti in cassa.
+            </p>
+            <div className="albatros-griglia-2" style={{ marginTop: '12px' }}>
+              <label className="albatros-etichetta">Fondo di partenza €
+                <input type="text" inputMode="decimal" value={inFondo.fondo_partenza} placeholder="0,00" autoFocus
+                  onChange={(e) => setInFondo({ ...inFondo, fondo_partenza: e.target.value })} className="albatros-campo albatros-importo albatros-importo-grande" />
+              </label>
+              <label className="albatros-etichetta">Lasciati in cassa per il giorno dopo €
+                <input type="text" inputMode="decimal" value={inFondo.fondo_lasciato} placeholder="0,00"
+                  onChange={(e) => setInFondo({ ...inFondo, fondo_lasciato: e.target.value })} className="albatros-campo albatros-importo albatros-importo-grande" />
+              </label>
+            </div>
+            {precedente && <p className="albatros-nota">All'ultima chiusura prima ({formattaDataGGMMAAAA(precedente.data)}) erano stati lasciati {euro(precedente.fondo_lasciato)}.</p>}
+            <div className="albatros-ritiro">
+              <span>Ritirati: <strong>{euro(qf.ritirato)}</strong></span>
+              {qf.ritirato > 0 && (
+                <label className="albatros-etichetta" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>Li ha ritirati
+                  <select value={inFondo.ritirato_da} onChange={(e) => setInFondo({ ...inFondo, ritirato_da: e.target.value })} className="albatros-campo" style={{ width: 'auto' }}>
+                    <option value="">Scegli…</option>
+                    {ENTI_RITIRO.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
+            <div className="albatros-riepilogo-chiusura">
+              <div className="albatros-voce-q"><span>Incasso in contanti (contati − fondo di partenza)</span><span>{euro(qf.contanti)}</span></div>
+              <div className="albatros-voce-q totale"><span>Incassato (POS + contanti)</span><span>{euro(qf.incassato)}</span></div>
+              <div className="albatros-voce-q"><span>Battuto</span><span>{euro(qf.specificato)}</span></div>
+            </div>
+            {qf.nonSpecificato < 0 && <p className="albatros-nota" style={{ color: '#b91c1c' }}>Con questo fondo il battuto supera l'incassato di {euro(-qf.nonSpecificato)}: ricontrolla i numeri.</p>}
+            <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button type="button" className="btn-outline-annulla albatros-bottone" onClick={() => setInFondo(null)}>Annulla</button>
+              <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={salvaFondo}><Icona nome="salva" />Salva il fondo</button>
+            </div>
+            <p className="albatros-nota" style={{ textAlign: 'right' }}>Una volta salvato, il fondo si cambia solo riaprendo la giornata.</p>
+          </div>
+        </div>
+      )}
 
       {inChiusura && (
         <div className="modal-form-backdrop" onClick={() => setInChiusura(null)}>
           <div className="modal-form-box albatros-overlay" onClick={(e) => e.stopPropagation()}>
             <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setInChiusura(null)}>✕</button>
             <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0f172a' }}>Chiusura del {formattaDataGGMMAAAA(data)}</h3>
-            <p className="albatros-nota" style={{ marginTop: 0 }}>Scrivi quanto c'è: il totale del POS e i contanti contati.</p>
+            <p className="albatros-nota" style={{ marginTop: 0 }}>Scrivi il totale del POS e tutti i contanti che ci sono in cassa, fondo compreso.</p>
 
             <div className="albatros-griglia-2" style={{ marginTop: '12px' }}>
               {campoCassa('pos', 'POS €')}
               {campoCassa('contanti', 'Contanti contati €')}
             </div>
 
+            <h4 className="albatros-titolo" style={{ margin: '16px 0 8px 0' }}>Fondo cassa</h4>
+            <div className="albatros-griglia-2">
+              <div>
+                {campoCassa('fondo_partenza', 'Fondo di partenza €')}
+                <p className="albatros-nota" style={{ marginTop: '4px' }}>
+                  {fondoIeri == null
+                    ? 'Prima chiusura con il fondo: scrivi con quanti contanti si era partiti.'
+                    : leggiImporto(inChiusura.fondo_partenza) === fondoIeri
+                      ? `Quello lasciato all'ultima chiusura (${formattaDataGGMMAAAA(precedente.data)}).`
+                      : <span style={{ color: '#b45309' }}>All'ultima chiusura ({formattaDataGGMMAAAA(precedente.data)}) erano stati lasciati {euro(fondoIeri)}.</span>}
+                </p>
+              </div>
+              {campoCassa('fondo_lasciato', 'Lasciati in cassa per domani €')}
+            </div>
+            <div className="albatros-ritiro">
+              <span>Da ritirare: <strong>{euro(qc.ritirato)}</strong></span>
+              {qc.ritirato > 0 && (
+                <label className="albatros-etichetta" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>Li ritira
+                  <select value={inChiusura.ritirato_da} onChange={(e) => setInChiusura({ ...inChiusura, ritirato_da: e.target.value })} className="albatros-campo" style={{ width: 'auto' }}
+                    disabled={!cassaScrivibile(chiusura, chiusura?.ritirato_da ?? null, puoCorreggere)}>
+                    <option value="">Scegli…</option>
+                    {ENTI_RITIRO.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
+
             <div className="albatros-riepilogo-chiusura">
-              <div className="albatros-voce-q totale"><span>Incassato</span><span>{euro(qc.incassato)}</span></div>
+              <div className="albatros-voce-q"><span>Incasso in contanti (contati − fondo di partenza)</span><span>{euro(qc.contanti)}</span></div>
+              <div className="albatros-voce-q totale"><span>Incassato (POS + contanti)</span><span>{euro(qc.incassato)}</span></div>
               <div className="albatros-voce-q"><span>Battuto</span><span>{euro(qc.specificato)}</span></div>
               <div className="albatros-voce-q" style={{ fontWeight: 700, color: qc.nonSpecificato < 0 ? '#b91c1c' : qc.nonSpecificato > 0 ? '#b45309' : '#15803d' }}>
                 <span>{qc.nonSpecificato < 0 ? 'Battuto oltre l\'incassato' : qc.nonSpecificato > 0 ? 'Residuo non specificato' : 'Tutto specificato'}</span>

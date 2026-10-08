@@ -1093,8 +1093,8 @@ input.valore-proposto {
 .albatros-tasto { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; gap: 6px; min-height: 68px; padding: 10px 12px; background: #f1f5f9; color: #0f172a; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer; text-align: left; touch-action: manipulation; user-select: none; }
 .albatros-tasto:hover { background: #e2e8f0; }
 .albatros-tasto:active { background: #bae6fd; border-color: #38bdf8; transform: scale(0.97); }
-.albatros-tasto-nome { font-size: 0.9rem; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
-.albatros-tasto-prezzo { font-size: 0.78rem; color: #475569; font-variant-numeric: tabular-nums; }
+.albatros-tasto-nome { font-size: 0.9rem; font-weight: 600; line-height: 1.2; overflow-wrap: break-word; }
+.albatros-tasto-prezzo { display: flex; align-items: center; font-size: 0.78rem; color: #475569; font-variant-numeric: tabular-nums; }
 .albatros-riepilogo-chiusura { margin-top: 14px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
 .albatros-overlay { max-width: 620px; background: #fff; }
 .albatros-importo-grande { height: 48px; font-size: 1.25rem; font-weight: 600; }
@@ -1105,7 +1105,6 @@ input.valore-proposto {
 }
 .albatros-icona-categoria { display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 7px; margin-right: 6px; vertical-align: middle; }
 .albatros-con-icona { display: inline-flex; align-items: center; }
-.albatros-tasto-nome { display: flex; align-items: flex-start; }
 .albatros-chip { display: inline-flex; align-items: center; }
 .albatros-chip .albatros-icona-categoria { margin-right: 5px; }
 .albatros-scelta-icona { padding: 3px; background: #fff; border: 1px solid #e2e8f0; border-radius: 9px; cursor: pointer; line-height: 0; }
@@ -1122,3 +1121,4 @@ input.valore-proposto {
 .albatros-chip-avviso.attivo { background: #ea580c; border-color: #ea580c; color: #fff; }
 .albatros-chip:disabled { opacity: 0.5; cursor: default; }
 .albatros-badge-select { padding: 3px 8px; border-radius: 999px; border: 1px solid #fdba74; background: #ffedd5; color: #9a3412; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
+.albatros-ritiro { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding: 10px 14px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; font-size: 0.92rem; }

@@ -2,7 +2,7 @@
 //   npm run prova:albatros
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
-  quadratura, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
+  quadratura, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
   rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo,
 } from './calcolo.js';
 
@@ -27,6 +27,22 @@ verifica("righe oltre l'incassato: non specificato negativo", -10, quadratura({ 
 verifica('quota limitata a 1', 1, quadratura({ pos: 10, contanti: 0 }, [{ quantita: 1, prezzo: 20 }]).quota);
 verifica('giornata vuota', 0, quadratura({}, []).quota);
 verifica('pos e contanti vuoti valgono zero', 0, quadratura({ pos: null, contanti: null }, []).incassato);
+
+// ---------- fondo cassa ----------
+const conFondo = quadratura({ pos: 180, contanti: 190, fondo_partenza: 100, fondo_lasciato: 120 }, righe);
+verifica('incasso in contanti = contati - fondo di partenza', 90, conFondo.contanti);
+verifica('il fondo non è incasso', 270, conFondo.incassato);
+verifica('ritirato = contati - fondo lasciato', 70, conFondo.ritirato);
+verifica('senza fondo i conti di prima', 297, quadratura(ch, righe).incassato);
+verifica('fondo proposto: quello lasciato ieri', 120, fondoProposto({ fondo_lasciato: 120 }));
+verifica('fondo proposto: nessuna chiusura prima', null, fondoProposto(null));
+verifica('fondo uguale a ieri', false, fondoDiverso({ chiusa_il: 'x', fondo_partenza: 120 }, { fondo_lasciato: 120 }));
+verifica('fondo diverso da ieri', true, fondoDiverso({ chiusa_il: 'x', fondo_partenza: 100 }, { fondo_lasciato: 120 }));
+verifica('fondo: prima chiusura, niente da confrontare', false, fondoDiverso({ chiusa_il: 'x', fondo_partenza: 100 }, null));
+
+verifica('chiusa senza fondo: fondo da specificare', true, fondoDaSpecificare({ chiusa_il: 'x', fondo_partenza: null, fondo_lasciato: null }));
+verifica('chiusa con fondo: no', false, fondoDaSpecificare({ chiusa_il: 'x', fondo_partenza: 100, fondo_lasciato: 100 }));
+verifica('aperta senza fondo: si scrive alla chiusura', false, fondoDaSpecificare({ chiusa_il: null }));
 
 verifica('chiusa con residuo: da specificare', true, daSpecificare({ chiusa_il: 'x' }, quadratura(ch, righe)));
 verifica('chiusa tutta spiegata: no', false, daSpecificare({ chiusa_il: 'x' }, quadratura({ pos: 175, contanti: 0 }, righe)));
@@ -68,6 +84,7 @@ verifica('admin: giornata chiusa, si toglie', true, composizioneCorreggibile(chi
 verifica('giornata aperta: nessun tetto', true, aggiuntaConsentita(aperta, 500, 100));
 verifica('giornata chiusa: dentro il residuo', true, aggiuntaConsentita(chiusaConCassa, 120, 30));
 verifica('giornata chiusa: oltre il residuo', false, aggiuntaConsentita(chiusaConCassa, 120, 30.01));
+verifica('giornata chiusa: il fondo non conta come incassato', false, aggiuntaConsentita({ ...chiusaConCassa, fondo_partenza: 20 }, 120, 30));
 
 // ---------- listino ----------
 const listino = [
