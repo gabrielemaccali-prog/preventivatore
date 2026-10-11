@@ -7,6 +7,7 @@ import StoricoChiusure from './StoricoChiusure'
 import Spese from './Spese'
 import Listino from './Listino'
 import Configuratore from './Configuratore'
+import Cashflow from './Cashflow'
 import { giornataDiLavoro } from './calcolo'
 
 // ============================================================
@@ -23,6 +24,7 @@ const SCHEDE = [
   { id: 'spese', label: 'Spese', icona: 'spese' },
   { id: 'listino', label: 'Listino', icona: 'listino' },
   { id: 'configuratore', label: 'Configuratore', icona: 'configuratore' },
+  { id: 'cashflow', label: 'Cashflow', icona: 'cashflow' },
 ];
 
 function Albatros({ user }) {
@@ -94,6 +96,7 @@ function Albatros({ user }) {
           {attiva === 'spese' && <Spese {...comuni} />}
           {attiva === 'listino' && <Listino {...comuni} />}
           {attiva === 'configuratore' && <Configuratore {...comuni} />}
+          {attiva === 'cashflow' && <Cashflow {...comuni} />}
         </>
       )}
     </>

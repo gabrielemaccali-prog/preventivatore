@@ -29,6 +29,15 @@ export const SCHEDE_REGISTRY = {
       { id: 'spese', label: 'Spese' },
       { id: 'listino', label: 'Listino' },
       { id: 'configuratore', label: 'Configuratore' },
+      {
+        id: 'cashflow',
+        label: 'Cashflow',
+        sottoschede: [
+          { id: 'cashflow_bfm', label: 'BFM' },
+          { id: 'cashflow_albatros', label: 'Albatros' },
+          { id: 'cashflow_lama', label: 'Lama' },
+        ],
+      },
     ],
   },
   consuntivazione: {

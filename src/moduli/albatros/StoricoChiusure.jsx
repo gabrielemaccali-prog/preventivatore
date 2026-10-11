@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
-import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, ENTI_RITIRO, etichettaEnte, euro, r2, periodoIniziale, intervalloPeriodo } from './calcolo'
+import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, etichettaEnte, euro, r2, periodoIniziale, intervalloPeriodo } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 
 // ============================================================
@@ -58,7 +58,6 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
   };
 
   const tot = (k) => r2(giorni.reduce((s, g) => s + g[k], 0));
-  const ritiratoDa = (ente) => r2(giorni.filter(g => g.chiusura.ritirato_da === ente).reduce((s, g) => s + g.ritirato, 0));
   const incomplete = giorni.filter(g => daSpecificare(g.chiusura, g));
   const visibili = soloDaSpecificare ? incomplete : giorni;
 
@@ -74,7 +73,6 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
           <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: '0.88rem' }}>
             <div>Incassato {periodo.tipo === 'settimana' ? 'della settimana' : 'del mese'}: <strong>{euro(tot('incassato'))}</strong></div>
             <div className="albatros-tenue">Battuto {euro(tot('specificato'))}</div>
-            <div className="albatros-tenue">Ritirati: {ENTI_RITIRO.map(e => `${e.label} ${euro(ritiratoDa(e.id))}`).join(' · ')}</div>
           </div>
         </div>
 
