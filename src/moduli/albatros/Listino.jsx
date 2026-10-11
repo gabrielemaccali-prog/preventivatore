@@ -7,10 +7,12 @@ import IconaCategoria from './IconaCategoria'
 
 // ============================================================
 // Il listino del centro. Si riempie da solo con le voci scritte nelle chiusure; qui si ripulisce:
-// prezzi standard, categorie, doppioni da unire, voci da archiviare.
-// Una voce usata in qualche chiusura non si cancella (il passato la cita): si archivia, e sparisce
-// dai suggerimenti, oppure si unisce a un'altra, che si prende le sue righe.
-// Chi non è amministratore può solo aggiungere voci: modificare, unire, archiviare e cancellare no.
+// prezzi standard, categorie, doppioni da unire, voci da disattivare.
+// Una voce disattivata (attiva = false) sparisce dalla griglia della Giornata e dai suggerimenti, ma
+// le giornate che l'hanno usata restano com'erano: serve per le voci generiche scritte per
+// spiegare il passato. Una voce usata non si cancella (il passato la cita): si disattiva, oppure si
+// unisce a un'altra, che si prende le sue righe.
+// Chi non è amministratore può solo aggiungere voci: modificare, unire, disattivare e cancellare no.
 // Nuova voce e modifica si fanno nello stesso overlay.
 // ============================================================
 
@@ -57,7 +59,7 @@ function Listino({ user, listino, ricaricaListino, categorie, puoCorreggere }) {
     if (!nome) return { errore: 'Scrivi il nome della voce.' };
     if (Number.isNaN(prezzo) || prezzo < 0 || String(v.prezzo).trim() === '') return { errore: 'Prezzo non valido.' };
     const doppione = voceDiNome(listino, nome);
-    if (doppione && doppione.id !== idEscluso) return { errore: `"${doppione.nome}" c'è già nel listino${doppione.attiva ? '' : ' (archiviata)'}.` };
+    if (doppione && doppione.id !== idEscluso) return { errore: `"${doppione.nome}" c'è già nel listino${doppione.attiva ? '' : ' (disattivata)'}.` };
     return { record: { nome, categoria_id: idCategoriaScelta(v.categoria, categorie, 'listino'), prezzo } };
   };
 
@@ -81,7 +83,7 @@ function Listino({ user, listino, ricaricaListino, categorie, puoCorreggere }) {
   };
 
   const elimina = async (v) => {
-    if (usi[v.id]) return alert(`"${v.nome}" compare in ${usi[v.id]} righe di chiusure: non si può cancellare. Archiviala, o uniscila a un'altra voce.`);
+    if (usi[v.id]) return alert(`"${v.nome}" compare in ${usi[v.id]} righe di chiusure: non si può cancellare. Disattivala, o uniscila a un'altra voce.`);
     if (!window.confirm(`Cancellare "${v.nome}" dal listino?`)) return;
     const { error } = await supabase.from('albatros_listino').delete().eq('id', v.id);
     if (error) return alert(`Errore: ${error.message}`);
@@ -122,7 +124,7 @@ function Listino({ user, listino, ricaricaListino, categorie, puoCorreggere }) {
             </select>
           </label>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.88rem', alignSelf: 'flex-end', paddingBottom: '10px' }}>
-            <input type="checkbox" checked={mostraArchiviate} onChange={(e) => setMostraArchiviate(e.target.checked)} /> Anche archiviate
+            <input type="checkbox" checked={mostraArchiviate} onChange={(e) => setMostraArchiviate(e.target.checked)} /> Anche disattivate
           </label>
           <button type="button" className="btn-accent-inline albatros-bottone" style={{ marginLeft: 'auto', alignSelf: 'flex-end' }} onClick={() => setVoceInForm(VOCE_VUOTA)}>+ Nuova voce</button>
         </div>
@@ -133,19 +135,26 @@ function Listino({ user, listino, ricaricaListino, categorie, puoCorreggere }) {
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
             <table className="albatros-tabella">
               <thead>
-                <tr><th>Voce</th><th>Categoria</th><th className="num">Prezzo</th><th className="num">Usata</th>{puoCorreggere && <th></th>}</tr>
+                <tr><th>Voce</th><th>Categoria</th><th className="num">Prezzo</th><th className="num">Usata</th>{puoCorreggere && <th title="Le voci spente non compaiono nella griglia della Giornata">Attiva</th>}{puoCorreggere && <th></th>}</tr>
               </thead>
               <tbody>
                 {visibili.map(v => (
                   <tr key={v.id} style={{ cursor: 'default', opacity: v.attiva ? 1 : 0.55 }}>
-                    <td><strong>{v.nome}</strong>{!v.attiva && <span className="albatros-tenue"> · archiviata</span>}</td>
+                    <td><strong>{v.nome}</strong>{!v.attiva && <span className="albatros-tenue"> · disattivata</span>}</td>
                     <td><span className="albatros-con-icona"><IconaCategoria categoria={categorie.find(c => c.id === v.categoria_id)} size={12} titolo={false} />{nomeCategoria(categorie, v.categoria_id)}</span></td>
                     <td className="num">{euro(v.prezzo)}</td>
                     <td className="num">{usi[v.id] || 0}</td>
+                    {puoCorreggere && (
+                      <td>
+                        <label className="albatros-interruttore" title={v.attiva ? 'Disattiva: sparisce dalla griglia' : 'Riattiva: torna nella griglia'}>
+                          <input type="checkbox" checked={v.attiva} onChange={() => cambiaAttiva(v)} />
+                          <span />
+                        </label>
+                      </td>
+                    )}
                     {puoCorreggere && <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
                       <button type="button" className="btn-icon-action" title="Modifica" onClick={() => setVoceInForm({ id: v.id, nome: v.nome, categoria: String(v.categoria_id ?? ''), prezzo: String(r2(v.prezzo)).replace('.', ',') })} style={{ marginRight: '4px' }}><Icona nome="modifica" size={14} style={{ marginRight: 0 }} /></button>
                       <button type="button" className="btn-icon-action" title="Unisci in un'altra voce" onClick={() => setUnione({ voce: v, destinazioneId: '' })} style={{ marginRight: '4px' }}><Icona nome="unisci" size={14} style={{ marginRight: 0 }} /></button>
-                      <button type="button" className="btn-icon-action" title={v.attiva ? 'Archivia' : 'Rimetti in listino'} onClick={() => cambiaAttiva(v)} style={{ marginRight: '4px' }}><Icona nome={v.attiva ? 'archivia' : 'riporta'} size={14} style={{ marginRight: 0 }} /></button>
                       <button type="button" className="btn-icon-action danger" title="Cancella" onClick={() => elimina(v)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>
                     </td>}
                   </tr>
@@ -192,7 +201,7 @@ function Listino({ user, listino, ricaricaListino, categorie, puoCorreggere }) {
             <select value={unione.destinazioneId} onChange={(e) => setUnione({ ...unione, destinazioneId: e.target.value })} className="albatros-campo" style={{ width: '100%' }}>
               <option value="">Scegli la voce giusta…</option>
               {listino.filter(v => v.id !== unione.voce.id).sort((a, b) => a.nome.localeCompare(b.nome)).map(v => (
-                <option key={v.id} value={v.id}>{v.nome} · {euro(v.prezzo)}{v.attiva ? '' : ' (archiviata)'}</option>
+                <option key={v.id} value={v.id}>{v.nome} · {euro(v.prezzo)}{v.attiva ? '' : ' (disattivata)'}</option>
               ))}
             </select>
             <div style={{ display: 'flex', gap: '10px', marginTop: '14px', justifyContent: 'flex-end' }}>

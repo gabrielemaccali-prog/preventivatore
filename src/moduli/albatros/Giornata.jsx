@@ -13,7 +13,7 @@ import IconaCategoria from './IconaCategoria'
 // La giornata del centro (scheda Giornata; l'elenco delle chiusure sta in StoricoChiusure).
 // Durante la serata si toccano le voci del listino e si forma il
 // "battuto", il preventivo di quanto dovrebbe esserci in cassa. A fine serata "Chiudi la giornata"
-// apre la chiusura: si scrivono POS e tutti i contanti contati, si conferma il fondo cassa con cui
+// apre la chiusura: si scrivono POS e contanti incassati (senza il fondo), si conferma il fondo cassa con cui
 // si era partiti e si dice quanto se ne lascia per domani; il resto lo ritira Lama o BFM. L'incasso
 // si confronta col battuto e, se avanza un residuo, lo si può spiegare con altre voci.
 //
@@ -262,8 +262,9 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
     if (fondoPartenza == null || fondoLasciato == null) { alert('Scrivi il fondo di partenza e quello lasciato (anche 0).'); return; }
     if ([fondoPartenza, fondoLasciato].some(v => Number.isNaN(v) || v < 0)) { alert('Importo non valido.'); return; }
     const contanti = r2(num(chiusura.contanti));
-    if (fondoLasciato > contanti) { alert(`Non si può lasciare in cassa più dei contanti contati (${euro(contanti)}).`); return; }
-    const ritirato = r2(contanti - fondoLasciato);
+    const inCassa = r2(contanti + fondoPartenza);
+    if (fondoLasciato > inCassa) { alert(`Non si può lasciare in cassa più di quanto c'era (${euro(inCassa)}: incasso più fondo di partenza).`); return; }
+    const ritirato = r2(inCassa - fondoLasciato);
     if (ritirato > 0 && !inFondo.ritirato_da) { alert(`Scegli chi ha ritirato i ${euro(ritirato)}.`); return; }
     const { error } = await supabase.from('albatros_chiusure')
       .update({ fondo_partenza: fondoPartenza, fondo_lasciato: fondoLasciato, ritirato_da: ritirato > 0 ? inFondo.ritirato_da : null })
@@ -277,10 +278,10 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
     const [pos, contanti, fondoPartenza, fondoLasciato] = ['pos', 'contanti', 'fondo_partenza', 'fondo_lasciato'].map(k => leggiImporto(inChiusura[k]));
     if ([pos, contanti, fondoPartenza, fondoLasciato].some(v => v == null)) { alert('Scrivi POS, contanti, fondo di partenza e fondo lasciato (anche 0).'); return; }
     if ([pos, contanti, fondoPartenza, fondoLasciato].some(v => Number.isNaN(v) || v < 0)) { alert('Importo non valido.'); return; }
-    if (fondoLasciato > contanti) { alert('Non si può lasciare in cassa più dei contanti contati.'); return; }
-    const ritirato = r2(contanti - fondoLasciato);
+    const inCassa = r2(contanti + fondoPartenza);
+    if (fondoLasciato > inCassa) { alert(`Non si può lasciare in cassa più di quanto c'è (${euro(inCassa)}: incasso più fondo di partenza).`); return; }
+    const ritirato = r2(inCassa - fondoLasciato);
     if (ritirato > 0 && !inChiusura.ritirato_da) { alert(`Scegli chi ritira i ${euro(ritirato)}.`); return; }
-    if (contanti < fondoPartenza && !window.confirm(`In cassa ci sono meno contanti (${euro(contanti)}) del fondo di partenza (${euro(fondoPartenza)}). Confermi lo stesso?`)) return;
     const ch = await assicuraChiusura();
     if (!ch) return;
     const { error } = await supabase.from('albatros_chiusure')
@@ -401,12 +402,11 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
         ) : (
           <div className="albatros-riepilogo-chiusura">
             <div className="albatros-voce-q"><span>POS</span><span>{euro(q.pos)}</span></div>
-            <div className="albatros-voce-q"><span>Contanti contati</span><span>{euro(q.contantiContati)}</span></div>
-            <div className="albatros-voce-q"><span>− Fondo di partenza</span><span>{euro(q.fondoPartenza)}</span></div>
+            <div className="albatros-voce-q"><span>Contanti incassati</span><span>{euro(q.contanti)}</span></div>
             <div className="albatros-voce-q totale"><span>Incassato</span><span>{euro(q.incassato)}</span></div>
             <div className="albatros-voce-q"><span>Battuto</span><span>{euro(q.specificato)}</span></div>
             <div className="albatros-voce-q" style={{ fontWeight: 700, color: q.nonSpecificato < 0 ? '#b91c1c' : q.nonSpecificato > 0 ? '#b45309' : '#15803d' }}>
-              <span>{q.nonSpecificato < 0 ? 'Battuto oltre l\'incassato' : 'Residuo non specificato'}</span><span>{euro(Math.abs(q.nonSpecificato))}</span>
+              <span>{q.nonSpecificato < 0 ? 'Battuto oltre l\'incassato' : q.nonSpecificato > 0 ? 'Residuo non specificato' : 'Tutto specificato'}</span><span>{euro(Math.abs(q.nonSpecificato))}</span>
             </div>
             <p className="albatros-nota">
               {fondoDaSpecificare(chiusura) ? 'Fondo cassa non specificato.' : <>
@@ -427,7 +427,7 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
             <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setInFondo(null)}>✕</button>
             <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0f172a' }}>Fondo cassa del {formattaDataGGMMAAAA(data)}</h3>
             <p className="albatros-nota" style={{ marginTop: 0 }}>
-              La giornata è chiusa con {euro(q.contantiContati)} di contanti contati. Scrivi con quanti si era partiti e quanti ne sono rimasti in cassa.
+              La giornata è chiusa con {euro(q.contanti)} di contanti incassati. Scrivi con quanti si era partiti e quanti ne sono rimasti in cassa: l'incassato non cambia.
             </p>
             <div className="albatros-griglia-2" style={{ marginTop: '12px' }}>
               <label className="albatros-etichetta">Fondo di partenza €
@@ -452,11 +452,10 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
               )}
             </div>
             <div className="albatros-riepilogo-chiusura">
-              <div className="albatros-voce-q"><span>Incasso in contanti (contati − fondo di partenza)</span><span>{euro(qf.contanti)}</span></div>
-              <div className="albatros-voce-q totale"><span>Incassato (POS + contanti)</span><span>{euro(qf.incassato)}</span></div>
-              <div className="albatros-voce-q"><span>Battuto</span><span>{euro(qf.specificato)}</span></div>
+              <div className="albatros-voce-q"><span>In cassa (incasso + fondo di partenza)</span><span>{euro(qf.contantiInCassa)}</span></div>
+              <div className="albatros-voce-q"><span>− Lasciati per il giorno dopo</span><span>{euro(qf.fondoLasciato)}</span></div>
+              <div className="albatros-voce-q totale"><span>Ritirati</span><span>{euro(qf.ritirato)}</span></div>
             </div>
-            {qf.nonSpecificato < 0 && <p className="albatros-nota" style={{ color: '#b91c1c' }}>Con questo fondo il battuto supera l'incassato di {euro(-qf.nonSpecificato)}: ricontrolla i numeri.</p>}
             <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button type="button" className="btn-outline-annulla albatros-bottone" onClick={() => setInFondo(null)}>Annulla</button>
               <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={salvaFondo}><Icona nome="salva" />Salva il fondo</button>
@@ -471,11 +470,11 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
           <div className="modal-form-box albatros-overlay" onClick={(e) => e.stopPropagation()}>
             <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setInChiusura(null)}>✕</button>
             <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0f172a' }}>Chiusura del {formattaDataGGMMAAAA(data)}</h3>
-            <p className="albatros-nota" style={{ marginTop: 0 }}>Scrivi il totale del POS e tutti i contanti che ci sono in cassa, fondo compreso.</p>
+            <p className="albatros-nota" style={{ marginTop: 0 }}>Scrivi il totale del POS e i contanti incassati, senza contare il fondo cassa.</p>
 
             <div className="albatros-griglia-2" style={{ marginTop: '12px' }}>
               {campoCassa('pos', 'POS €')}
-              {campoCassa('contanti', 'Contanti contati €')}
+              {campoCassa('contanti', 'Contanti incassati € (senza il fondo)')}
             </div>
 
             <h4 className="albatros-titolo" style={{ margin: '16px 0 8px 0' }}>Fondo cassa</h4>
@@ -506,7 +505,6 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
             </div>
 
             <div className="albatros-riepilogo-chiusura">
-              <div className="albatros-voce-q"><span>Incasso in contanti (contati − fondo di partenza)</span><span>{euro(qc.contanti)}</span></div>
               <div className="albatros-voce-q totale"><span>Incassato (POS + contanti)</span><span>{euro(qc.incassato)}</span></div>
               <div className="albatros-voce-q"><span>Battuto</span><span>{euro(qc.specificato)}</span></div>
               <div className="albatros-voce-q" style={{ fontWeight: 700, color: qc.nonSpecificato < 0 ? '#b91c1c' : qc.nonSpecificato > 0 ? '#b45309' : '#15803d' }}>

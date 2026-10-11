@@ -40,6 +40,7 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
     setGiorni(elenco.map(c => ({
       chiusura: c,
       fondoDiverso: fondoDiverso(c, precedenteDi(c)),
+      precedente: precedenteDi(c),
       ...quadratura(c, (rg || []).filter(r => r.chiusura_id === c.id)),
     })));
   };
@@ -82,7 +83,7 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
             <table className="albatros-tabella">
               <thead>
-                <tr><th>Giornata</th><th className="num">POS</th><th className="num" title="Contanti contati meno il fondo di partenza">Contanti</th><th className="num">Incassato</th><th className="num">Battuto</th><th className="num" title="Lasciato in cassa per il giorno dopo">Fondo</th><th className="num">Ritirati</th><th>Stato</th><th>Chiusa da</th>{puoCorreggere && <th></th>}</tr>
+                <tr><th>Giornata</th><th className="num">POS</th><th className="num" title="Contanti incassati, senza il fondo cassa">Contanti</th><th className="num">Incassato</th><th className="num">Battuto</th><th className="num" title="Lasciato in cassa per il giorno dopo">Fondo</th><th className="num">Ritirati</th><th>Stato</th><th>Chiusa da</th>{puoCorreggere && <th></th>}</tr>
               </thead>
               <tbody>
                 {visibili.map(g => (
@@ -91,17 +92,17 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
                     <td className="num">{euro(g.pos)}</td>
                     <td className="num">{euro(g.contanti)}</td>
                     <td className="num"><strong>{euro(g.incassato)}</strong></td>
+                    <td className="num">{euro(g.specificato)}{g.chiusura.chiusa_il && <span className="albatros-tenue"> ({Math.round(g.quota * 100)}%)</span>}</td>
                     <td className="num"><span className="albatros-tenue">{g.chiusura.chiusa_il ? euro(g.fondoLasciato) : '—'}</span></td>
                     <td className="num">{g.chiusura.chiusa_il && g.ritirato > 0
                       ? <>{euro(g.ritirato)}{g.chiusura.ritirato_da && <div className="albatros-tenue" style={{ fontSize: '0.75rem' }}>{etichettaEnte(g.chiusura.ritirato_da)}</div>}</>
                       : <span className="albatros-tenue">—</span>}</td>
-                    <td className="num">{euro(g.specificato)}{g.chiusura.chiusa_il && <span className="albatros-tenue"> ({Math.round(g.quota * 100)}%)</span>}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {g.chiusura.chiusa_il ? <span className="albatros-badge chiusa mini">Chiusa</span> : <span className="albatros-badge aperta mini">Aperta</span>}
                       {daSpecificare(g.chiusura, g) && <span className="albatros-badge da-specificare mini" title={`Residuo non spiegato: ${euro(g.nonSpecificato)}`}>Da specificare {euro(g.nonSpecificato)}</span>}
                       {g.chiusura.chiusa_il && g.nonSpecificato < 0 && <span className="albatros-badge oltre mini" title="Il battuto supera l'incassato">Battuto oltre {euro(-g.nonSpecificato)}</span>}
                       {fondoDaSpecificare(g.chiusura) && <span className="albatros-badge da-specificare mini" title="Fondo di partenza e fondo lasciato non sono ancora scritti">Fondo da specificare</span>}
-                      {g.fondoDiverso && <span className="albatros-badge oltre mini" title="Il fondo di partenza non è quello lasciato alla chiusura prima">Fondo diverso</span>}
+                      {g.fondoDiverso && <span className="albatros-badge oltre mini" title={`Partita con ${euro(g.fondoPartenza)} di fondo, ma il ${formattaDataGGMMAAAA(g.precedente.data)} in cassa erano stati lasciati ${euro(g.precedente.fondo_lasciato)}`}>Fondo diverso dal {formattaDataGGMMAAAA(g.precedente.data).slice(0, 5)} ({euro(g.precedente.fondo_lasciato)})</span>}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {g.chiusura.chiusa_il

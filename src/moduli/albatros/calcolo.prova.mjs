@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   quadratura, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
-  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo,
+  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita,
 } from './calcolo.js';
 
 const esiti = [];
@@ -30,9 +30,13 @@ verifica('pos e contanti vuoti valgono zero', 0, quadratura({ pos: null, contant
 
 // ---------- fondo cassa ----------
 const conFondo = quadratura({ pos: 180, contanti: 190, fondo_partenza: 100, fondo_lasciato: 120 }, righe);
-verifica('incasso in contanti = contati - fondo di partenza', 90, conFondo.contanti);
-verifica('il fondo non è incasso', 270, conFondo.incassato);
-verifica('ritirato = contati - fondo lasciato', 70, conFondo.ritirato);
+verifica('i contanti scritti sono già senza fondo', 190, conFondo.contanti);
+verifica('il fondo non entra nell\'incassato', 370, conFondo.incassato);
+verifica('in cassa = contanti + fondo di partenza', 290, conFondo.contantiInCassa);
+verifica('ritirato = in cassa - fondo lasciato', 170, conFondo.ritirato);
+const ieri = quadratura({ pos: 130, contanti: 455, fondo_partenza: 30, fondo_lasciato: 30 }, [{ quantita: 1, prezzo: 585 }]);
+verifica('10 ottobre: incassato uguale al battuto', 0, ieri.nonSpecificato);
+verifica('10 ottobre: ritirati da Lama', 455, ieri.ritirato);
 verifica('senza fondo i conti di prima', 297, quadratura(ch, righe).incassato);
 verifica('fondo proposto: quello lasciato ieri', 120, fondoProposto({ fondo_lasciato: 120 }));
 verifica('fondo proposto: nessuna chiusura prima', null, fondoProposto(null));
@@ -47,6 +51,15 @@ verifica('aperta senza fondo: si scrive alla chiusura', false, fondoDaSpecificar
 verifica('chiusa con residuo: da specificare', true, daSpecificare({ chiusa_il: 'x' }, quadratura(ch, righe)));
 verifica('chiusa tutta spiegata: no', false, daSpecificare({ chiusa_il: 'x' }, quadratura({ pos: 175, contanti: 0 }, righe)));
 verifica('aperta: no', false, daSpecificare({ chiusa_il: null }, quadratura(ch, righe)));
+
+// ---------- dettaglio delle spese ----------
+const scontrino = { importo: 661 };
+const vociScontrino = [{ importo: 300 }, { importo: 211.5 }];
+verifica('spesa: dettagliato', 511.5, dettaglioSpesa(scontrino, vociScontrino).dettagliato);
+verifica('spesa: non dettagliato', 149.5, dettaglioSpesa(scontrino, vociScontrino).nonDettagliato);
+verifica('spesa: voce dentro il totale', true, rigaSpesaConsentita(scontrino, vociScontrino, 149.5));
+verifica('spesa: voce oltre il totale', false, rigaSpesaConsentita(scontrino, vociScontrino, 149.51));
+verifica('spesa senza voci', 0, dettaglioSpesa(scontrino, []).quota);
 
 // ---------- data della serata ----------
 verifica("all'una di notte è ancora ieri", '2026-10-06', giornataDiLavoro(new Date(2026, 9, 7, 1, 30)));
@@ -84,7 +97,7 @@ verifica('admin: giornata chiusa, si toglie', true, composizioneCorreggibile(chi
 verifica('giornata aperta: nessun tetto', true, aggiuntaConsentita(aperta, 500, 100));
 verifica('giornata chiusa: dentro il residuo', true, aggiuntaConsentita(chiusaConCassa, 120, 30));
 verifica('giornata chiusa: oltre il residuo', false, aggiuntaConsentita(chiusaConCassa, 120, 30.01));
-verifica('giornata chiusa: il fondo non conta come incassato', false, aggiuntaConsentita({ ...chiusaConCassa, fondo_partenza: 20 }, 120, 30));
+verifica('giornata chiusa: il fondo non cambia il tetto', true, aggiuntaConsentita({ ...chiusaConCassa, fondo_partenza: 20 }, 120, 30));
 
 // ---------- listino ----------
 const listino = [

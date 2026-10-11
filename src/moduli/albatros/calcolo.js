@@ -43,6 +43,14 @@ export const aggiungiGiorni = (iso, n) => { const d = dataDi(iso); d.setDate(d.g
 // Il lunedì della settimana di una data: le settimane vanno da lunedì a domenica.
 export const lunediDi = (iso) => aggiungiGiorni(iso, -((dataDi(iso).getDay() + 6) % 7));
 
+// Il dettaglio di una spesa: le voci scritte dentro lo scontrino, che non ne superano il totale.
+export function dettaglioSpesa(spesa, righe) {
+  const totale = r2(spesa?.importo);
+  const dettagliato = r2((righe || []).reduce((t, x) => t + num(x.importo), 0));
+  return { totale, dettagliato, nonDettagliato: r2(totale - dettagliato), quota: totale > 0 ? Math.min(dettagliato / totale, 1) : 0 };
+}
+export const rigaSpesaConsentita = (spesa, righe, importo) => r2(dettaglioSpesa(spesa, righe).dettagliato + num(importo)) <= r2(spesa?.importo);
+
 // Il periodo dei filtri di Chiusure e Spese: si parte dal mese corrente.
 export const periodoIniziale = () => { const oggi = giornataDiLavoro(); return { tipo: 'mese', mese: oggi.slice(0, 7), lunedi: lunediDi(oggi) }; };
 // Primo e ultimo giorno del periodo, compresi.
@@ -55,25 +63,26 @@ export function intervalloPeriodo({ tipo, mese, lunedi }) {
 export const totaleRiga = (r) => r2(num(r.quantita) * num(r.prezzo));
 export const sommaRighe = (righe) => r2((righe || []).reduce((s, r) => s + totaleRiga(r), 0));
 
-// La quadratura di una giornata. In cassa resta un fondo da una sera all'altra: chiusura.contanti
-// sono TUTTI i contanti contati, e l'incasso in contanti è quello che c'è in più rispetto al fondo
-// con cui si è partiti. Il fondo non è incasso, quindi non entra nell'incassato né nella quota.
-// Quello che non si lascia in cassa per domani lo ritira Lama o BFM (chiusura.ritirato_da).
+// La quadratura di una giornata. chiusura.contanti sono i contanti INCASSATI, senza il fondo cassa:
+// è così che i ragazzi contano, tenendo da parte il fondo. L'incassato è POS + contanti e si
+// confronta col battuto. Il fondo resta in cassa da una sera all'altra e serve solo a sapere quanto
+// c'è in cassa e quanto si ritira: in cassa ci sono contanti + fondo di partenza, si lascia
+// fondo_lasciato, il resto lo ritira Lama o BFM (chiusura.ritirato_da).
 // Le spese non c'entrano: si registrano a parte, nella scheda Spese.
 //   nonSpecificato > 0  parte dell'incassato non ancora spiegata dalle righe (normale)
 //   nonSpecificato < 0  le righe superano l'incassato: qualcosa è contato due volte, o manca un incasso
 export function quadratura(chiusura, righe) {
   const pos = r2(chiusura?.pos);
-  const contantiContati = r2(chiusura?.contanti);
+  const contanti = r2(chiusura?.contanti);
   const fondoPartenza = r2(chiusura?.fondo_partenza);
   const fondoLasciato = r2(chiusura?.fondo_lasciato);
-  const contanti = r2(contantiContati - fondoPartenza);
-  const ritirato = r2(contantiContati - fondoLasciato);
+  const contantiInCassa = r2(contanti + fondoPartenza);
+  const ritirato = r2(contantiInCassa - fondoLasciato);
   const incassato = r2(pos + contanti);
   const specificato = sommaRighe(righe);
   const nonSpecificato = r2(incassato - specificato);
   const quota = incassato > 0 ? Math.min(specificato / incassato, 1) : (specificato > 0 ? 1 : 0);
-  return { pos, contantiContati, fondoPartenza, contanti, fondoLasciato, ritirato, incassato, specificato, nonSpecificato, quota };
+  return { pos, contanti, fondoPartenza, contantiInCassa, fondoLasciato, ritirato, incassato, specificato, nonSpecificato, quota };
 }
 
 // Il fondo di partenza proposto: quello lasciato all'ultima chiusura prima di questa giornata.
@@ -107,8 +116,8 @@ export const cassaScrivibile = (chiusura, valoreSalvato, puoCorreggere) =>
 // solo aggiungere; togliere righe resta all'amministratore.
 export const composizioneCorreggibile = (chiusura, puoCorreggere) => puoCorreggere || chiusuraModificabile(chiusura);
 
-// Su una giornata chiusa il totale è fissato da POS e contanti (meno il fondo di partenza): le
-// voci aggiunte spiegano il residuo, ma il battuto non può superare l'incassato.
+// Su una giornata chiusa il totale è fissato da POS e contanti: le voci aggiunte spiegano il
+// residuo, ma il battuto non può superare l'incassato.
 export const aggiuntaConsentita = (chiusura, battuto, aggiunta) =>
   chiusuraModificabile(chiusura) || r2(num(battuto) + num(aggiunta)) <= quadratura(chiusura, []).incassato;
 

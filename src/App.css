@@ -1122,3 +1122,18 @@ input.valore-proposto {
 .albatros-chip:disabled { opacity: 0.5; cursor: default; }
 .albatros-badge-select { padding: 3px 8px; border-radius: 999px; border: 1px solid #fdba74; background: #ffedd5; color: #9a3412; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
 .albatros-ritiro { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding: 10px 14px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; font-size: 0.92rem; }
+.albatros-tabella .riga-espandibile-chevron.aperta { transform: rotate(90deg); }
+.albatros-dettaglio-riga > td { background: #f8fafc; padding: 10px 16px 14px 34px !important; cursor: default; }
+.albatros-dettaglio-riga:hover { background: transparent !important; }
+.albatros-form-voce-spesa { display: grid; grid-template-columns: minmax(0, 2fr) 100px minmax(0, 1.2fr) auto; gap: 8px; margin-top: 10px; }
+@media (max-width: 720px) {
+  .albatros-form-voce-spesa { grid-template-columns: 1fr 100px; }
+  .albatros-form-voce-spesa .albatros-bottone { grid-column: 1 / -1; }
+}
+.albatros-interruttore { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; vertical-align: middle; }
+.albatros-interruttore input { opacity: 0; width: 0; height: 0; position: absolute; }
+.albatros-interruttore span { position: absolute; inset: 0; background: #cbd5e1; border-radius: 999px; transition: background 0.15s; }
+.albatros-interruttore span::before { content: ''; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.15s; }
+.albatros-interruttore input:checked + span { background: #16a34a; }
+.albatros-interruttore input:checked + span::before { transform: translateX(16px); }
+.albatros-interruttore input:focus-visible + span { outline: 2px solid #0284c7; outline-offset: 2px; }
