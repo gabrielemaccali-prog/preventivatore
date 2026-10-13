@@ -73,6 +73,24 @@ const ignota = { id: 'PRN-X', data: '2026-09-10', stato: STATO_PREN.CONFERMATO, 
 verifica('costo di sede ignota: segnalato, non perso', [{ sede: SEDE_NON_INDICATA, costo: 50 }],
   daConsuntivareFornitori({ ...base, prenotazioni: [ignota] }).senzaControparte.map(s => ({ sede: s.nome, costo: s.costo })));
 
+// ---------- sedi rinominate ----------
+// Il nome della sede sulla riga è una fotografia del giorno dell'offerta: rinominando la sede in
+// anagrafica quel nome non identifica più nessuno, e il fornitore spariva dalla consuntivazione.
+const conSedeId = {
+  id: 'PRN-RINOM', data: '2026-09-11', stato: STATO_PREN.CONFERMATO, preventivoCollegato: 'PRV-AQ',
+  voci: [{ nome: 'Calcio Balilla Umano', sede: 'Ezio - Bergamo', sedeId: 'loc_aq', giocoId: 11, costo: 300 }],
+};
+verifica('sede rinominata: l id la ritrova col nome di oggi', 300,
+  daConsuntivareFornitori({ ...base, prenotazioni: [conSedeId] }).controparti.find(f => f.controparte.id === 'loc_aq').costo);
+
+// Righe più vecchie, salvate quando l'id non si portava dietro: il nome vecchio non vale più, ma
+// il preventivo collegato dice da dove partiva il gioco.
+const soloNomeVecchio = { ...conSedeId, id: 'PRN-VECCHIA', voci: [{ ...conSedeId.voci[0], sedeId: undefined }] };
+verifica('sede rinominata senza id: la ritrova dal preventivo', 300,
+  daConsuntivareFornitori({ ...base, prenotazioni: [soloNomeVecchio] }).controparti.find(f => f.controparte.id === 'loc_aq').costo);
+verifica('sede rinominata senza id: non resta senza controparte', 0,
+  daConsuntivareFornitori({ ...base, prenotazioni: [soloNomeVecchio] }).senzaControparte.length);
+
 // ---------- fotografia ----------
 const foto = periodoDaControparte(aq, 'fornitore', '2026-09-16');
 verifica('fotografia: totali', [920, 920, 600, 320], [foto.costo_preventivato, foto.costo, foto.ricavo, foto.saldo]);

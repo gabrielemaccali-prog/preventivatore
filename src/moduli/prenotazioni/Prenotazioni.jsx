@@ -627,7 +627,11 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // Il nome si congela qui perché la riga può riferirsi a un extra o a un gioco che non è
         // a catalogo: senza, resterebbe una riga senza nome. Quando c'è il gioco vince il catalogo.
         nome: nomeGiocoPerId[giocoId] || g.nome || '—',
+        // Il nome della sede è una fotografia del giorno dell'offerta: basta rinominare la sede in
+        // anagrafica e il fornitore non si riconosce più. L'id invece non cambia mai, e si porta
+        // dietro anche quando la riga non ce l'ha: lo sa il gioco a listino da dove parte.
         sede: g.sedePartenza || '—',
+        sedeId: g.sedeId || listino.find(l => l.id === g.gonfiabileId)?.locationId || null,
         quantita: g.quantita || 1,
         ricavo: parseFloat(g.prezzoVendita) || 0,
         // Arrotondato alla decina come fa il preventivatore, altrimenti la somma delle righe non

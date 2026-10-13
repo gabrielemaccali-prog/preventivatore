@@ -52,6 +52,10 @@ export const risolutoreSedi = ({ sedi = [], listino = [], preventivi = [] }) => 
     if (trovate.length === 1) sedeDelPreventivo[pv.codice] = trovate[0];
   });
 
+  // I nomi che esistono davvero in anagrafica. Una riga che ne porta uno diverso parla di una sede
+  // rinominata (o sparita): il nome da solo non la identifica più, e vale come se non ci fosse.
+  const nomiValidi = new Set(sedi.map(s => s.nome).filter(Boolean));
+
   const sedeDiRipiego = (p) => {
     if (p.campoId && sedePropria) return sedePropria;
     const dalPreventivo = p.preventivoCollegato ? sedeDelPreventivo[p.preventivoCollegato] : null;
@@ -78,7 +82,11 @@ export const risolutoreSedi = ({ sedi = [], listino = [], preventivi = [] }) => 
       if (gioco) per[sede].giochi.push(gioco);
     };
     const sedeDellaVoce = (v) => {
+      // L'id vince sul nome: è l'unica cosa che una rinomina non cambia.
+      if (v.sedeId && nomeSede[v.sedeId]) return nomeSede[v.sedeId];
       if (!v.sede) return sedeDiRipiego(p);
+      // Nome che non esiste più in anagrafica: si riparte dagli id, come per una riga senza sede.
+      if (v.sede !== SENZA_SEDE && !nomiValidi.has(v.sede)) return sedeDiRipiego(p);
       if (v.sede !== SENZA_SEDE || v.giocoId != null) return v.sede;
       const ripiego = sedeDiRipiego(p);
       return nostra(ripiego) || ripiego === SEDE_NON_INDICATA ? SENZA_SEDE : ripiego;

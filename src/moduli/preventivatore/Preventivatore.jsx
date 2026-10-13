@@ -438,8 +438,14 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
       // salvati prima che l'id ci fosse — ed è un ripiego che sbaglia appena una sede viene
       // rinominata: è così che 68 righe si erano ritrovate senza sede, e senza il flag di
       // proprietà che azzera il costo di noleggio.
+      // Terzo ripiego: la sede del gonfiabile a catalogo. Serve alle righe salvate senza sede --
+      // il nome perso e l'id non ancora introdotto -- che altrimenti restano "—" per sempre:
+      // l'articolo sa da dove parte, ed è l'unico modo per ricostruirlo. Riaprendo il preventivo
+      // la sede ricompare, e al primo salvataggio la riga si risana da sola.
+      const istanzaSalvata = g.gonfiabileId && gonfiabili.find(x => x.id === g.gonfiabileId);
       const sedeSalvata = (g.sedeId && sedi.find(s => s.id === g.sedeId))
-        || sedi.find(s => s.nome === g.sedePartenza);
+        || sedi.find(s => s.nome === g.sedePartenza)
+        || (istanzaSalvata && sedi.find(s => s.id === istanzaSalvata.locationId));
       soluzioni[g.nome] = {
         // L'istanza va ripresa dalla sede salvata: è quella di cui il PDF riporta la scheda tecnica
         prodotto: (g.gonfiabileId && gonfiabili.find(x => x.id === g.gonfiabileId))
@@ -448,7 +454,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
           || { prezzo: 0 },
         // Il flag "di proprietà" va riletto dall'anagrafica sedi: nel preventivo si salva solo il nome
         // L'id va riportato dentro, altrimenti il primo risalvataggio lo perderebbe.
-        partenza: { id: sedeSalvata?.id || g.sedeId || null, nome: g.sedePartenza || "—", bfm: !!sedeSalvata?.bfm },
+        partenza: { id: sedeSalvata?.id || g.sedeId || null, nome: sedeSalvata?.nome || g.sedePartenza || "—", bfm: !!sedeSalvata?.bfm },
         kmAndata: parseFloat(g.kmCalcolati) || 0,
         costoKmTotale: costoKm,
         costoBaseMoltiplicato: costoBase,
