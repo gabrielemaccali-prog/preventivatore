@@ -7,10 +7,9 @@ import { quadratura, euro, r2, num, nomeCategoria } from './calcolo'
 // ============================================================
 // Cashflow: dove sono i soldi adesso, ente per ente. Niente filtri: conta tutto dalla prima chiusura. Una sotto-scheda per BFM, Albatros e Lama; chi vede
 // quale lo decidono i ruoli (sottoschede cashflow_*).
-//   Lama, BFM  entrano i contanti ritirati alle chiusure, escono le spese che hanno pagato: il
-//              saldo è quanto hanno ancora in mano.
-//   Albatros   entrano gli incassi POS, escono le spese pagate da Albatros; a parte il fondo cassa,
-//              che è di Albatros e resta in cassa.
+//   Albatros   entrano gli incassi POS e i contanti ritirati alle chiusure (i ragazzi li ritirano,
+//              ma sono di Albatros), escono le spese pagate da Albatros; a parte il fondo cassa.
+//   Lama, BFM  solo le spese che hanno pagato.
 // Le spese ancora da attribuire non sono di nessuno: si segnalano e basta.
 // ============================================================
 
@@ -24,8 +23,11 @@ const SOTTOSCHEDE = [
 function movimentiDi(ente, chiusure, spese) {
   const entrate = chiusure.filter(c => c.chiusa_il).flatMap(c => {
     const q = quadratura(c, []);
-    if (ente === 'albatros') return q.pos > 0 ? [{ data: c.data, importo: q.pos, descrizione: 'Incasso POS' }] : [];
-    return c.ritirato_da === ente && q.ritirato > 0 ? [{ data: c.data, importo: q.ritirato, descrizione: 'Contanti ritirati alla chiusura' }] : [];
+    if (ente !== 'albatros') return [];
+    return [
+      ...(q.pos > 0 ? [{ data: c.data, importo: q.pos, descrizione: 'Incasso POS', tipo: 'pos' }] : []),
+      ...(q.ritirato > 0 ? [{ data: c.data, importo: q.ritirato, descrizione: 'Contanti ritirati alla chiusura', tipo: 'contanti' }] : []),
+    ];
   });
   const uscite = spese.filter(s => s.ente === ente).map(s => ({ data: s.data, importo: -r2(num(s.importo)), descrizione: s.descrizione, spesa: s }));
   return [...entrate, ...uscite].sort((a, b) => b.data.localeCompare(a.data) || a.importo - b.importo);
@@ -55,6 +57,7 @@ function Cashflow({ user, categorie }) {
   const entrate = somma(mov, 1);
   const uscite = somma(mov, -1);
   const saldo = r2(entrate + uscite);
+  const sommaTipo = (tipo) => r2(mov.filter(m => m.tipo === tipo).reduce((t, m) => t + m.importo, 0));
   const daAttribuire = spese.filter(s => !s.ente);
   const ultimaConFondo = [...chiusure].filter(c => c.chiusa_il && c.fondo_lasciato != null).sort((a, b) => b.data.localeCompare(a.data))[0];
 
@@ -70,10 +73,16 @@ function Cashflow({ user, categorie }) {
         </div>
 
         <div className="albatros-cifre">
-          <div className="albatros-cifra-saldo"><span>{attiva.ente === 'albatros' ? 'Saldo attuale' : 'Ancora in mano'}</span><strong>{euro(saldo)}</strong><small>entrate − uscite</small></div>
-          <div><span>Entrate</span><strong style={{ color: '#15803d' }}>{euro(entrate)}</strong>
-            <small>{attiva.ente === 'albatros' ? 'incassi POS' : 'contanti ritirati'}</small></div>
-          <div><span>Uscite</span><strong style={{ color: '#b91c1c' }}>{euro(-uscite)}</strong><small>spese pagate</small></div>
+          {attiva.ente === 'albatros' ? (
+            <>
+              <div className="albatros-cifra-saldo"><span>Saldo attuale</span><strong>{euro(saldo)}</strong><small>entrate − uscite</small></div>
+              <div><span>Incassi POS</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo('pos'))}</strong><small>entrate</small></div>
+              <div><span>Contanti ritirati</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo('contanti'))}</strong><small>entrate, dalle chiusure</small></div>
+              <div><span>Spese pagate</span><strong style={{ color: '#b91c1c' }}>{euro(-uscite)}</strong><small>uscite</small></div>
+            </>
+          ) : (
+            <div className="albatros-cifra-saldo"><span>Spese pagate</span><strong>{euro(-uscite)}</strong><small>da {attiva.label}, dalla prima chiusura</small></div>
+          )}
           {attiva.ente === 'albatros' && (
             <div><span>Fondo cassa</span><strong>{euro(ultimaConFondo?.fondo_lasciato)}</strong>
               <small>{ultimaConFondo ? `lasciato il ${formattaDataGGMMAAAA(ultimaConFondo.data)}` : 'nessuna chiusura col fondo'}</small></div>

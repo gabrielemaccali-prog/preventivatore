@@ -7,7 +7,8 @@
 --   fondo_partenza  il fondo con cui si e' partiti: proposto da quello lasciato all'ultima
 --                   chiusura, confermato o corretto da chi chiude
 --   fondo_lasciato  quanto si lascia in cassa per domani
---   ritirato_da     chi ritira il resto (contanti + fondo_partenza - fondo_lasciato): 'lama' o 'bfm'
+--   ritirato_da     chi ritira il resto (contanti + fondo_partenza - fondo_lasciato): 'lama' o 'bfm'.
+--                   Non piu' usato: i contanti ritirati sono di Albatros.
 -- Il fondo non entra nell'incassato: serve a sapere quanto resta in cassa e quanto si ritira.
 --
 -- Le giornate gia' chiuse restano con i campi vuoti, che valgono zero: i loro conti non cambiano.

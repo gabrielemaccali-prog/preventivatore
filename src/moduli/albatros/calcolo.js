@@ -21,8 +21,6 @@ export const ENTI = [
   { id: 'lama', label: 'Lama' },
 ];
 export const etichettaEnte = (id) => ENTI.find(e => e.id === id)?.label || id;
-// Chi ritira i contanti a fine serata: il fondo cassa invece resta ad Albatros.
-export const ENTI_RITIRO = ENTI.filter(e => e.id !== 'albatros');
 
 export const num = (n) => Number(n) || 0;
 export const r2 = (n) => Math.round(num(n) * 100) / 100;
@@ -67,7 +65,7 @@ export const sommaRighe = (righe) => r2((righe || []).reduce((s, r) => s + total
 // è così che i ragazzi contano, tenendo da parte il fondo. L'incassato è POS + contanti e si
 // confronta col battuto. Il fondo resta in cassa da una sera all'altra e serve solo a sapere quanto
 // c'è in cassa e quanto si ritira: in cassa ci sono contanti + fondo di partenza, si lascia
-// fondo_lasciato, il resto lo ritira Lama o BFM (chiusura.ritirato_da).
+// fondo_lasciato, il resto lo ritirano i ragazzi: sono contanti di Albatros.
 // Le spese non c'entrano: si registrano a parte, nella scheda Spese.
 //   nonSpecificato > 0  parte dell'incassato non ancora spiegata dalle righe (normale)
 //   nonSpecificato < 0  le righe superano l'incassato: qualcosa è contato due volte, o manca un incasso

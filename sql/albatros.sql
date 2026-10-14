@@ -63,7 +63,7 @@ create table if not exists albatros_chiusure (
   contanti numeric(10,2) check (contanti >= 0),      -- contanti incassati, senza il fondo; null = non ancora scritti
   fondo_partenza numeric(10,2) check (fondo_partenza >= 0),  -- fondo cassa con cui si e' partiti
   fondo_lasciato numeric(10,2) check (fondo_lasciato >= 0),  -- fondo lasciato in cassa per domani
-  ritirato_da text,                          -- chi ritira il resto: lama | bfm
+  ritirato_da text,                          -- non piu' usato: i contanti ritirati sono di Albatros
   chiusa_il timestamptz,                     -- null = giornata ancora aperta
   chiusa_da bigint references utenti(id) on update cascade on delete set null,
   creato_il timestamptz not null default now(),

@@ -36,7 +36,7 @@ verifica('in cassa = contanti + fondo di partenza', 290, conFondo.contantiInCass
 verifica('ritirato = in cassa - fondo lasciato', 170, conFondo.ritirato);
 const ieri = quadratura({ pos: 130, contanti: 455, fondo_partenza: 30, fondo_lasciato: 30 }, [{ quantita: 1, prezzo: 585 }]);
 verifica('10 ottobre: incassato uguale al battuto', 0, ieri.nonSpecificato);
-verifica('10 ottobre: ritirati da Lama', 455, ieri.ritirato);
+verifica('10 ottobre: contanti ritirati', 455, ieri.ritirato);
 verifica('senza fondo i conti di prima', 297, quadratura(ch, righe).incassato);
 verifica('fondo proposto: quello lasciato ieri', 120, fondoProposto({ fondo_lasciato: 120 }));
 verifica('fondo proposto: nessuna chiusura prima', null, fondoProposto(null));

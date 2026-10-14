@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
-import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, etichettaEnte, euro, r2, periodoIniziale, intervalloPeriodo } from './calcolo'
+import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, euro, r2, periodoIniziale, intervalloPeriodo } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 
 // ============================================================
@@ -93,7 +93,7 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
                     <td className="num">{euro(g.specificato)}{g.chiusura.chiusa_il && <span className="albatros-tenue"> ({Math.round(g.quota * 100)}%)</span>}</td>
                     <td className="num"><span className="albatros-tenue">{g.chiusura.chiusa_il ? euro(g.fondoLasciato) : '—'}</span></td>
                     <td className="num">{g.chiusura.chiusa_il && g.ritirato > 0
-                      ? <>{euro(g.ritirato)}{g.chiusura.ritirato_da && <div className="albatros-tenue" style={{ fontSize: '0.75rem' }}>{etichettaEnte(g.chiusura.ritirato_da)}</div>}</>
+                      ? euro(g.ritirato)
                       : <span className="albatros-tenue">—</span>}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {g.chiusura.chiusa_il ? <span className="albatros-badge chiusa mini">Chiusa</span> : <span className="albatros-badge aperta mini">Aperta</span>}

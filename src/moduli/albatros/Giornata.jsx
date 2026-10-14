@@ -4,7 +4,7 @@ import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   categorieDi, idCategoriaScelta, num, r2, euro, giornataDiLavoro,
-  quadratura, fondoProposto, fondoDaSpecificare, ENTI_RITIRO, etichettaEnte, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita, sommaRighe, totaleRiga, rigaDaIncrementare, vociFrequenti, voceDiNome,
+  quadratura, fondoProposto, fondoDaSpecificare, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita, sommaRighe, totaleRiga, rigaDaIncrementare, vociFrequenti, voceDiNome,
 } from './calcolo'
 import SceltaCategoria from './SceltaCategoria'
 import IconaCategoria from './IconaCategoria'
@@ -14,7 +14,7 @@ import IconaCategoria from './IconaCategoria'
 // Durante la serata si toccano le voci del listino e si forma il
 // "battuto", il preventivo di quanto dovrebbe esserci in cassa. A fine serata "Chiudi la giornata"
 // apre la chiusura: si scrivono POS e contanti incassati (senza il fondo), si conferma il fondo cassa con cui
-// si era partiti e si dice quanto se ne lascia per domani; il resto lo ritira Lama o BFM. L'incasso
+// si era partiti e si dice quanto se ne lascia per domani; il resto si ritira, ed è di Albatros. L'incasso
 // si confronta col battuto e, se avanza un residuo, lo si può spiegare con altre voci.
 //
 // Finché la giornata è aperta la composizione si modifica liberamente. Chiusa, il totale è fissato
@@ -247,13 +247,12 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
       contanti: mostraImporto(chiusura?.contanti ?? null),
       fondo_partenza: mostraImporto(partenza),
       fondo_lasciato: mostraImporto(chiusura?.fondo_lasciato ?? partenza),
-      ritirato_da: chiusura?.ritirato_da || '',
     });
   };
 
   const apriFondo = () => {
     const partenza = fondoProposto(precedente);
-    setInFondo({ fondo_partenza: mostraImporto(partenza), fondo_lasciato: mostraImporto(partenza), ritirato_da: '' });
+    setInFondo({ fondo_partenza: mostraImporto(partenza), fondo_lasciato: mostraImporto(partenza) });
   };
 
   // Scrive solo il fondo: POS e contanti restano quelli della chiusura.
@@ -264,10 +263,8 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
     const contanti = r2(num(chiusura.contanti));
     const inCassa = r2(contanti + fondoPartenza);
     if (fondoLasciato > inCassa) { alert(`Non si può lasciare in cassa più di quanto c'era (${euro(inCassa)}: incasso più fondo di partenza).`); return; }
-    const ritirato = r2(inCassa - fondoLasciato);
-    if (ritirato > 0 && !inFondo.ritirato_da) { alert(`Scegli chi ha ritirato i ${euro(ritirato)}.`); return; }
     const { error } = await supabase.from('albatros_chiusure')
-      .update({ fondo_partenza: fondoPartenza, fondo_lasciato: fondoLasciato, ritirato_da: ritirato > 0 ? inFondo.ritirato_da : null })
+      .update({ fondo_partenza: fondoPartenza, fondo_lasciato: fondoLasciato })
       .eq('id', chiusura.id).is('fondo_lasciato', null);
     if (error) { alert(`Errore: ${error.message}`); return; }
     setInFondo(null);
@@ -280,14 +277,11 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
     if ([pos, contanti, fondoPartenza, fondoLasciato].some(v => Number.isNaN(v) || v < 0)) { alert('Importo non valido.'); return; }
     const inCassa = r2(contanti + fondoPartenza);
     if (fondoLasciato > inCassa) { alert(`Non si può lasciare in cassa più di quanto c'è (${euro(inCassa)}: incasso più fondo di partenza).`); return; }
-    const ritirato = r2(inCassa - fondoLasciato);
-    if (ritirato > 0 && !inChiusura.ritirato_da) { alert(`Scegli chi ritira i ${euro(ritirato)}.`); return; }
     const ch = await assicuraChiusura();
     if (!ch) return;
     const { error } = await supabase.from('albatros_chiusure')
       .update({
         pos, contanti, fondo_partenza: fondoPartenza, fondo_lasciato: fondoLasciato,
-        ritirato_da: ritirato > 0 ? inChiusura.ritirato_da : null,
         chiusa_il: new Date().toISOString(), chiusa_da: user.id,
       }).eq('id', ch.id);
     if (error) { alert(`Errore: ${error.message}`); return; }
@@ -411,7 +405,7 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
             <p className="albatros-nota">
               {fondoDaSpecificare(chiusura) ? 'Fondo cassa non specificato.' : <>
                 Lasciati in cassa {euro(q.fondoLasciato)}
-                {q.ritirato > 0 && <> · ritirati {euro(q.ritirato)}{chiusura.ritirato_da ? ` da ${etichettaEnte(chiusura.ritirato_da)}` : ''}</>}
+                {q.ritirato > 0 && <> · ritirati {euro(q.ritirato)}</>}
               </>}
             </p>
             {fondoDaSpecificare(chiusura) && (
@@ -442,14 +436,7 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
             {precedente && <p className="albatros-nota">All'ultima chiusura prima ({formattaDataGGMMAAAA(precedente.data)}) erano stati lasciati {euro(precedente.fondo_lasciato)}.</p>}
             <div className="albatros-ritiro">
               <span>Ritirati: <strong>{euro(qf.ritirato)}</strong></span>
-              {qf.ritirato > 0 && (
-                <label className="albatros-etichetta" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>Li ha ritirati
-                  <select value={inFondo.ritirato_da} onChange={(e) => setInFondo({ ...inFondo, ritirato_da: e.target.value })} className="albatros-campo" style={{ width: 'auto' }}>
-                    <option value="">Scegli…</option>
-                    {ENTI_RITIRO.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
-                  </select>
-                </label>
-              )}
+              <span className="albatros-tenue">contanti di Albatros</span>
             </div>
             <div className="albatros-riepilogo-chiusura">
               <div className="albatros-voce-q"><span>In cassa (incasso + fondo di partenza)</span><span>{euro(qf.contantiInCassa)}</span></div>
@@ -493,15 +480,7 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
             </div>
             <div className="albatros-ritiro">
               <span>Da ritirare: <strong>{euro(qc.ritirato)}</strong></span>
-              {qc.ritirato > 0 && (
-                <label className="albatros-etichetta" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>Li ritira
-                  <select value={inChiusura.ritirato_da} onChange={(e) => setInChiusura({ ...inChiusura, ritirato_da: e.target.value })} className="albatros-campo" style={{ width: 'auto' }}
-                    disabled={!cassaScrivibile(chiusura, chiusura?.ritirato_da ?? null, puoCorreggere)}>
-                    <option value="">Scegli…</option>
-                    {ENTI_RITIRO.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
-                  </select>
-                </label>
-              )}
+              <span className="albatros-tenue">contanti di Albatros</span>
             </div>
 
             <div className="albatros-riepilogo-chiusura">
