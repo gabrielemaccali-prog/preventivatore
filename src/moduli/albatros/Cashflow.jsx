@@ -58,6 +58,11 @@ function Cashflow({ user, categorie }) {
   const uscite = somma(mov, -1);
   const saldo = r2(entrate + uscite);
   const sommaTipo = (tipo) => r2(mov.filter(m => m.tipo === tipo).reduce((t, m) => t + m.importo, 0));
+  // Sulla pagina di Lama: i contanti di Albatros che sono in mano, cioè i contanti ritirati alle
+  // chiusure meno le spese pagate da Albatros.
+  const movAlbatros = movimentiDi('albatros', chiusure, spese);
+  const contantiRitirati = r2(movAlbatros.filter(m => m.tipo === 'contanti').reduce((t, m) => t + m.importo, 0));
+  const speseAlbatros = r2(-movAlbatros.filter(m => m.importo < 0).reduce((t, m) => t + m.importo, 0));
   const daAttribuire = spese.filter(s => !s.ente);
   const ultimaConFondo = [...chiusure].filter(c => c.chiusa_il && c.fondo_lasciato != null).sort((a, b) => b.data.localeCompare(a.data))[0];
 
@@ -81,7 +86,13 @@ function Cashflow({ user, categorie }) {
               <div><span>Spese pagate</span><strong style={{ color: '#b91c1c' }}>{euro(-uscite)}</strong><small>uscite</small></div>
             </>
           ) : (
-            <div className="albatros-cifra-saldo"><span>Spese pagate</span><strong>{euro(-uscite)}</strong><small>da {attiva.label}, dalla prima chiusura</small></div>
+            <>
+              <div className="albatros-cifra-saldo"><span>Spese pagate</span><strong>{euro(-uscite)}</strong><small>da {attiva.label}, dalla prima chiusura</small></div>
+              {attiva.ente === 'lama' && (
+                <div><span>Contanti in mano ad Albatros</span><strong>{euro(contantiRitirati - speseAlbatros)}</strong>
+                  <small>{euro(contantiRitirati)} ritirati alle chiusure − {euro(speseAlbatros)} di spese pagate da Albatros</small></div>
+              )}
+            </>
           )}
           {attiva.ente === 'albatros' && (
             <div><span>Fondo cassa</span><strong>{euro(ultimaConFondo?.fondo_lasciato)}</strong>
