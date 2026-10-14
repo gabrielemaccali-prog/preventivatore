@@ -13,6 +13,8 @@ import FiltroPeriodo from './FiltroPeriodo'
 // vedere da sole; quelle partite con un fondo diverso da quello lasciato la sera prima "Fondo diverso".
 // ============================================================
 
+// Il giorno della settimana di una data 'YYYY-MM-DD', a mezzogiorno per non farlo spostare dal fuso.
+const giornoSettimana = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('it-IT', { weekday: 'short' });
 const oraDi = (ts) => new Date(ts).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
@@ -86,7 +88,7 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
               <tbody>
                 {visibili.map(g => (
                   <tr key={g.chiusura.id} onClick={() => onApri(g.chiusura.data)} title="Apri la giornata">
-                    <td>{formattaDataGGMMAAAA(g.chiusura.data)}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}><span className="albatros-giorno">{giornoSettimana(g.chiusura.data)}</span> {formattaDataGGMMAAAA(g.chiusura.data)}</td>
                     <td className="num">{euro(g.pos)}</td>
                     <td className="num">{euro(g.contanti)}</td>
                     <td className="num"><strong>{euro(g.incassato)}</strong></td>

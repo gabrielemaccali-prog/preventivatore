@@ -1145,3 +1145,4 @@ input.valore-proposto {
 .albatros-cifre > .albatros-cifra-saldo { background: #0f172a; border-color: #0f172a; }
 .albatros-cifra-saldo span, .albatros-cifra-saldo small { color: #cbd5e1 !important; }
 .albatros-cifra-saldo strong { color: #fff !important; font-size: 1.5rem !important; }
+.albatros-giorno { display: inline-block; min-width: 30px; color: #64748b; text-transform: capitalize; }
