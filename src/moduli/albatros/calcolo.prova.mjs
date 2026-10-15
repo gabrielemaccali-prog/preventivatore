@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   quadratura, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
-  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita,
+  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, posizioneEnte, contantiAlbatros,
 } from './calcolo.js';
 
 const esiti = [];
@@ -60,6 +60,21 @@ verifica('spesa: non dettagliato', 149.5, dettaglioSpesa(scontrino, vociScontrin
 verifica('spesa: voce dentro il totale', true, rigaSpesaConsentita(scontrino, vociScontrino, 149.5));
 verifica('spesa: voce oltre il totale', false, rigaSpesaConsentita(scontrino, vociScontrino, 149.51));
 verifica('spesa senza voci', 0, dettaglioSpesa(scontrino, []).quota);
+
+// ---------- pagamenti a Lama e BFM ----------
+const speseEnti = [{ ente: 'lama', importo: 661 }, { ente: 'albatros', importo: 100 }, { ente: 'bfm', importo: 50 }];
+const pagati = [
+  { pagante: 'albatros', beneficiario: 'lama', causale: 'rimborso', metodo: 'contanti', importo: 400 },
+  { pagante: 'albatros', beneficiario: 'lama', causale: 'stipendio', metodo: 'bonifico', importo: 1000 },
+  { pagante: 'bfm', beneficiario: 'lama', causale: 'stipendio', metodo: 'contanti', importo: 300 },
+];
+verifica('Lama: da rimborsare', 261, posizioneEnte('lama', speseEnti, pagati).daRimborsare);
+verifica('Lama: lo stipendio non rimborsa', 1300, posizioneEnte('lama', speseEnti, pagati).altri);
+verifica('BFM: niente rimborsi', 50, posizioneEnte('bfm', speseEnti, pagati).daRimborsare);
+const chiuseCF = [{ chiusa_il: 'x', pos: 100, contanti: 500 }, { chiusa_il: null, contanti: 999 }];
+verifica('contanti in mano: ritirati - spese Albatros - pagati in contanti', 0, contantiAlbatros(chiuseCF, speseEnti, pagati).inMano);
+verifica('contanti: le giornate aperte non contano', 500, contantiAlbatros(chiuseCF, speseEnti, pagati).ritirati);
+verifica('contanti: i pagamenti di BFM non toccano la cassa di Albatros', 400, contantiAlbatros(chiuseCF, speseEnti, pagati).pagatiInContanti);
 
 // ---------- data della serata ----------
 verifica("all'una di notte è ancora ieri", '2026-10-06', giornataDiLavoro(new Date(2026, 9, 7, 1, 30)));

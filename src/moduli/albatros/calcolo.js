@@ -22,6 +22,40 @@ export const ENTI = [
 ];
 export const etichettaEnte = (id) => ENTI.find(e => e.id === id)?.label || id;
 
+// I pagamenti a Lama (e a BFM), fatti da Albatros o da BFM (tabella albatros_pagamenti).
+export const CAUSALI_PAGAMENTO = [
+  { id: 'rimborso', label: 'Rimborso spese' },
+  { id: 'stipendio', label: 'Stipendio' },
+  { id: 'altro', label: 'Altro' },
+];
+export const METODI_PAGAMENTO = [
+  { id: 'contanti', label: 'Contanti' },
+  { id: 'bonifico', label: 'Bonifico' },
+  { id: 'altro', label: 'Altro' },
+];
+export const etichettaCausale = (id) => CAUSALI_PAGAMENTO.find(c => c.id === id)?.label || id;
+export const etichettaMetodo = (id) => METODI_PAGAMENTO.find(m => m.id === id)?.label || id;
+
+// La posizione di Lama o BFM verso Albatros: le spese che ha pagato per il centro, i rimborsi che
+// ha ricevuto, quanto resta da rimborsargli, e gli altri pagamenti (stipendi e simili) a parte.
+export function posizioneEnte(ente, spese, pagamenti) {
+  const tot = (elenco) => r2(elenco.reduce((t, x) => t + num(x.importo), 0));
+  const speseEnte = tot((spese || []).filter(s => s.ente === ente));
+  const suoi = (pagamenti || []).filter(p => p.beneficiario === ente);
+  const rimborsi = tot(suoi.filter(p => p.causale === 'rimborso'));
+  const altri = tot(suoi.filter(p => p.causale !== 'rimborso'));
+  return { spese: speseEnte, rimborsi, daRimborsare: r2(speseEnte - rimborsi), altri };
+}
+
+// I contanti di Albatros in mano: ritirati alle chiusure, meno le spese pagate da Albatros, meno i
+// pagamenti che Albatros ha fatto in contanti.
+export function contantiAlbatros(chiusure, spese, pagamenti) {
+  const ritirati = r2((chiusure || []).filter(c => c.chiusa_il).reduce((t, c) => t + Math.max(quadratura(c, []).ritirato, 0), 0));
+  const speseAlbatros = r2((spese || []).filter(s => s.ente === 'albatros').reduce((t, s) => t + num(s.importo), 0));
+  const pagatiInContanti = r2((pagamenti || []).filter(p => p.pagante === 'albatros' && p.metodo === 'contanti').reduce((t, p) => t + num(p.importo), 0));
+  return { ritirati, speseAlbatros, pagatiInContanti, inMano: r2(ritirati - speseAlbatros - pagatiInContanti) };
+}
+
 export const num = (n) => Number(n) || 0;
 export const r2 = (n) => Math.round(num(n) * 100) / 100;
 export const euro = (n) => `€${r2(n).toFixed(2)}`;
