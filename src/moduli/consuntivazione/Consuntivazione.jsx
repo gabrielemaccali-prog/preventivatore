@@ -20,6 +20,9 @@ import Controparti from './Controparti'
 const oggiIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const euro = (n) => `€${(Number(n) || 0).toFixed(2)}`;
 const ETICHETTA_STATO = { daFatturare: 'Da fatturare', parziale: 'Fatturata in parte', fatturata: 'Fatturata', nonDovuta: 'Coperta da voucher' };
+// "Niente da fatturare" ha due ragioni diverse: il voucher che copre tutto, e l'evento
+// promozionale venduto a zero. Dirle entrambe "coperta da voucher" racconterebbe una cosa falsa.
+const etichettaStatoFattura = (x) => (x.stato === 'nonDovuta' && !x.voucher ? 'Promozionale' : ETICHETTA_STATO[x.stato]);
 const COLORE_STATO = { daFatturare: '#b91c1c', parziale: '#b45309', fatturata: '#0284c7', nonDovuta: '#64748b' };
 const FATTURA_VUOTA = { data: '', numero: '', importo: '' };
 const titoloDettaglio = { fontSize: '0.75rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '2px 0 4px 0' };
@@ -328,7 +331,7 @@ function Consuntivazione({ user }) {
                       <td style={destra}>{euro(x.dovuto)}</td>
                       <td style={destra}>{euro(x.fatturato)}</td>
                       <td style={{ ...cella, whiteSpace: 'nowrap', color: COLORE_STATO[x.stato], fontWeight: 600 }}>
-                        {x.stato === 'fatturata' && '✓ '}{ETICHETTA_STATO[x.stato]}
+                        {x.stato === 'fatturata' && '✓ '}{etichettaStatoFattura(x)}
                       </td>
                     </tr>
                     {aperta && (

@@ -242,7 +242,7 @@ export const anagraficaFatturazioneAPosto = (p) => senzaFatturaDaEmettere(p) || 
 
 export const prenotazioneCompletata = (p, oggiIso) =>
   p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso
-  && (p.statoPagamento === 'saldato' || p.statoPagamento === 'compensazione') && anagraficaFatturazioneAPosto(p);
+  && ['saldato', 'compensazione', 'omaggio'].includes(p.statoPagamento) && anagraficaFatturazioneAPosto(p);
 
 // Scompone un risultato Nominatim nei singoli campi indirizzo
 export const parseIndirizzo = (luogo) => {

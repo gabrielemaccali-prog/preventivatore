@@ -227,12 +227,16 @@ const validaEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e || "").trim());
 const statoPagamentoDi = (pagamenti, prezzoVendita, valoreVoucher = 0, clienteFornitore = null) => {
   if (clienteFornitore) return 'compensazione';
   const tot = (pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0) + (parseFloat(valoreVoucher) || 0);
+  // Prezzo a zero -- di norma uno sconto del 100% -- vuol dire evento promozionale: non c'è niente
+  // da incassare e niente da fatturare, quindi non è "in attesa" di un pagamento che non arriverà
+  // mai. I costi restano: campo, rinfresco, fornitori e compensi si tracciano come sempre.
+  if ((parseFloat(prezzoVendita) || 0) <= 0.01) return tot > 0 ? 'saldato' : 'omaggio';
   if (tot <= 0) return 'in attesa';
   if (tot + 0.001 >= (prezzoVendita || 0)) return 'saldato';
   return 'acconto';
 };
 // Il colore del pallino del pagamento, uguale in tabella, calendario e riepiloghi.
-const colorePagamento = (stato) => ({ saldato: '#16a34a', acconto: '#ca8a04', compensazione: '#7c3aed' }[stato] || '#dc2626');
+const colorePagamento = (stato) => ({ saldato: '#16a34a', acconto: '#ca8a04', compensazione: '#7c3aed', omaggio: '#0284c7' }[stato] || '#dc2626');
 
 // Colonne della tabella prenotazioni (Storico e Gestione): etichetta mostrata e valore su cui ordinare.
 // Le colonne composite ordinano sul dato che conta: la data evento tiene conto anche dell'ora, e
@@ -836,9 +840,11 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const totalePagatoP = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
     const residuo = Math.max(prezzoVendita - totalePagatoP, 0);
     const statoPag = p.statoPagamento || statoPagamentoDi(p.pagamenti, prezzoVendita, p.voucherValore);
-    const rigaPagamentoLabel = statoPag === 'saldato' || statoPag === 'compensazione' ? t('Pagamento:', 'Payment:') : t('Modalità di pagamento:', 'Payment method:');
+    const rigaPagamentoLabel = ['saldato', 'compensazione', 'omaggio'].includes(statoPag) ? t('Pagamento:', 'Payment:') : t('Modalità di pagamento:', 'Payment method:');
     const rigaPagamentoValore = statoPag === 'saldato'
       ? t('SALDATO ✅', 'PAID IN FULL ✅')
+      : statoPag === 'omaggio'
+      ? t('Evento promozionale: nessun importo dovuto', 'Promotional event: nothing to pay')
       : statoPag === 'compensazione'
       ? t('In compensazione', 'Offset against our account')
       : inglese
@@ -1141,7 +1147,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // fatturare. Il saldo non c'entra -- una partita che aspetta solo il pagamento sta in "Da
     // saldare", non in "Da completare", e non c'e' niente da sistemare nella scheda.
     const completata = p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso && anagraficaFatturazioneAPosto(p);
-    const saldata = p.statoPagamento === 'saldato';
+    const saldata = p.statoPagamento === 'saldato' || p.statoPagamento === 'omaggio' || p.statoPagamento === 'compensazione';
     return (
       <Fragment key={p.id}>
         <tr
@@ -2462,7 +2468,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
 
             {/* Pagamenti */}
             <div className="sotto-sezione">
-              <h3>Stato pagamento: <span style={{ fontSize: '0.8rem', fontWeight: 'bold', padding: '3px 10px', borderRadius: '10px', textTransform: 'none', letterSpacing: 0, background: statoPag === 'saldato' ? '#dcfce7' : statoPag === 'acconto' ? '#fef9c3' : statoPag === 'compensazione' ? '#ede9fe' : '#fee2e2', color: statoPag === 'saldato' ? '#166534' : statoPag === 'acconto' ? '#854d0e' : statoPag === 'compensazione' ? '#5b21b6' : '#991b1b' }}>{statoPag}</span></h3>
+              <h3>Stato pagamento: <span style={{ fontSize: '0.8rem', fontWeight: 'bold', padding: '3px 10px', borderRadius: '10px', textTransform: 'none', letterSpacing: 0, background: statoPag === 'saldato' ? '#dcfce7' : statoPag === 'acconto' ? '#fef9c3' : statoPag === 'compensazione' ? '#ede9fe' : statoPag === 'omaggio' ? '#e0f2fe' : '#fee2e2', color: statoPag === 'saldato' ? '#166534' : statoPag === 'acconto' ? '#854d0e' : statoPag === 'compensazione' ? '#5b21b6' : statoPag === 'omaggio' ? '#075985' : '#991b1b' }}>{statoPag}</span></h3>
               {/* Un fornitore che ci commissiona una partita non la paga: il prezzo si compensa con
                   quello che gli dobbiamo, nella consuntivazione dei fornitori. Da qui la partita non
                   aspetta incassi e non va fatturata. */}
@@ -2495,7 +2501,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                   </tbody>
                 </table>
               )}
-              {statoPag !== 'saldato' && statoPag !== 'compensazione' && (
+              {!['saldato', 'compensazione', 'omaggio'].includes(statoPag) && (
                 <>
                   {!voucherUsato && (
                     <div className="pren-row" style={{ marginBottom: '8px' }}>
@@ -2849,7 +2855,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // vuoto da solo non basta a dirlo — "senza operatori" è una scelta dichiarata, e chi l'ha
         // spuntata ha già risposto alla domanda.
         const mancanoOperatori = (p) => !p.senzaOperatori && (p.operatori || []).length === 0;
-        const mancaIncasso = (p) => p.statoPagamento !== 'saldato' && p.statoPagamento !== 'compensazione';
+        const mancaIncasso = (p) => !['saldato', 'compensazione', 'omaggio'].includes(p.statoPagamento);
         const daCompletare = confermate.filter(p => mancaAnagrafica(p) || mancanoOperatori(p));
         const daSaldare = confermate.filter(mancaIncasso);
         // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
