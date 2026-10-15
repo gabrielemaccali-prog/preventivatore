@@ -27,6 +27,7 @@ export const SCHEDE_REGISTRY = {
       { id: 'chiusure', label: 'Giornata' },
       { id: 'storico', label: 'Chiusure' },
       { id: 'spese', label: 'Spese' },
+      { id: 'incassi', label: 'Incassi' },
       { id: 'listino', label: 'Listino' },
       { id: 'configuratore', label: 'Configuratore' },
       {

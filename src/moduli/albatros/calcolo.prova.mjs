@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   quadratura, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
-  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, posizioneEnte, contantiAlbatros,
+  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, posizioneEnte, contantiAlbatros,
 } from './calcolo.js';
 
 const esiti = [];
@@ -60,6 +60,12 @@ verifica('spesa: non dettagliato', 149.5, dettaglioSpesa(scontrino, vociScontrin
 verifica('spesa: voce dentro il totale', true, rigaSpesaConsentita(scontrino, vociScontrino, 149.5));
 verifica('spesa: voce oltre il totale', false, rigaSpesaConsentita(scontrino, vociScontrino, 149.51));
 verifica('spesa senza voci', 0, dettaglioSpesa(scontrino, []).quota);
+const misto = { importo: 100, categoria_id: 4 };
+const vociMiste = [{ importo: 30, categoria_id: 5 }, { importo: 50, categoria_id: null }];
+verifica('categoria: voci della spesa e parte non dettagliata', 70, importoInCategoria(misto, vociMiste, 4));
+verifica("categoria: solo la voce di un'altra categoria", 30, importoInCategoria(misto, vociMiste, 5));
+verifica('categoria: spesa senza voci, tutta', 100, importoInCategoria(misto, [], 4));
+verifica("categoria: non c'entra", 0, importoInCategoria(misto, [], 6));
 
 // ---------- pagamenti a Lama e BFM ----------
 const speseEnti = [{ ente: 'lama', importo: 661 }, { ente: 'albatros', importo: 100 }, { ente: 'bfm', importo: 50 }];

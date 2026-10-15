@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo, Fragment } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   nomeCategoria, idCategoriaScelta, ENTI, etichettaEnte, num, r2, euro, giornataDiLavoro, periodoIniziale, intervalloPeriodo,
-  dettaglioSpesa, rigaSpesaConsentita,
+  dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, categorieDi,
 } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 import SceltaCategoria from './SceltaCategoria'
@@ -28,6 +28,9 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   const [spese, setSpese] = useState([]);
   const [periodo, setPeriodo] = useState(periodoIniziale);
   const [filtroEnte, setFiltroEnte] = useState('');
+  // filtroCategoria: '' = tutte, 'nessuna' = senza categoria, altrimenti l'id. Con un filtro attivo
+  // ogni spesa conta per la parte che va a quella categoria (vedi importoInCategoria).
+  const [filtroCategoria, setFiltroCategoria] = useState('');
   // La spesa nell'overlay: null = chiuso; senza id è una spesa nuova.
   const [modulo, setModulo] = useState(null);
   const [inCorso, setInCorso] = useState(false);
@@ -56,9 +59,12 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   useEffect(() => { carica(); }, [da, al]);
 
   // filtroEnte: '' = tutte, 'nessuno' = da attribuire, altrimenti l'id dell'ente.
-  const visibili = useMemo(() => spese.filter(s => !filtroEnte || (filtroEnte === 'nessuno' ? !s.ente : s.ente === filtroEnte)), [spese, filtroEnte]);
+  const importo = (s) => (filtroCategoria ? importoInCategoria(s, vociPer[s.id], filtroCategoria === 'nessuna' ? null : Number(filtroCategoria)) : r2(num(s.importo)));
+  const visibili = spese
+    .filter(s => !filtroEnte || (filtroEnte === 'nessuno' ? !s.ente : s.ente === filtroEnte))
+    .filter(s => importo(s) > 0);
   const daAttribuire = spese.filter(s => !s.ente);
-  const totale = (elenco) => r2(elenco.reduce((t, s) => t + num(s.importo), 0));
+  const totale = (elenco) => r2(elenco.reduce((t, s) => t + importo(s), 0));
 
   const salva = async () => {
     const importo = leggiImporto(modulo.importo);
@@ -143,6 +149,13 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
               <option value="nessuno">Da attribuire</option>
             </select>
           </label>
+          <label className="albatros-etichetta" style={{ flex: '0 1 170px' }}>Categoria
+            <select value={filtroCategoria} onChange={(e) => setFiltroCategoria(e.target.value)} className="albatros-campo">
+              <option value="">Tutte</option>
+              {categorieDi(categorie, 'spesa', { ancheArchiviate: true }).map(c => <option key={c.id} value={String(c.id)}>{c.nome}{c.attiva ? '' : ' (archiviata)'}</option>)}
+              <option value="nessuna">Senza categoria</option>
+            </select>
+          </label>
           <button type="button" className={`albatros-chip albatros-chip-avviso ${filtroEnte === 'nessuno' ? 'attivo' : ''}`} style={{ alignSelf: 'flex-end' }}
             disabled={filtroEnte !== 'nessuno' && daAttribuire.length === 0} onClick={() => setFiltroEnte(filtroEnte === 'nessuno' ? '' : 'nessuno')}>
             Da attribuire ({daAttribuire.length})
@@ -186,7 +199,10 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                         </select>
                       )}
                     </td>
-                    <td className="num"><strong>{euro(s.importo)}</strong></td>
+                    <td className="num">
+                      <strong>{euro(importo(s))}</strong>
+                      {importo(s) !== r2(num(s.importo)) && <div className="albatros-tenue" style={{ fontSize: '0.75rem' }}>su {euro(s.importo)}</div>}
+                    </td>
                     {puoCorreggere && (
                       <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                         <button type="button" className="btn-icon-action" title="Modifica" onClick={() => modifica(s)} style={{ marginRight: '4px' }}><Icona nome="modifica" size={14} style={{ marginRight: 0 }} /></button>
