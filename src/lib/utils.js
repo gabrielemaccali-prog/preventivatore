@@ -310,3 +310,25 @@ export const estraiDateDaPeriodo = (periodo) => {
   if (!m) return { inizio: "", fine: "" };
   return { inizio: `${m[3]}-${m[2]}-${m[1]}`, fine: `${m[6]}-${m[5]}-${m[4]}` };
 };
+
+// IBAN: si tiene senza spazi e in maiuscolo, come lo vuole il bonifico. Chi lo scrive lo copia
+// quasi sempre da un documento dove è spezzato in gruppi di quattro, quindi gli spazi si tolgono
+// qui invece di chiedere a chi lo incolla di farlo a mano.
+export const normalizzaIBAN = (valore) => (valore || '').replace(/\s+/g, '').toUpperCase();
+
+// Il controllo è quello standard (ISO 13616): si spostano in coda le prime quattro posizioni, si
+// traducono le lettere in numeri (A=10 ... Z=35) e il resto della divisione per 97 deve dare 1.
+// Prende un IBAN sbagliato in una cifra, che è l'errore con cui un bonifico parte e non arriva.
+// Il campo vuoto non è valido: dove serve l'IBAN serve per intero.
+export const validaIBAN = (valore) => {
+  const iban = normalizzaIBAN(valore);
+  if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(iban)) return false;
+  const riordinato = iban.slice(4) + iban.slice(0, 4);
+  // Il numero è più lungo di quanto Number regga: il resto si calcola a pezzi, cifra per cifra.
+  let resto = 0;
+  for (const carattere of riordinato) {
+    const valoreCarattere = /[0-9]/.test(carattere) ? carattere : String(carattere.charCodeAt(0) - 55);
+    for (const cifra of valoreCarattere) resto = (resto * 10 + Number(cifra)) % 97;
+  }
+  return resto === 1;
+};
