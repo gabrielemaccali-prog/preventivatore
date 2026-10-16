@@ -91,6 +91,8 @@ function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere })
     if (await scrivi(() => supabase.from('albatros_categorie').update({ icona }).eq('id', c.id))) setSceltaIcona(null);
   };
 
+  const cambiaDettagliabile = (c) => scrivi(() => supabase.from('albatros_categorie').update({ dettagliabile: !c.dettagliabile }).eq('id', c.id));
+
   const cambiaAttiva = (c) => scrivi(() => supabase.from('albatros_categorie').update({ attiva: !c.attiva }).eq('id', c.id));
 
   const elimina = async (c) => {
@@ -127,6 +129,15 @@ function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere })
                     onBlur={() => rinomina(c)} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />
                 </div>
                 <span className="albatros-tenue" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{descriviUsi(c)}{c.attiva ? '' : ' · archiviata'}</span>
+                {tipo === 'spesa' && c.dettagliabile !== undefined && (
+                  <label className="albatros-con-icona" style={{ gap: '6px', fontSize: '0.78rem', color: '#475569', whiteSpace: 'nowrap' }} title="Le spese di questa categoria si possono aprire per scrivere le voci dello scontrino">
+                    Dettaglio
+                    <span className="albatros-interruttore">
+                      <input type="checkbox" checked={!!c.dettagliabile} disabled={!puoCorreggere || inCorso} onChange={() => cambiaDettagliabile(c)} />
+                      <span />
+                    </span>
+                  </label>
+                )}
                 {puoCorreggere && <button type="button" className="btn-icon-action" title={c.attiva ? 'Archivia' : 'Rimetti fra le scelte'} disabled={inCorso} onClick={() => cambiaAttiva(c)}><Icona nome={c.attiva ? 'archivia' : 'riporta'} size={14} style={{ marginRight: 0 }} /></button>}
                 {puoCorreggere && <button type="button" className="btn-icon-action danger" title="Cancella" disabled={inCorso} onClick={() => elimina(c)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
               </div>

@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   quadratura, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
-  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, posizioneEnte, contantiAlbatros,
+  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, posizioneEnte, contantiAlbatros,
 } from './calcolo.js';
 
 const esiti = [];
@@ -66,6 +66,10 @@ verifica('categoria: voci della spesa e parte non dettagliata', 70, importoInCat
 verifica("categoria: solo la voce di un'altra categoria", 30, importoInCategoria(misto, vociMiste, 5));
 verifica('categoria: spesa senza voci, tutta', 100, importoInCategoria(misto, [], 4));
 verifica("categoria: non c'entra", 0, importoInCategoria(misto, [], 6));
+const catSpese = [{ id: 4, dettagliabile: true }, { id: 5, dettagliabile: false }];
+verifica('dettaglio: spesa bar sì', true, spesaDettagliabile({ categoria_id: 4 }, catSpese));
+verifica('dettaglio: pulizia no', false, spesaDettagliabile({ categoria_id: 5 }, catSpese));
+verifica('dettaglio: senza categoria no', false, spesaDettagliabile({ categoria_id: null }, catSpese));
 
 // ---------- pagamenti a Lama e BFM ----------
 const speseEnti = [{ ente: 'lama', importo: 661 }, { ente: 'albatros', importo: 100 }, { ente: 'bfm', importo: 50 }];

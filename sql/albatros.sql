@@ -29,15 +29,16 @@ create table if not exists albatros_categorie (
   ordine integer not null default 0,
   attiva boolean not null default true,
   icona text,                                -- chiave di src/moduli/albatros/iconeCategoria.js
+  dettagliabile boolean not null default false, -- spese: si apre il dettaglio dello scontrino
   creato_il timestamptz not null default now()
 );
 create unique index if not exists albatros_categorie_nome_idx on albatros_categorie (tipo, lower(btrim(nome)));
 
 -- Categorie di partenza, poi si cambiano dal Configuratore. Ripetibile senza duplicare.
-insert into albatros_categorie (tipo, nome, ordine, icona)
-values ('listino', 'Campi', 1, 'pallone'), ('listino', 'Feste', 2, 'festa'), ('listino', 'Bar', 3, 'bar'),
-       ('spesa', 'Spesa bar', 1, null), ('spesa', 'Pulizia', 2, null), ('spesa', 'Manutenzione', 3, null),
-       ('spesa', 'Utenze', 4, null), ('spesa', 'Compensi', 5, null), ('spesa', 'Altro', 6, null)
+insert into albatros_categorie (tipo, nome, ordine, icona, dettagliabile)
+values ('listino', 'Campi', 1, 'pallone', false), ('listino', 'Feste', 2, 'festa', false), ('listino', 'Bar', 3, 'bar', false),
+       ('spesa', 'Spesa bar', 1, null, true), ('spesa', 'Pulizia', 2, null, false), ('spesa', 'Manutenzione', 3, null, false),
+       ('spesa', 'Utenze', 4, null, false), ('spesa', 'Compensi', 5, null, false), ('spesa', 'Altro', 6, null, false)
 on conflict do nothing;
 
 -- Il listino del centro. Prezzo e' il

@@ -90,6 +90,12 @@ export function importoInCategoria(spesa, voci, categoriaId) {
   const resto = (spesa.categoria_id ?? null) === cat ? dettaglioSpesa(spesa, voci).nonDettagliato : 0;
   return r2(nelleVoci + Math.max(resto, 0));
 }
+// Si può aprire il dettaglio di una spesa solo se la sua categoria è dettagliabile (Configuratore).
+// Prima di sql/albatros_categorie_dettagliabili.sql la colonna non c'è: allora lo sono tutte.
+export const spesaDettagliabile = (spesa, categorie) => {
+  const cat = (categorie || []).find(c => c.id === spesa?.categoria_id);
+  return !!cat && (cat.dettagliabile ?? true);
+};
 export const rigaSpesaConsentita = (spesa, righe, importo) => r2(dettaglioSpesa(spesa, righe).dettagliato + num(importo)) <= r2(spesa?.importo);
 
 // Il periodo dei filtri di Chiusure e Spese: si parte dal mese corrente.

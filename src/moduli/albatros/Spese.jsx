@@ -4,7 +4,7 @@ import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   nomeCategoria, idCategoriaScelta, ENTI, etichettaEnte, num, r2, euro, giornataDiLavoro, periodoIniziale, intervalloPeriodo,
-  dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, categorieDi,
+  dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, categorieDi, spesaDettagliabile,
 } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 import SceltaCategoria from './SceltaCategoria'
@@ -15,7 +15,8 @@ import SceltaCategoria from './SceltaCategoria'
 // l'elenco la segnala. Attribuirla è riempire un campo vuoto: lo può fare chiunque.
 // I ragazzi possono solo aggiungere; modificare ed eliminare spetta all'amministratore.
 // Nuova spesa e modifica si fanno nello stesso overlay.
-// Una spesa è uno scontrino col suo totale; toccandola si apre il dettaglio, dove si scrivono le
+// Una spesa è uno scontrino col suo totale; se la sua categoria è dettagliabile (di partenza solo
+// "Spesa bar", si cambia dal Configuratore) toccandola si apre il dettaglio, dove si scrivono le
 // voci che la compongono (anche dopo, anche in parte) senza superare il totale. Aggiungere voci lo
 // può fare chiunque, toglierle solo l'amministratore.
 // ============================================================
@@ -174,21 +175,24 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
             <table className="albatros-tabella">
               <thead>
-                <tr><th>Data</th><th>Cosa</th><th>Categoria</th><th>Pagata da</th><th className="num">Importo</th>{puoCorreggere && <th></th>}</tr>
+                <tr><th>Data</th><th>Cosa</th><th>Categoria</th><th>Pagata da</th><th className="num">Importo</th><th>Scritta da</th>{puoCorreggere && <th></th>}</tr>
               </thead>
               <tbody>
                 {visibili.map(s => {
                   const voci = vociPer[s.id] || [];
                   const det = dettaglioSpesa(s, voci);
                   const aperta = espansa === s.id;
+                  // Si apre se la categoria è dettagliabile, o se ha già delle voci da vedere.
+                  const dettagliabile = spesaDettagliabile(s, categorie);
+                  const apribile = dettagliabile || voci.length > 0;
                   return (
                   <Fragment key={s.id}>
-                  <tr onClick={() => apriDettaglio(s)} className={aperta ? 'selezionata' : ''} title="Apri il dettaglio">
-                    <td style={{ whiteSpace: 'nowrap' }}><span className={`riga-espandibile-chevron ${aperta ? 'aperta' : ''}`}>▸</span>{formattaDataGGMMAAAA(s.data)}</td>
+                  <tr onClick={() => apribile && apriDettaglio(s)} className={aperta ? 'selezionata' : ''} title={apribile ? 'Apri il dettaglio' : undefined} style={{ cursor: apribile ? 'pointer' : 'default' }}>
+                    <td style={{ whiteSpace: 'nowrap' }}><span className={`riga-espandibile-chevron ${aperta ? 'aperta' : ''}`}>{apribile ? '▸' : ''}</span>{formattaDataGGMMAAAA(s.data)}</td>
                     <td>
                       {s.descrizione}
-                      {voci.length > 0 && <span className={`albatros-badge mini ${det.nonDettagliato > 0 ? 'da-specificare' : 'chiusa'}`} style={{ marginLeft: '6px' }}>{voci.length} {voci.length === 1 ? 'voce' : 'voci'} · {Math.round(det.quota * 100)}%</span>}
-                      <div className="albatros-tenue" style={{ fontSize: '0.75rem' }}>{utenti[s.creato_da] ? `scritta da ${utenti[s.creato_da]}` : ''}</div>
+                      {dettagliabile && voci.length === 0 && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }} title="Scontrino da dettagliare: tocca la riga e aggiungi le voci">Da dettagliare</span>}
+                      {voci.length > 0 && <span className={`albatros-badge mini ${det.nonDettagliato > 0 ? 'da-specificare' : 'chiusa'}`} style={{ marginLeft: '6px' }}>{det.nonDettagliato > 0 && dettagliabile ? 'Da dettagliare · ' : ''}{voci.length} {voci.length === 1 ? 'voce' : 'voci'} · {Math.round(det.quota * 100)}%</span>}
                     </td>
                     <td>{nomeCategoria(categorie, s.categoria_id)}</td>
                     <td onClick={(e) => e.stopPropagation()}>
@@ -203,6 +207,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                       <strong>{euro(importo(s))}</strong>
                       {importo(s) !== r2(num(s.importo)) && <div className="albatros-tenue" style={{ fontSize: '0.75rem' }}>su {euro(s.importo)}</div>}
                     </td>
+                    <td className="albatros-tenue" style={{ whiteSpace: 'nowrap' }}>{utenti[s.creato_da] || '—'}</td>
                     {puoCorreggere && (
                       <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                         <button type="button" className="btn-icon-action" title="Modifica" onClick={() => modifica(s)} style={{ marginRight: '4px' }}><Icona nome="modifica" size={14} style={{ marginRight: 0 }} /></button>
@@ -212,8 +217,8 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                   </tr>
                   {aperta && (
                     <tr className="albatros-dettaglio-riga">
-                      <td colSpan={puoCorreggere ? 6 : 5}>
-                        {voci.length === 0 && <p className="albatros-vuoto" style={{ marginTop: 0 }}>Nessuna voce: aggiungi qui sotto cosa c'è nello scontrino.</p>}
+                      <td colSpan={puoCorreggere ? 7 : 6}>
+                        {voci.length === 0 && dettagliabile && <p className="albatros-vuoto" style={{ marginTop: 0 }}>Nessuna voce: aggiungi qui sotto cosa c'è nello scontrino.</p>}
                         {voci.map(v => (
                           <div key={v.id} className="albatros-riga">
                             <div className="albatros-riga-testo">{v.descrizione} <span className="albatros-tenue">· {nomeCategoria(categorie, v.categoria_id)}</span></div>
@@ -225,7 +230,8 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                         <div className="albatros-voce-q" style={{ fontWeight: 700, color: det.nonDettagliato > 0 ? '#b45309' : '#15803d' }}>
                           <span>{det.nonDettagliato > 0 ? 'Non dettagliato' : 'Tutto dettagliato'}</span><span>{euro(det.nonDettagliato)}</span>
                         </div>
-                        {det.nonDettagliato > 0 && (
+                        {!dettagliabile && <p className="albatros-nota">La categoria di questa spesa non si dettaglia: le voci qui sopra si possono solo vedere.</p>}
+                        {dettagliabile && det.nonDettagliato > 0 && (
                           <div className="albatros-form-voce-spesa">
                             <input type="text" value={nuovaVoce.descrizione} placeholder="Cosa (es. detersivi)" autoFocus
                               onChange={(e) => setNuovaVoce({ ...nuovaVoce, descrizione: e.target.value })} className="albatros-campo" />
