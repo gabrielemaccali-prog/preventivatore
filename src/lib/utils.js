@@ -240,9 +240,21 @@ export const senzaFatturaDaEmettere = (p) => partitaInCompensazione(p)
 // L'anagrafica di fatturazione serve solo se una fattura va emessa.
 export const anagraficaFatturazioneAPosto = (p) => senzaFatturaDaEmettere(p) || fatturazioneCompletaDi(p);
 
+// Lo stato dell'incasso di una prenotazione. "statoPagamento" è una colonna salvata, scritta al
+// momento del salvataggio: una partita a prezzo zero registrata prima che esistesse "omaggio" si
+// porta ancora dietro un "in attesa" che non significa niente — nessuno pagherà mai zero euro.
+// Qui si corregge in lettura, così quelle vecchie non restano col banner rosso e la conferma
+// bloccata finché qualcuno non le risalva.
+export const statoIncassoDi = (p) => {
+  if (p?.statoPagamento === 'compensazione') return p.statoPagamento;
+  const incassato = (p?.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p?.voucherValore) || 0);
+  if ((parseFloat(p?.prezzoVendita) || 0) <= 0.01) return incassato > 0 ? 'saldato' : 'omaggio';
+  return p?.statoPagamento;
+};
+
 export const prenotazioneCompletata = (p, oggiIso) =>
   p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso
-  && ['saldato', 'compensazione', 'omaggio'].includes(p.statoPagamento) && anagraficaFatturazioneAPosto(p);
+  && ['saldato', 'compensazione', 'omaggio'].includes(statoIncassoDi(p)) && anagraficaFatturazioneAPosto(p);
 
 // Scompone un risultato Nominatim nei singoli campi indirizzo
 export const parseIndirizzo = (luogo) => {

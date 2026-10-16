@@ -21,7 +21,12 @@ const MESI = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ot
 
 // Palette categoriale validata (dataviz skill): ordine fisso, mai riassegnata in base al filtro attivo.
 const PALETTE_CATEGORICA = ['#2a78d6', '#1baf7a', '#eda100', '#008300', '#4a3aa7', '#e34948', '#e87ba4', '#eb6834'];
-const COLORE_ALTRO = '#898781'; // ink muted, per "Non assegnato" / "Altro"
+const COLORE_ALTRO = '#898781'; // ink muted, per "Non assegnato" / "Altro" / "Servizi accessori"
+// Una riga con un nome ma senza gioco a catalogo e' un servizio accessorio: un pernotto, una
+// personalizzazione. Non ha un centro di ricavo ne' una famiglia perche' non e' un gioco, e dirlo
+// per nome evita di confonderla con un'assegnazione dimenticata -- che invece va sistemata.
+const SERVIZI_ACCESSORI = 'Servizi accessori';
+const eServizioAccessorio = (r) => r.giocoId == null && !!r.nome;
 const COLORE_RICAVO = '#2a78d6';
 const COLORE_COSTO = '#e34948';
 const COLORE_MARGINE = '#008300';
@@ -43,7 +48,9 @@ const mappaColoriCentri = (nomi) => {
   return mappa;
 };
 
-const coloreCentro = (mappa, nome) => (nome === 'Non assegnato' || nome === 'Altro') ? COLORE_ALTRO : (mappa[nome] || COLORE_ALTRO);
+const coloreCentro = (mappa, nome) => (nome === 'Non assegnato' || nome === 'Altro' || nome === SERVIZI_ACCESSORI)
+  ? COLORE_ALTRO
+  : (mappa[nome] || COLORE_ALTRO);
 
 // Raggruppa le righe per centro, ordina per valore decrescente e piega la coda oltre le prime 7 voci in "Altro".
 const raggruppaPerCentro = (righe, getCentro, getValore) => {
@@ -288,7 +295,8 @@ function Cruscotto({ user }) {
   // Il centro di ricavo viene dal gioco, non più dal pacchetto. Da quando il pacchetto dice solo
   // la modalità -- Party Basic, Noleggio -- non ha più niente da dire su dove finisce il ricavo,
   // mentre il gioco sì: è l'unica cosa che si vende davvero, e il suo centro sta a catalogo.
-  const centroRicavoDiRiga = useCallback((r) => (r.giocoId != null ? giocoPerId[r.giocoId]?.centro_ricavo : null) || 'Non assegnato', [giocoPerId]);
+  const centroRicavoDiRiga = useCallback((r) => (r.giocoId != null ? giocoPerId[r.giocoId]?.centro_ricavo : null)
+    || (eServizioAccessorio(r) ? SERVIZI_ACCESSORI : 'Non assegnato'), [giocoPerId]);
   const centroCostoDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.centroCosto || 'Non assegnato', [campi]);
   const campoNomeDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.nome || '—', [campi]);
   // Come si chiama una partita: il gioco e la modalità con cui è stata venduta. Il gioco arriva
@@ -1106,9 +1114,10 @@ function Cruscotto({ user }) {
   // gioco e resta fuori dalle categorie che non ha.
   const gruppoDi = useCallback((r) => {
     const g = r.giocoId != null ? giocoPerId[r.giocoId] : null;
-    if (raggruppaPer === 'famiglia') return g?.famiglia || 'Non assegnata';
     if (raggruppaPer === 'gioco') return g?.nome || r.nome || 'Non assegnato';
     if (raggruppaPer === 'sede') return r.sede || 'Non indicata';
+    if (eServizioAccessorio(r)) return SERVIZI_ACCESSORI;
+    if (raggruppaPer === 'famiglia') return g?.famiglia || 'Non assegnata';
     return g?.centro_ricavo || 'Non assegnato';
   }, [giocoPerId, raggruppaPer]);
 
@@ -1421,6 +1430,8 @@ function Cruscotto({ user }) {
           <p className="descrizione-pagina">
             Ogni prenotazione è aperta nei giochi che contiene. Una partita con più giochi compare in più gruppi ma resta una partita sola,
             quindi le partite dei gruppi possono sommare più del totale. Campo e rinfresco sono attribuiti al gioco della prenotazione.
+            Le righe che non sono giochi — un pernotto, una personalizzazione — stanno in "{SERVIZI_ACCESSORI}": "Non assegnato" resta
+            per le partite a cui manca davvero il gioco, e quelle vanno sistemate.
           </p>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>

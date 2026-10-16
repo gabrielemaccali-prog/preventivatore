@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
-import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
+import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, statoIncassoDi, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi, ricalcoloCampo, giornataChiusa } from '../../lib/campi'
@@ -839,7 +839,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const prezzoVendita = parseFloat(p.prezzoVendita) || 0;
     const totalePagatoP = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
     const residuo = Math.max(prezzoVendita - totalePagatoP, 0);
-    const statoPag = p.statoPagamento || statoPagamentoDi(p.pagamenti, prezzoVendita, p.voucherValore);
+    const statoPag = statoIncassoDi(p) || statoPagamentoDi(p.pagamenti, prezzoVendita, p.voucherValore);
     const rigaPagamentoLabel = ['saldato', 'compensazione', 'omaggio'].includes(statoPag) ? t('Pagamento:', 'Payment:') : t('Modalità di pagamento:', 'Payment method:');
     const rigaPagamentoValore = statoPag === 'saldato'
       ? t('SALDATO ✅', 'PAID IN FULL ✅')
@@ -1014,7 +1014,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   // Su una prenotazione senza nemmeno un acconto la conferma resta preclusa, perché di norma
   // è l'incasso a rendere certa la partita. L'amministratore può però confermarla lo stesso
   // (cortesie, pagamenti concordati fuori dal sistema): gli viene chiesta conferma esplicita.
-  const senzaIncasso = (p) => !p.statoPagamento || p.statoPagamento === 'in attesa';
+  const senzaIncasso = (p) => { const stato = statoIncassoDi(p); return !stato || stato === 'in attesa'; };
   const puoConfermareSenzaIncasso = user.isAdmin;
 
   const cambiaStatoPren = async (p, nuovoStato) => {
@@ -1141,13 +1141,14 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const totPagato = (p.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p.voucherValore) || 0);
     const totale = parseFloat(p.prezzoVendita) || 0;
     const coloreStatoRiga = coloreStato(p.stato).bd;
-    const pagColore = colorePagamento(p.statoPagamento);
+    const statoIncasso = statoIncassoDi(p);
+    const pagColore = colorePagamento(statoIncasso);
     const espansa = rigaEspansaId === p.id;
     // Verde vuol dire "da parte nostra non manca niente": confermata, giocata, con i dati per
     // fatturare. Il saldo non c'entra -- una partita che aspetta solo il pagamento sta in "Da
     // saldare", non in "Da completare", e non c'e' niente da sistemare nella scheda.
     const completata = p.stato === STATO_PREN.CONFERMATO && fineEventoDi(p) < oggiIso && anagraficaFatturazioneAPosto(p);
-    const saldata = p.statoPagamento === 'saldato' || p.statoPagamento === 'omaggio' || p.statoPagamento === 'compensazione';
+    const saldata = ['saldato', 'omaggio', 'compensazione'].includes(statoIncasso);
     return (
       <Fragment key={p.id}>
         <tr
@@ -2855,7 +2856,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // vuoto da solo non basta a dirlo — "senza operatori" è una scelta dichiarata, e chi l'ha
         // spuntata ha già risposto alla domanda.
         const mancanoOperatori = (p) => !p.senzaOperatori && (p.operatori || []).length === 0;
-        const mancaIncasso = (p) => !['saldato', 'compensazione', 'omaggio'].includes(p.statoPagamento);
+        const mancaIncasso = (p) => !['saldato', 'compensazione', 'omaggio'].includes(statoIncassoDi(p));
         const daCompletare = confermate.filter(p => mancaAnagrafica(p) || mancanoOperatori(p));
         const daSaldare = confermate.filter(mancaIncasso);
         // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
@@ -2957,7 +2958,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const Chip = ({ p, riempi }) => {
           const c = coloreStato(p.stato);
           const campoTxt = p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '—';
-          const pagColore = colorePagamento(p.statoPagamento);
+          const pagColore = colorePagamento(statoIncassoDi(p));
           const hasOp = p.operatori && p.operatori.length > 0;
           return (
             <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${etichettaStatoPren(p.stato)} · ${p.nominativo} · ${campoTxt} · ${etichettaDi(p)} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
@@ -3171,7 +3172,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                           {eventi.map(ev => {
                             const p = ev.p;
                             const c = coloreStato(p.stato);
-                            const pagColore = colorePagamento(p.statoPagamento);
+                            const pagColore = colorePagamento(statoIncassoDi(p));
                             const hasOp = p.operatori && p.operatori.length > 0;
                             return (
                               <div key={p.id} style={{ position: 'absolute', top: `${(ev.inizioMin / 60) * ROW_H}px`, height: `${(ev.durataMin / 60) * ROW_H}px`, left: `${(ev.corsia / ev.numCorsie) * 100}%`, width: `${(1 / ev.numCorsie) * 100}%`, boxSizing: 'border-box', padding: '0 3px 3px 3px' }}>
