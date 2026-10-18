@@ -671,13 +671,27 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const iniMin = toMinutes(oraInizio);
     const fineMin = toMinutes(oraFine);
     if (iniMin == null || fineMin == null) return true; // giorno disponibile; l'orario preciso non è ancora impostato
-    return righeGiorno.some(r => {
+    // La sera finisce alle 23:59 e un evento può chiudersi a mezzanotte o dopo: entrambi valgono fine giornata.
+    const fineGiorno = (m) => (m >= 23 * 60 + 59 ? 24 * 60 : m);
+    const fineEvento = fineMin <= iniMin ? 24 * 60 : fineGiorno(fineMin);
+    const intervalli = [];
+    for (const r of righeGiorno) {
       const fascia = fasceDisp.find(f => f.id === r.fascia);
       const rIni = toMinutes((r.ora_inizio || '').slice(0, 5)) ?? toMinutes((fascia?.ora_inizio || '').slice(0, 5));
       const rFine = toMinutes((r.ora_fine || '').slice(0, 5)) ?? toMinutes((fascia?.ora_fine || '').slice(0, 5));
       if (rIni == null || rFine == null) return true;
-      return rIni < fineMin && rFine > iniMin;
-    });
+      intervalli.push([rIni, fineGiorno(rFine)]);
+    }
+    // Non basta che una fascia tocchi l'evento: messe in fila, le fasce devono coprirlo dall'inizio
+    // alla fine. Chi è disponibile solo la mattina non lo è per un evento che sconfina nel pomeriggio.
+    intervalli.sort((a, b) => a[0] - b[0]);
+    let coperto = iniMin;
+    for (const [rIni, rFine] of intervalli) {
+      if (rIni > coperto) break;
+      coperto = Math.max(coperto, rFine);
+      if (coperto >= fineEvento) return true;
+    }
+    return false;
   };
 
   // ID prenotazione PRN-AAAA-NNNN (reset annuale, legge l'ultimo dal DB)
