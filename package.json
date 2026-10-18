@@ -13,9 +13,7 @@
     "prova:campi": "node src/lib/campi.prova.mjs",
     "prova:maiuscole": "node src/lib/maiuscole.prova.mjs",
     "prova:email": "node src/lib/email.prova.mjs",
-    "prova:albatros": "node src/moduli/albatros/calcolo.prova.mjs",
-    "riempi:righe": "node src/moduli/compensi/riempiRighe.mjs",
-    "sistema:anagrafiche": "node src/lib/sistemaAnagrafiche.mjs"
+    "prova:albatros": "node src/moduli/albatros/calcolo.prova.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",
