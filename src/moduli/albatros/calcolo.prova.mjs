@@ -2,7 +2,7 @@
 //   npm run prova:albatros
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
-  quadratura, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
+  quadratura, forseChiusuraDiIeri, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
   rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, posizioneEnte, contantiAlbatros,
 } from './calcolo.js';
 
@@ -85,6 +85,12 @@ const chiuseCF = [{ chiusa_il: 'x', pos: 100, contanti: 500 }, { chiusa_il: null
 verifica('contanti in mano: ritirati - spese Albatros - pagati in contanti', 0, contantiAlbatros(chiuseCF, speseEnti, pagati).inMano);
 verifica('contanti: le giornate aperte non contano', 500, contantiAlbatros(chiuseCF, speseEnti, pagati).ritirati);
 verifica('contanti: i pagamenti di BFM non toccano la cassa di Albatros', 400, contantiAlbatros(chiuseCF, speseEnti, pagati).pagatiInContanti);
+
+// ---------- chiusura di ieri fatta oggi ----------
+verifica('le 14 di oggi, ieri non chiusa: avvisa', true, forseChiusuraDiIeri('2026-10-18', '2026-10-18', 14, false));
+verifica('le 23 di oggi: normale', false, forseChiusuraDiIeri('2026-10-18', '2026-10-18', 23, false));
+verifica('ieri già chiusa: normale', false, forseChiusuraDiIeri('2026-10-18', '2026-10-18', 14, true));
+verifica('una giornata passata: normale', false, forseChiusuraDiIeri('2026-10-16', '2026-10-18', 14, false));
 
 // ---------- data della serata ----------
 verifica("all'una di notte è ancora ieri", '2026-10-06', giornataDiLavoro(new Date(2026, 9, 7, 1, 30)));

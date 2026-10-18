@@ -3,8 +3,8 @@ import { supabase } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
-  categorieDi, idCategoriaScelta, num, r2, euro, giornataDiLavoro,
-  quadratura, fondoProposto, fondoDaSpecificare, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita, sommaRighe, totaleRiga, rigaDaIncrementare, vociFrequenti, voceDiNome,
+  categorieDi, idCategoriaScelta, num, r2, euro, giornataDiLavoro, aggiungiGiorni,
+  quadratura, forseChiusuraDiIeri, fondoProposto, fondoDaSpecificare, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita, sommaRighe, totaleRiga, rigaDaIncrementare, vociFrequenti, voceDiNome,
 } from './calcolo'
 import SceltaCategoria from './SceltaCategoria'
 import IconaCategoria from './IconaCategoria'
@@ -240,7 +240,13 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
   // --- Chiusura e riapertura ---
   // Il fondo di partenza si propone da quello lasciato all'ultima chiusura, e lo stesso valore si
   // propone come fondo da lasciare: di solito si conferma e basta.
-  const apriChiusura = () => {
+  // Chi chiude oggi in pieno giorno con ieri ancora da chiudere sta quasi certamente chiudendo ieri:
+  // la finestra lo avvisa (ieriInSospeso) e permette di spostare la chiusura su ieri.
+  const [ieriInSospeso, setIeriInSospeso] = useState(null);
+  const apriChiusura = async () => {
+    const ieri = aggiungiGiorni(data, -1);
+    const { data: chIeri } = await supabase.from('albatros_chiusure').select('id, chiusa_il').eq('data', ieri).maybeSingle();
+    setIeriInSospeso(forseChiusuraDiIeri(data, giornataDiLavoro(), new Date().getHours(), !!chIeri?.chiusa_il) ? { data: ieri, esiste: !!chIeri } : null);
     const partenza = chiusura?.fondo_partenza ?? fondoProposto(precedente);
     setInChiusura({
       pos: mostraImporto(chiusura?.pos ?? null),
@@ -249,6 +255,25 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
       fondo_lasciato: mostraImporto(chiusura?.fondo_lasciato ?? partenza),
     });
   };
+
+  // La chiusura in corso diventa quella di ieri: la giornata (con il suo battuto) cambia data. Se ieri
+  // esiste già, ancora aperta, non si fondono due giornate: si va su ieri e la si chiude lì.
+  const spostaSuIeri = () => esegui(async () => {
+    const ieri = ieriInSospeso.data;
+    if (ieriInSospeso.esiste) {
+      setInChiusura(null);
+      setIeriInSospeso(null);
+      setData(ieri);
+      alert(`La giornata del ${formattaDataGGMMAAAA(ieri)} è aperta: chiudila da lì. Se il battuto di oggi era di ieri, avvisa l'amministratore.`);
+      return;
+    }
+    if (chiusura) {
+      const { error } = await supabase.from('albatros_chiusure').update({ data: ieri }).eq('id', chiusura.id).is('chiusa_il', null);
+      if (error) { alert(`Errore: ${error.message}`); return; }
+    }
+    setIeriInSospeso(null);
+    setData(ieri);
+  });
 
   const apriFondo = () => {
     const partenza = fondoProposto(precedente);
@@ -456,8 +481,19 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
         <div className="modal-form-backdrop" onClick={() => setInChiusura(null)}>
           <div className="modal-form-box albatros-overlay" onClick={(e) => e.stopPropagation()}>
             <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setInChiusura(null)}>✕</button>
-            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0f172a' }}>Chiusura del {formattaDataGGMMAAAA(data)}</h3>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0f172a' }}>Chiusura del {formattaDataGGMMAAAA(data)} <span className="albatros-giorno" style={{ fontWeight: 400 }}>{new Date(`${data}T12:00:00`).toLocaleDateString('it-IT', { weekday: 'long' })}</span></h3>
             <p className="albatros-nota" style={{ marginTop: 0 }}>Scrivi il totale del POS e i contanti incassati, senza contare il fondo cassa.</p>
+            {ieriInSospeso && (
+              <div className="albatros-avviso" style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>
+                  Stai chiudendo <strong>oggi {formattaDataGGMMAAAA(data)}</strong>, ma sono le {new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })} e
+                  ieri ({formattaDataGGMMAAAA(ieriInSospeso.data)}) non risulta chiusa. È la chiusura di ieri sera?
+                </span>
+                <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={spostaSuIeri}>
+                  {ieriInSospeso.esiste ? `Vai al ${formattaDataGGMMAAAA(ieriInSospeso.data).slice(0, 5)}` : `È di ieri: sposta al ${formattaDataGGMMAAAA(ieriInSospeso.data).slice(0, 5)}`}
+                </button>
+              </div>
+            )}
 
             <div className="albatros-griglia-2" style={{ marginTop: '12px' }}>
               {campoCassa('pos', 'POS €')}

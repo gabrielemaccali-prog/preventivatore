@@ -151,6 +151,11 @@ export const daSpecificare = (chiusura, q) => !!chiusura?.chiusa_il && q.nonSpec
 export const fondoDaSpecificare = (chiusura) =>
   !!chiusura?.chiusa_il && chiusura.fondo_partenza == null && chiusura.fondo_lasciato == null;
 
+// Si sta chiudendo la giornata di oggi in pieno giorno, e ieri non risulta chiusa: quasi certamente
+// è la chiusura di ieri sera fatta il giorno dopo. ora = ora del giorno (0-23); la serata finisce
+// alle 5 (giornataDiLavoro), quindi tra le 5 e le 17 "oggi" non è ancora stato lavorato.
+export const forseChiusuraDiIeri = (data, oggi, ora, ieriChiusa) => data === oggi && ora >= 5 && ora < 17 && !ieriChiusa;
+
 // Una giornata chiusa non si modifica, nemmeno dall'amministratore: prima la riapre.
 export const chiusuraModificabile = (chiusura) => !chiusura?.chiusa_il;
 
