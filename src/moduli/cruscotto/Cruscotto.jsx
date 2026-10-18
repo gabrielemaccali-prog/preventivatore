@@ -26,6 +26,14 @@ const COLORE_ALTRO = '#898781'; // ink muted, per "Non assegnato" / "Altro" / "S
 // personalizzazione. Non ha un centro di ricavo ne' una famiglia perche' non e' un gioco, e dirlo
 // per nome evita di confonderla con un'assegnazione dimenticata -- che invece va sistemata.
 const SERVIZI_ACCESSORI = 'Servizi accessori';
+// Una partita senza campo e' un noleggio giocato dal cliente: non ha affitto ne' rinfresco, e quindi
+// nessun centro di costo. I costi che porta -- il fornitore del gioco, gli operatori -- sono veri, e
+// stanno tutti qui. Non e' un dato mancante, e chiamarlo "Non assegnato" lo faceva sembrare tale:
+// quella scritta resta per i casi da sistemare, cioe' il campo cancellato dall'anagrafica e il campo
+// senza centro di costo compilato.
+const COSTI_NOLEGGI = 'Noleggi';
+// Come si chiama la sede di una riga che non la dice: i preventivi vecchi non la scrivevano.
+const SEDE_NON_INDICATA_ETICHETTA = 'Sede non indicata';
 const eServizioAccessorio = (r) => r.giocoId == null && !!r.nome;
 const COLORE_RICAVO = '#2a78d6';
 const COLORE_COSTO = '#e34948';
@@ -48,7 +56,7 @@ const mappaColoriCentri = (nomi) => {
   return mappa;
 };
 
-const coloreCentro = (mappa, nome) => (nome === 'Non assegnato' || nome === 'Altro' || nome === SERVIZI_ACCESSORI)
+const coloreCentro = (mappa, nome) => (nome === 'Non assegnato' || nome === 'Altro' || nome === SERVIZI_ACCESSORI || nome === COSTI_NOLEGGI)
   ? COLORE_ALTRO
   : (mappa[nome] || COLORE_ALTRO);
 
@@ -297,7 +305,9 @@ function Cruscotto({ user }) {
   // mentre il gioco sì: è l'unica cosa che si vende davvero, e il suo centro sta a catalogo.
   const centroRicavoDiRiga = useCallback((r) => (r.giocoId != null ? giocoPerId[r.giocoId]?.centro_ricavo : null)
     || (eServizioAccessorio(r) ? SERVIZI_ACCESSORI : 'Non assegnato'), [giocoPerId]);
-  const centroCostoDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.centroCosto || 'Non assegnato', [campi]);
+  const centroCostoDi = useCallback((p) => (p.campoId
+    ? (campi.find(c => c.id === p.campoId)?.centroCosto || 'Non assegnato')
+    : COSTI_NOLEGGI), [campi]);
   const campoNomeDi = useCallback((p) => campi.find(c => c.id === p.campoId)?.nome || '—', [campi]);
   // Come si chiama una partita: il gioco e la modalità con cui è stata venduta. Il gioco arriva
   // dal catalogo per id, il pacchetto è quello congelato sulla prenotazione.
@@ -469,6 +479,9 @@ function Cruscotto({ user }) {
   // devono attribuire lo stesso costo alla stessa sede, o chi paga e chi guarda il margine
   // leggerebbero due cifre diverse sulla stessa partita.
   const risolutore = useMemo(() => risolutoreSedi({ sedi, listino, preventivi }), [sedi, listino, preventivi]);
+  // Il nome di una sede dal suo id. Le righe di preventivi e prenotazioni scrivono l'id accanto al
+  // nome, e l'id e' quello che conta: il nome congelato resta come ripiego per le righe piu' vecchie.
+  const nomeSedeDiId = useMemo(() => Object.fromEntries(sedi.map(s => [String(s.id), s.nome])), [sedi]);
   const { sedeDiRipiego, nostra } = risolutore;
 
   // Il costo ereditato di una partita, contato come lo conta la scheda "Per gioco": la logistica
@@ -943,7 +956,7 @@ function Cruscotto({ user }) {
         // I preventivi piu' vecchi non agganciano il listino: la riga porta solo il nome scritto
         // allora, e quello si usa. La sede invece non c'era proprio, e non si inventa.
         const info = rigaListino[String(g.gonfiabileId)] || {};
-        const sedeScritta = g.sedePartenza === SENZA_SEDE ? 'Senza sede di partenza' : g.sedePartenza;
+        const sedeScritta = g.sedePartenza === SENZA_SEDE ? 'Senza sede di partenza' : (nomeSedeDiId[String(g.sedeId)] || g.sedePartenza);
         const nomi = {
           gioco: info.gioco || g.nome || 'Gioco non riconosciuto',
           sede: sedeScritta || info.sede || 'Sede non indicata',
@@ -981,7 +994,7 @@ function Cruscotto({ user }) {
       scadutiSenzaRisposta,
       annullati: nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO).length,
     };
-  }, [preventivi, annoPrevSel, mesePrevSel, settimanaPrev, senzaOpzioni, dataPrevDi, rigaListino]);
+  }, [preventivi, annoPrevSel, mesePrevSel, settimanaPrev, senzaOpzioni, dataPrevDi, rigaListino, nomeSedeDiId]);
 
   // Dalla settimana mostrata, o da quella di oggi se il filtro e' spento.
   const spostaSettimanaPrev = (delta) => {
@@ -1051,7 +1064,7 @@ function Cruscotto({ user }) {
           pren: p,
           giocoId: v.giocoId ?? null,
           nome: v.nome || '',
-          sede: v.sede || sedeDiRipiego(p),
+          sede: nomeSedeDiId[String(v.sedeId)] || v.sede || sedeDiRipiego(p),
           ricavo: inPartiUguali ? proporzione : (parseFloat(v.ricavo) || 0) * proporzione,
           // Un gioco che parte da una nostra sede non ci costa niente di suo: il prezzo a listino
           // serve al preventivatore per calcolare la vendita, e il costo che il preventivo gli
@@ -1066,7 +1079,7 @@ function Cruscotto({ user }) {
       }
     });
     return righe;
-  }, [prenotazioni, annoSel, meseSel, soloConfermate, sedeDiRipiego, nostra, compensoPrevisto, compensoConsuntivato]);
+  }, [prenotazioni, annoSel, meseSel, soloConfermate, sedeDiRipiego, nostra, nomeSedeDiId, compensoPrevisto, compensoConsuntivato]);
 
   // Anche i grafici guardano le righe, non le vendite intere. Un grafico intitolato "ricavi per
   // centro di ricavo" che non sa mostrare i 600 euro di Archery Tag, perche' sono stati venduti
@@ -1106,7 +1119,21 @@ function Cruscotto({ user }) {
   const mappaColoriRicavo = useMemo(() => mappaColoriCentri(giochi.map(g => g.centro_ricavo)), [giochi]);
   const mappaColoriCosto = useMemo(() => mappaColoriCentri(campi.map(c => c.centroCosto)), [campi]);
   const datiTortaRicavi = useMemo(() => raggruppaPerCentro(righeAndamento, centroRicavoDiRiga, (r) => r.ricavo), [righeAndamento, centroRicavoDiRiga]);
-  const datiTortaCosti = useMemo(() => raggruppaPerCentro(righeAndamento, (r) => centroCostoDi(r.pren), (r) => r.costo + r.compPrev), [righeAndamento, centroCostoDi]);
+  // I costi si dividono in due storie che non si confrontano fra loro. Una partita su un nostro
+  // campo porta affitto e rinfresco e si guarda per centro di costo; un noleggio giocato dal cliente
+  // non ha campo, e quello che costa dipende da dove parte il gioco -- quindi si guarda per sede.
+  // Insieme in una torta sola finivano dieci campi e una fetta informe: separate, ognuna risponde
+  // alla sua domanda.
+  const costoDiRiga = useCallback((r) => r.costo + r.compPrev, []);
+  const datiTortaCampi = useMemo(
+    () => raggruppaPerCentro(righeAndamento.filter(r => r.pren.campoId), (r) => centroCostoDi(r.pren), costoDiRiga),
+    [righeAndamento, centroCostoDi, costoDiRiga]
+  );
+  const datiTortaNoleggi = useMemo(
+    () => raggruppaPerCentro(righeAndamento.filter(r => !r.pren.campoId), (r) => r.sede || SEDE_NON_INDICATA_ETICHETTA, costoDiRiga),
+    [righeAndamento, costoDiRiga]
+  );
+  const mappaColoriSedi = useMemo(() => mappaColoriCentri(sedi.map(x => x.nome)), [sedi]);
 
 
   // A che gruppo appartiene una riga, secondo la dimensione scelta. Il nome arriva dal catalogo
@@ -1179,6 +1206,27 @@ function Cruscotto({ user }) {
   };
 
   const etichettaFetta = ({ nome, percent }) => percent > 0.08 ? `${nome} ${(percent * 100).toFixed(0)}%` : '';
+
+  // Una torta dei costi: cambiano il titolo, la spiegazione e i colori, il resto e' lo stesso.
+  const tortaCosti = (titolo, spiegazione, dati, colori, vuoto) => (
+    <div className="admin-table-box-full" style={{ flex: '1 1 380px', padding: '16px 8px' }}>
+      <h3 style={{ margin: '0 0 2px 14px', fontSize: '1rem' }}>{titolo}</h3>
+      <p style={{ margin: '0 0 10px 14px', fontSize: '0.78rem', color: INK_MUTED }}>{spiegazione}</p>
+      {dati.length === 0 ? (
+        <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>{vuoto}</p>
+      ) : (
+        <ResponsiveContainer width="100%" height={320}>
+          <PieChart>
+            <Pie data={dati} dataKey="valore" nameKey="nome" cx="50%" cy="50%" outerRadius={100} label={etichettaFetta}>
+              {dati.map(v => <Cell key={v.nome} fill={coloreCentro(colori, v.nome)} />)}
+            </Pie>
+            <Tooltip formatter={(value) => formattaEuro(value)} />
+            <Legend wrapperStyle={{ fontSize: '0.8rem' }} />
+          </PieChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -1401,22 +1449,11 @@ function Cruscotto({ user }) {
               )}
             </div>
 
-            <div className="admin-table-box-full" style={{ flex: '1 1 380px', padding: '16px 8px' }}>
-              <h3 style={{ margin: '0 0 10px 14px', fontSize: '1rem' }}>Distribuzione costi per centro di costo</h3>
-              {datiTortaCosti.length === 0 ? (
-                <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>Nessun dato nel periodo selezionato.</p>
-              ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  <PieChart>
-                    <Pie data={datiTortaCosti} dataKey="valore" nameKey="nome" cx="50%" cy="50%" outerRadius={100} label={etichettaFetta}>
-                      {datiTortaCosti.map(v => <Cell key={v.nome} fill={coloreCentro(mappaColoriCosto, v.nome)} />)}
-                    </Pie>
-                    <Tooltip formatter={(value) => formattaEuro(value)} />
-                    <Legend wrapperStyle={{ fontSize: '0.8rem' }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </div>
+            {tortaCosti('Costi delle partite sui campi', 'Per centro di costo: affitto, rinfresco, fornitori e operatori delle partite giocate su un campo.',
+              datiTortaCampi, mappaColoriCosto, 'Nessuna partita su un campo nel periodo selezionato.')}
+
+            {tortaCosti(`Costi dei ${COSTI_NOLEGGI.toLowerCase()}`, 'Partite senza campo, giocate dal cliente: per sede da cui parte il gioco, con i compensi degli operatori.',
+              datiTortaNoleggi, mappaColoriSedi, 'Nessun noleggio nel periodo selezionato.')}
           </div>
         </div>
       )}

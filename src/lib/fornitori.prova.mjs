@@ -166,6 +166,21 @@ verifica("un'annullata non ha costi di fornitore", 0,
 verifica('fotografia: la riga ricorda che la partita era annullata', true,
   periodoDaControparte({ controparte: campiAnagrafica[0], righe: [rigaSoloAffitto], costoPreventivato: 0, costo: 0, ricavo: 0, saldo: 0 }, 'campo', '2026-09-16').righe[0].annullata);
 
+// ---------- l'id vince sul nome ----------
+// Dopo la bonifica ogni riga porta il suo sedeId: una rinomina non deve piu' spostare un costo.
+const dopoRinomina = risolutoreSedi({
+  sedi: [{ id: 'loc_bfm', nome: 'BFM', bfm: true }, { id: 'loc_aq', nome: 'Laquilone Noleggi' }],
+  listino, preventivi,
+});
+verifica("l'id porta il costo alla sede anche col nome vecchio", { 'Laquilone Noleggi': { costo: 500, giochi: ['Balilla'] } },
+  dopoRinomina.costiPerSede({ voci: [{ nome: 'Balilla', sede: 'Laquilone', sedeId: 'loc_aq', costo: 500, giocoId: 11 }] }));
+verifica('il dettaglio del costo segue lo stesso id', 600,
+  risolutoreSedi({
+    sedi: [{ id: 'loc_aq', nome: 'Laquilone Noleggi' }],
+    listino,
+    preventivi: [{ codice: 'PRV-AQ', gonfiabili: [{ sedeId: 'loc_aq', sedePartenza: 'Laquilone', costoNoleggio: 600 }] }],
+  }).dettaglioCostoDi({ preventivoCollegato: 'PRV-AQ' }, 'Laquilone Noleggi').tariffa);
+
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${JSON.stringify(e.atteso)}, ottenuto ${JSON.stringify(e.ottenuto)}`}`));
 console.log(`\n${esiti.length - falliti.length}/${esiti.length} verifiche passate`);

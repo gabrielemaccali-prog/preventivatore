@@ -86,6 +86,8 @@ export const risolutoreSedi = ({ sedi = [], listino = [], preventivi = [] }) => 
       if (v.sedeId && nomeSede[v.sedeId]) return nomeSede[v.sedeId];
       if (!v.sede) return sedeDiRipiego(p);
       // Nome che non esiste più in anagrafica: si riparte dagli id, come per una riga senza sede.
+      // Succede solo alle righe scritte prima che l'id ci fosse: da quando c'è, una rinomina non le
+      // tocca più (vedi sql/sedi_nomi_congelati.sql, che ha scritto l'id su quelle vecchie).
       if (v.sede !== SENZA_SEDE && !nomiValidi.has(v.sede)) return sedeDiRipiego(p);
       if (v.sede !== SENZA_SEDE || v.giocoId != null) return v.sede;
       const ripiego = sedeDiRipiego(p);
@@ -102,7 +104,7 @@ export const risolutoreSedi = ({ sedi = [], listino = [], preventivi = [] }) => 
   // alla decina; le parti stanno nel preventivo, e si rileggono da lì. Null quando il preventivo
   // non c'è o non dice niente di quella sede: il totale resta, il dettaglio no.
   const preventivoPerCodice = Object.fromEntries(preventivi.map(pv => [String(pv.codice), pv]));
-  const sedeDellaRigaPreventivo = (g) => g.sedePartenza || nomeSede[g.sedeId] || sedeDelGonfiabile[g.gonfiabileId] || null;
+  const sedeDellaRigaPreventivo = (g) => nomeSede[g.sedeId] || g.sedePartenza || sedeDelGonfiabile[g.gonfiabileId] || null;
   const dettaglioCostoDi = (p, sede) => {
     const pv = p.preventivoCollegato ? preventivoPerCodice[String(p.preventivoCollegato)] : null;
     if (!pv) return null;
