@@ -2857,7 +2857,14 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // spuntata ha già risposto alla domanda.
         const mancanoOperatori = (p) => !p.senzaOperatori && (p.operatori || []).length === 0;
         const mancaIncasso = (p) => !['saldato', 'compensazione', 'omaggio'].includes(statoIncassoDi(p));
-        const daCompletare = confermate.filter(p => mancaAnagrafica(p) || mancanoOperatori(p));
+        // Su una partita ancora da giocare l'operatore mancante non è un dato da recuperare: è un
+        // turno da assegnare, e ha una scadenza. Sta quindi in una scheda sua, che è l'elenco di
+        // lavoro di chi mette insieme le squadre -- ci finiscono anche le partite a cui manca
+        // dell'altro, perché chi assegna i ragazzi deve vederle tutte, non solo quelle a posto
+        // per il resto. Dopo l'evento invece il buco resta un dato mancante come gli altri, e
+        // torna fra quelle da completare.
+        const mancaOperatore = confermate.filter(p => mancanoOperatori(p) && fineEventoDi(p) >= oggiIso);
+        const daCompletare = confermate.filter(p => mancaAnagrafica(p) || (mancanoOperatori(p) && fineEventoDi(p) < oggiIso));
         const daSaldare = confermate.filter(mancaIncasso);
         // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
         // partita annullata non ce n'e'. Si trovano nello Storico.
@@ -2869,7 +2876,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           { chiave: 'daAnnullarePosticipare', etichetta: 'Da annullare o posticipare', icona: 'annulla', lista: daAnnullarePosticipare, titolo: "In forse con la data già passata: da annullare, o da posticipare se c'è un acconto" },
           { chiave: 'daConfermare', etichetta: 'Da confermare', icona: 'daConfermare', lista: daConfermare },
           { chiave: 'partiteAttive', etichetta: 'Partite attive', icona: 'partiteAttive', lista: partiteAttive },
-          { chiave: 'daCompletare', etichetta: 'Da completare', icona: 'daCompletare', lista: daCompletare, titolo: 'Confermate a cui mancano dati di fatturazione o gli operatori' },
+          { chiave: 'mancaOperatore', etichetta: 'Manca operatore', icona: 'perOperatore', lista: mancaOperatore, titolo: 'Partite ancora da giocare senza nessun operatore assegnato: turni da coprire' },
+          { chiave: 'daCompletare', etichetta: 'Da completare', icona: 'daCompletare', lista: daCompletare, titolo: 'Confermate a cui mancano i dati di fatturazione, o gli operatori su una partita già giocata' },
           { chiave: 'daSaldare', etichetta: 'Da saldare', icona: 'attesaPagamento', lista: daSaldare, titolo: "Confermate non ancora saldate per intero" },
         ];
         const visibili = schede.filter(sc => sc.lista.length > 0);
