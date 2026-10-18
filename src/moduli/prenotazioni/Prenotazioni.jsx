@@ -7,8 +7,10 @@ import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi } from '../../lib/campi'
 import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
+import { formaNome, formaLuogo, formaRagioneSociale, formaEmail, formaCodice, formaTelefono } from '../../lib/maiuscole'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
+import SuggerimentoEmail from '../../components/SuggerimentoEmail'
 
 // Il centro di ricavo non sta piu' qui: viaggia sul gioco, a catalogo. Un pacchetto dice la
 // modalita' di vendita, e la modalita' non ha un centro di ricavo suo.
@@ -1370,7 +1372,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     await supabase.from('pagamenti').delete().eq('tipo', 'prenotazione').eq('riferimento', riferimento);
     const daInserire = (righe || [])
       .filter(pg => pg.data)
-      .map(pg => ({ tipo: 'prenotazione', riferimento, data: pg.data, importo: parseFloat(pg.importo) || 0, nominativo: pg.nominativo || null }));
+      .map(pg => ({ tipo: 'prenotazione', riferimento, data: pg.data, importo: parseFloat(pg.importo) || 0, nominativo: formaNome(pg.nominativo) || null }));
     if (daInserire.length > 0) await supabase.from('pagamenti').insert(daInserire);
   };
 
@@ -1518,11 +1520,11 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       // perché dice come è stata venduta quella partita quel giorno.
       giocoId: f.giocoId || null,
       durataOre, oraInizio, oraFine: (senzaOrario || durataFissa) ? null : oraFine,
-      nominativo: f.nominativo, email: f.email, telefono: f.telefono,
+      nominativo: formaNome(f.nominativo), email: formaEmail(f.email), telefono: formaTelefono(f.telefono),
       campoId: campo ? campo.id : null, campoNome: campo ? campo.nome : null, campoPrenotato: f.campoPrenotato,
-      locationNome: campo ? null : ((f.locationNome || '').trim() || null),
-      locationIndirizzo: campo ? null : f.locationIndirizzo, locationCap: campo ? null : f.locationCap,
-      locationCitta: campo ? null : f.locationCitta, locationProvincia: campo ? null : siglaProvincia(f.locationProvincia),
+      locationNome: campo ? null : (formaRagioneSociale(f.locationNome) || null),
+      locationIndirizzo: campo ? null : formaLuogo(f.locationIndirizzo), locationCap: campo ? null : f.locationCap,
+      locationCitta: campo ? null : formaLuogo(f.locationCitta), locationProvincia: campo ? null : siglaProvincia(f.locationProvincia),
       operatori: operatoriSnap, senzaOperatori, sconto,
       costoCampo: costoCampoLordo, costoCampoNetto, costoCampoLordo,
       prezzoVendita: prezzoVenditaLordo, prezzoVenditaNetto, prezzoVenditaLordo,
@@ -1545,12 +1547,12 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       ...(colonnaClienteCampo ? { clienteCampoId: f.clienteCampoId || null } : {}),
       stato: f.stato || STATO_PREN.FORSE,
       fattTipo: f.fattTipo,
-      fattNome: f.fattNome, fattCognome: f.fattCognome, fattIndirizzo: f.fattIndirizzo,
-      fattCap: stranieroFatt ? '00000' : f.fattCap, fattCitta: f.fattCitta,
-      fattProvincia: stranieroFatt ? 'EE' : siglaProvincia(f.fattProvincia), fattCF: stranieroFatt ? "" : (f.fattCF || "").toUpperCase(),
+      fattNome: formaNome(f.fattNome), fattCognome: formaNome(f.fattCognome), fattIndirizzo: formaLuogo(f.fattIndirizzo),
+      fattCap: stranieroFatt ? '00000' : f.fattCap, fattCitta: formaLuogo(f.fattCitta),
+      fattProvincia: stranieroFatt ? 'EE' : siglaProvincia(f.fattProvincia), fattCF: stranieroFatt ? "" : (formaCodice(f.fattCF) || ""),
       fattStraniero: stranieroFatt, fattStato: privatoFatt ? (stranieroFatt ? (f.fattStato || null) : STATO_ITALIA) : null,
-      ragioneSociale: f.ragioneSociale, aziIndirizzo: f.aziIndirizzo, aziCap: f.aziCap, aziCitta: f.aziCitta, aziProvincia: siglaProvincia(f.aziProvincia), pIva: f.pIva, cfAzienda: f.cfAzienda,
-      sdi: privatoFatt ? '0000000' : f.sdi
+      ragioneSociale: formaRagioneSociale(f.ragioneSociale), aziIndirizzo: formaLuogo(f.aziIndirizzo), aziCap: f.aziCap, aziCitta: formaLuogo(f.aziCitta), aziProvincia: siglaProvincia(f.aziProvincia), pIva: formaCodice(f.pIva), cfAzienda: formaCodice(f.cfAzienda),
+      sdi: privatoFatt ? '0000000' : formaCodice(f.sdi)
     };
 
     if (pagamentoInSospeso && !window.confirm("Il pagamento digitato non è stato aggiunto con \"+ Pagamento\": salvando non verrà registrato. Procedere?")) return;
@@ -1953,12 +1955,12 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                 <>
                   <RicercaIndirizzo onSelect={(a) => setF({ locationIndirizzo: a.indirizzo, locationCap: a.cap, locationCitta: a.citta, locationProvincia: siglaProvincia(a.provincia) })} />
                   <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', marginTop: '10px' }}>Descrizione location
-                    <input type="text" placeholder="Es. Oratorio San Luigi, Stadio Comunale" value={formPren.locationNome || ''} onChange={(e) => setF({ locationNome: e.target.value })} style={evidenzia('locationNome')} />
+                    <input type="text" placeholder="Es. Oratorio San Luigi, Stadio Comunale" value={formPren.locationNome || ''} onChange={(e) => setF({ locationNome: e.target.value })} onBlur={(e) => setF({ locationNome: formaRagioneSociale(e.target.value) })} style={evidenzia('locationNome')} />
                   </label>
                   <div className="date-grid" style={{ flexWrap: 'wrap', marginTop: '10px' }}>
-                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.locationIndirizzo} onChange={(e) => setF({ locationIndirizzo: e.target.value })} {...campoRosso('locationIndirizzo', luogoMancanteForm)} /></label>
+                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.locationIndirizzo} onChange={(e) => setF({ locationIndirizzo: e.target.value })} onBlur={(e) => setF({ locationIndirizzo: formaLuogo(e.target.value) })} {...campoRosso('locationIndirizzo', luogoMancanteForm)} /></label>
                     <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.locationCap} onChange={(e) => setF({ locationCap: e.target.value })} style={evidenzia('locationCap')} /></label>
-                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.locationCitta} onChange={(e) => setF({ locationCitta: e.target.value })} {...campoRosso('locationCitta', luogoMancanteForm)} /></label>
+                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.locationCitta} onChange={(e) => setF({ locationCitta: e.target.value })} onBlur={(e) => setF({ locationCitta: formaLuogo(e.target.value) })} {...campoRosso('locationCitta', luogoMancanteForm)} /></label>
                     <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.locationProvincia} onChange={(e) => setF({ locationProvincia: e.target.value })} onBlur={() => setF({ locationProvincia: siglaProvincia(formPren.locationProvincia) })} style={stileProvincia('locationProvincia')} /></label>
                   </div>
                 </>
@@ -2012,7 +2014,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
             <h2>Anagrafica</h2>
             <div className="date-grid" style={{ flexWrap: 'wrap' }}>
               <label style={{ flex: '2 1 200px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nominativo *
-                <input type="text" value={formPren.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} {...campoRosso('nominativo', nominativoMancante)} />
+                <input type="text" value={formPren.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} onBlur={(e) => setF({ nominativo: formaNome(e.target.value) })} {...campoRosso('nominativo', nominativoMancante)} />
               </label>
               {/* Un fornitore o un campo che ci commissiona una partita non la paga: il prezzo si compensa
                   con quello che gli dobbiamo, in Consuntivazione > Fornitori o > Campi. Sta accanto al
@@ -2045,10 +2047,11 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                 );
               })()}
               <label className="span2" style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Email
-                <input type="email" value={formPren.email} onChange={(e) => setF({ email: e.target.value })} style={emailNonValida ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('email')} />
+                <input type="email" value={formPren.email} onChange={(e) => setF({ email: e.target.value })} onBlur={(e) => setF({ email: formaEmail(e.target.value) })} style={emailNonValida ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('email')} />
+                <SuggerimentoEmail email={formPren.email} onCorreggi={(email) => setF({ email })} />
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Telefono
-                <input type="text" value={formPren.telefono} onChange={(e) => setF({ telefono: e.target.value })} style={evidenzia('telefono')} />
+                <input type="text" value={formPren.telefono} onChange={(e) => setF({ telefono: e.target.value })} onBlur={(e) => setF({ telefono: formaTelefono(e.target.value) })} style={evidenzia('telefono')} />
               </label>
             </div>
             {emailNonValida && <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: '#c62828' }}>⚠️ Indirizzo email non valido.</p>}
@@ -2067,16 +2070,16 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     <input type="checkbox" checked={!!formPren.fattStraniero} onChange={(e) => setF({ fattStraniero: e.target.checked })} /> Cliente straniero
                   </label>
                   <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-                    <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome<input type="text" value={formPren.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} style={evidenzia('fattNome')} /></label>
-                    <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Cognome<input type="text" value={formPren.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} style={evidenzia('fattCognome')} /></label>
+                    <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome<input type="text" value={formPren.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} onBlur={(e) => setF({ fattNome: formaNome(e.target.value) })} style={evidenzia('fattNome')} /></label>
+                    <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Cognome<input type="text" value={formPren.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} onBlur={(e) => setF({ fattCognome: formaNome(e.target.value) })} style={evidenzia('fattCognome')} /></label>
                   </div>
                   <div style={{ margin: '12px 0' }}>
                     <RicercaIndirizzo onSelect={(a) => setF({ fattIndirizzo: a.indirizzo, fattCap: a.cap, fattCitta: a.citta, fattProvincia: siglaProvincia(a.provincia) })} />
                   </div>
                   <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.fattIndirizzo} onChange={(e) => setF({ fattIndirizzo: e.target.value })} style={evidenzia('fattIndirizzo')} /></label>
+                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.fattIndirizzo} onChange={(e) => setF({ fattIndirizzo: e.target.value })} onBlur={(e) => setF({ fattIndirizzo: formaLuogo(e.target.value) })} style={evidenzia('fattIndirizzo')} /></label>
                     <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.fattStraniero ? '00000' : formPren.fattCap} readOnly={!!formPren.fattStraniero} title={formPren.fattStraniero ? 'Per i clienti stranieri il CAP è sempre 00000' : undefined} onChange={(e) => setF({ fattCap: e.target.value })} style={formPren.fattStraniero ? STILE_CAMPO_IMPOSTO : evidenzia('fattCap')} /></label>
-                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.fattCitta} onChange={(e) => setF({ fattCitta: e.target.value })} style={evidenzia('fattCitta')} /></label>
+                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.fattCitta} onChange={(e) => setF({ fattCitta: e.target.value })} onBlur={(e) => setF({ fattCitta: formaLuogo(e.target.value) })} style={evidenzia('fattCitta')} /></label>
                     <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.fattStraniero ? 'EE' : formPren.fattProvincia} readOnly={!!formPren.fattStraniero} title={formPren.fattStraniero ? 'Per i clienti stranieri la provincia è sempre EE' : undefined} onChange={(e) => setF({ fattProvincia: e.target.value })} onBlur={() => setF({ fattProvincia: siglaProvincia(formPren.fattProvincia) })} style={formPren.fattStraniero ? STILE_CAMPO_IMPOSTO : stileProvincia('fattProvincia')} /></label>
                     {formPren.fattStraniero && (
                       <label style={{ flex: '1 1 180px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Stato
@@ -2089,27 +2092,27 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                   </div>
                   {!formPren.fattStraniero && (
                     <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Codice Fiscale
-                      <input type="text" maxLength={16} value={formPren.fattCF} onChange={(e) => setF({ fattCF: e.target.value.toUpperCase() })} style={errCF ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('fattCF')} />
+                      <input type="text" maxLength={20} value={formPren.fattCF} onChange={(e) => setF({ fattCF: formaCodice(e.target.value) })} style={errCF ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('fattCF')} />
                     </label>
                   )}
                   {errCF && <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#c62828' }}>⚠️ Codice Fiscale non valido.</p>}
                 </>
               ) : (
                 <>
-                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem' }}>Ragione sociale<input type="text" value={formPren.ragioneSociale} onChange={(e) => setF({ ragioneSociale: e.target.value })} style={evidenzia('ragioneSociale')} /></label>
+                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem' }}>Ragione sociale<input type="text" value={formPren.ragioneSociale} onChange={(e) => setF({ ragioneSociale: e.target.value })} onBlur={(e) => setF({ ragioneSociale: formaRagioneSociale(e.target.value) })} style={evidenzia('ragioneSociale')} /></label>
                   <div style={{ margin: '12px 0' }}>
                     <RicercaIndirizzo onSelect={(a) => setF({ aziIndirizzo: a.indirizzo, aziCap: a.cap, aziCitta: a.citta, aziProvincia: siglaProvincia(a.provincia) })} />
                   </div>
                   <div className="date-grid" style={{ flexWrap: 'wrap' }}>
-                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.aziIndirizzo} onChange={(e) => setF({ aziIndirizzo: e.target.value })} style={evidenzia('aziIndirizzo')} /></label>
+                    <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo<input type="text" value={formPren.aziIndirizzo} onChange={(e) => setF({ aziIndirizzo: e.target.value })} onBlur={(e) => setF({ aziIndirizzo: formaLuogo(e.target.value) })} style={evidenzia('aziIndirizzo')} /></label>
                     <label style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP<input type="text" value={formPren.aziCap} onChange={(e) => setF({ aziCap: e.target.value })} style={evidenzia('aziCap')} /></label>
-                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.aziCitta} onChange={(e) => setF({ aziCitta: e.target.value })} style={evidenzia('aziCitta')} /></label>
+                    <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città<input type="text" value={formPren.aziCitta} onChange={(e) => setF({ aziCitta: e.target.value })} onBlur={(e) => setF({ aziCitta: formaLuogo(e.target.value) })} style={evidenzia('aziCitta')} /></label>
                     <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.aziProvincia} onChange={(e) => setF({ aziProvincia: e.target.value })} onBlur={() => setF({ aziProvincia: siglaProvincia(formPren.aziProvincia) })} style={stileProvincia('aziProvincia')} /></label>
                   </div>
                   <div className="date-grid" style={{ marginTop: '12px' }}>
-                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Partita IVA<input type="text" value={formPren.pIva} onChange={(e) => setF({ pIva: e.target.value })} style={errPIva ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('pIva')} /></label>
-                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice Fiscale<input type="text" value={formPren.cfAzienda} onChange={(e) => setF({ cfAzienda: e.target.value })} style={evidenzia('cfAzienda')} /></label>
-                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice SDI<input type="text" value={formPren.sdi} onChange={(e) => setF({ sdi: e.target.value })} style={evidenzia('sdi')} /></label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Partita IVA<input type="text" value={formPren.pIva} onChange={(e) => setF({ pIva: e.target.value })} onBlur={(e) => setF({ pIva: formaCodice(e.target.value) })} style={errPIva ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('pIva')} /></label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice Fiscale<input type="text" value={formPren.cfAzienda} onChange={(e) => setF({ cfAzienda: e.target.value })} onBlur={(e) => setF({ cfAzienda: formaCodice(e.target.value) })} style={evidenzia('cfAzienda')} /></label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice SDI<input type="text" value={formPren.sdi} onChange={(e) => setF({ sdi: e.target.value })} onBlur={(e) => setF({ sdi: formaCodice(e.target.value) })} style={evidenzia('sdi')} /></label>
                   </div>
                 </>
               )}
@@ -2356,7 +2359,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                       <input type="number" step="any" value={nuovoPagamento.importo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, importo: e.target.value })} />
                     </label>
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Nominativo
-                      <input type="text" value={nuovoPagamento.nominativo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: e.target.value })} />
+                      <input type="text" value={nuovoPagamento.nominativo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: e.target.value })} onBlur={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: formaNome(e.target.value) })} />
                     </label>
                     <div style={{ display: 'flex', alignItems: 'end' }}>
                       <button type="button" className="btn-accent-inline" style={{ padding: '8px 14px', fontSize: '0.85rem' }} onClick={aggiungiPagamento}>+ Pagamento</button>

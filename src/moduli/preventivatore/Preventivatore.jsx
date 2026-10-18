@@ -5,7 +5,9 @@ import { supabase } from '../../lib/supabaseClient';
 import { COSTO_AL_KM, GIORNI_VALIDITA_PREVENTIVO, STATO_PREVENTIVO, statoPreventivoDi, etichettaStatoPreventivo, classeBadgeStato } from '../../lib/costanti';
 import { puoVedere } from '../../lib/permessi';
 import Icona from '../../components/Icona';
+import SuggerimentoEmail from '../../components/SuggerimentoEmail';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
+import { formaNome, formaEmail, formaTelefono } from '../../lib/maiuscole';
 import {
   formattaDataIT,
   calcolaGiorni,
@@ -1025,9 +1027,9 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
       note: notePreventivo,
       noteInterne: noteInterne.trim() || null,
       stato: statoDocumento,
-      nomeReferente: nomeRiferimento,
-      emailReferente: indirizzoEmail,
-      telefonoReferente: telefonoRiferimento,
+      nomeReferente: formaNome(nomeRiferimento),
+      emailReferente: formaEmail(indirizzoEmail),
+      telefonoReferente: formaTelefono(telefonoRiferimento),
       costoVivoTotale: totaleComplessivoCostoFlotta,
       kmAndata: totaleKmAndata, // Salvataggio kilometraggio
       dettagliLogistici,
@@ -1795,13 +1797,14 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
     <>
       <div className="date-grid">
         <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome referente
-          <input type="text" value={nomeRiferimento} onChange={(e) => setNomeRiferimento(e.target.value)} placeholder="Mario Rossi" />
+          <input type="text" value={nomeRiferimento} onChange={(e) => setNomeRiferimento(e.target.value)} onBlur={(e) => setNomeRiferimento(formaNome(e.target.value))} placeholder="Mario Rossi" />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo e-mail
-          <input type="email" value={indirizzoEmail} onChange={(e) => setIndirizzoEmail(e.target.value)} placeholder="email@esempio.com" />
+          <input type="email" value={indirizzoEmail} onChange={(e) => setIndirizzoEmail(e.target.value)} onBlur={(e) => setIndirizzoEmail(formaEmail(e.target.value))} placeholder="email@esempio.com" />
+          <SuggerimentoEmail email={indirizzoEmail} onCorreggi={setIndirizzoEmail} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Telefono referente
-          <input type="tel" value={telefonoRiferimento} onChange={(e) => setTelefonoRiferimento(e.target.value)} placeholder="333 1234567" />
+          <input type="tel" value={telefonoRiferimento} onChange={(e) => setTelefonoRiferimento(e.target.value)} onBlur={(e) => setTelefonoRiferimento(formaTelefono(e.target.value))} placeholder="333 1234567" />
         </label>
       </div>
       <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Note al preventivo

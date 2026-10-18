@@ -5,8 +5,10 @@ import { puoVedere } from '../../lib/permessi';
 import { formattaDataIT, formattaIndirizzoPulito, formattaDataGGMMAAAA } from '../../lib/utils';
 import { STATO_VOUCHER, etichettaStatoVoucher, classeBadgeStato } from '../../lib/costanti';
 import Icona from '../../components/Icona';
+import SuggerimentoEmail from '../../components/SuggerimentoEmail';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
 import { sommaImporti, statoFatturazione, daFatturareVoucher } from '../../lib/fatturazione';
+import { formaNome, formaLuogo, formaEmail, formaCodice, formaTelefono } from '../../lib/maiuscole';
 
 // Un'email scritta male si segnala in rosso ma non blocca il salvataggio: il voucher si emette
 // lo stesso, e il contatto si corregge dopo. Vuota non e' un errore.
@@ -207,7 +209,7 @@ function Voucher({ user }) {
     await supabase.from('pagamenti').delete().eq('tipo', 'voucher').eq('riferimento', codice);
     const daInserire = (righe || [])
       .filter(pg => pg.data)
-      .map(pg => ({ tipo: 'voucher', riferimento: codice, data: pg.data, importo: parseFloat(pg.importo) || 0, nominativo: pg.nominativo || null }));
+      .map(pg => ({ tipo: 'voucher', riferimento: codice, data: pg.data, importo: parseFloat(pg.importo) || 0, nominativo: formaNome(pg.nominativo) || null }));
     if (daInserire.length > 0) await supabase.from('pagamenti').insert(daInserire);
   };
 
@@ -352,21 +354,21 @@ function Voucher({ user }) {
     const stato = calcolaStato(form, codiceInModifica ? form.stato : STATO_VOUCHER.INCOMPLETO);
 
     const payload = {
-      nominativo: form.nominativo,
-      telefono: (form.telefono || '').trim() || null,
-      email: (form.email || '').trim() || null,
+      nominativo: formaNome(form.nominativo),
+      telefono: formaTelefono((form.telefono || '').trim()) || null,
+      email: formaEmail(form.email) || null,
       dedica: form.dedica,
       pacchettoNome: form.pacchettoNome,
       importo: parseFloat(form.importo) || 0,
       nascondi_importo: !!form.nascondiImporto,
       testoOfferta: form.testoOfferta,
-      fattNome: form.fattNome,
-      fattCognome: form.fattCognome,
-      fattIndirizzo: form.fattIndirizzo,
+      fattNome: formaNome(form.fattNome),
+      fattCognome: formaNome(form.fattCognome),
+      fattIndirizzo: formaLuogo(form.fattIndirizzo),
       fattCap: form.fattCap,
-      fattCitta: form.fattCitta,
+      fattCitta: formaLuogo(form.fattCitta),
       fattProvincia: form.fattProvincia,
-      fattCF: (form.fattCF || "").toUpperCase(),
+      fattCF: formaCodice(form.fattCF) || "",
       statoPagamento: statoPagamentoDi(form.pagamenti, form.importo),
       stato
     };
@@ -419,9 +421,9 @@ function Voucher({ user }) {
 
     const payload = {
       pregresso: true,
-      nominativo: form.nominativo.trim(),
-      telefono: (form.telefono || '').trim() || null,
-      email: (form.email || '').trim() || null,
+      nominativo: formaNome(form.nominativo),
+      telefono: formaTelefono((form.telefono || '').trim()) || null,
+      email: formaEmail(form.email) || null,
       importo: parseFloat(form.importo),
       statoPagamento: 'saldato'
     };
@@ -675,7 +677,7 @@ function Voucher({ user }) {
           <div className="sezione">
             <h2>Dati del Voucher</h2>
             <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '12px' }}>Nominativo di intestazione (festeggiato) *
-              <input type="text" value={form.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} placeholder="Es. Mario Rossi" className={evidenzia('nominativo', nominativoMancante)} />
+              <input type="text" value={form.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} onBlur={(e) => setF({ nominativo: formaNome(e.target.value) })} placeholder="Es. Mario Rossi" className={evidenzia('nominativo', nominativoMancante)} />
             </label>
             <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '12px' }}>Dedica personalizzata (facoltativa)
               <textarea value={form.dedica} onChange={(e) => setF({ dedica: e.target.value })} rows="2" placeholder="Es. Buon compleanno!" className={evidenzia('dedica')} style={{ marginTop: '5px', fontFamily: 'inherit' }} />
@@ -707,18 +709,19 @@ function Voucher({ user }) {
             <p className="descrizione-pagina" style={{ marginTop: 0 }}>Facoltativi in fase di creazione: senza questi dati il voucher resta <strong>incompleto</strong>.</p>
             <div className="date-grid">
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome
-                <input type="text" value={form.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} className={evidenzia('fattNome')} />
+                <input type="text" value={form.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} onBlur={(e) => setF({ fattNome: formaNome(e.target.value) })} className={evidenzia('fattNome')} />
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Cognome
-                <input type="text" value={form.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} className={evidenzia('fattCognome')} />
+                <input type="text" value={form.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} onBlur={(e) => setF({ fattCognome: formaNome(e.target.value) })} className={evidenzia('fattCognome')} />
               </label>
             </div>
             <div className="date-grid" style={{ marginTop: '12px' }}>
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Telefono
-                <input type="tel" value={form.telefono} onChange={(e) => setF({ telefono: e.target.value })} placeholder="Es. 333 1234567" className={evidenzia('telefono')} />
+                <input type="tel" value={form.telefono} onChange={(e) => setF({ telefono: e.target.value })} onBlur={(e) => setF({ telefono: formaTelefono(e.target.value) })} placeholder="Es. 333 1234567" className={evidenzia('telefono')} />
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Email
-                <input type="email" value={form.email} onChange={(e) => setF({ email: e.target.value })} placeholder="Es. mario.rossi@email.it" className={evidenzia('email')} style={emailNonValida(form.email) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined} />
+                <input type="email" value={form.email} onChange={(e) => setF({ email: e.target.value })} onBlur={(e) => setF({ email: formaEmail(e.target.value) })} placeholder="Es. mario.rossi@email.it" className={evidenzia('email')} style={emailNonValida(form.email) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined} />
+                <SuggerimentoEmail email={form.email} onCorreggi={(email) => setF({ email })} />
               </label>
             </div>
 
@@ -739,7 +742,7 @@ function Voucher({ user }) {
 
             <div className="date-grid">
               <label style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo (via e civico)
-                <input type="text" value={form.fattIndirizzo} onChange={(e) => setF({ fattIndirizzo: e.target.value })} className={evidenzia('fattIndirizzo')} />
+                <input type="text" value={form.fattIndirizzo} onChange={(e) => setF({ fattIndirizzo: e.target.value })} onBlur={(e) => setF({ fattIndirizzo: formaLuogo(e.target.value) })} className={evidenzia('fattIndirizzo')} />
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP
                 <input type="text" value={form.fattCap} onChange={(e) => setF({ fattCap: e.target.value })} className={evidenzia('fattCap')} />
@@ -747,7 +750,7 @@ function Voucher({ user }) {
             </div>
             <div className="date-grid" style={{ marginTop: '12px' }}>
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città
-                <input type="text" value={form.fattCitta} onChange={(e) => setF({ fattCitta: e.target.value })} className={evidenzia('fattCitta')} />
+                <input type="text" value={form.fattCitta} onChange={(e) => setF({ fattCitta: e.target.value })} onBlur={(e) => setF({ fattCitta: formaLuogo(e.target.value) })} className={evidenzia('fattCitta')} />
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Provincia
                 <input type="text" value={form.fattProvincia} onChange={(e) => setF({ fattProvincia: e.target.value })} className={evidenzia('fattProvincia')} />
@@ -756,8 +759,8 @@ function Voucher({ user }) {
                 <input
                   type="text"
                   value={form.fattCF}
-                  maxLength={16}
-                  onChange={(e) => setF({ fattCF: e.target.value.toUpperCase() })}
+                  maxLength={20}
+                  onChange={(e) => setF({ fattCF: formaCodice(e.target.value) })}
                   className={erroreCF(form.fattCF) ? 'campo-errore' : evidenzia('fattCF')}
                 />
               </label>
@@ -800,7 +803,7 @@ function Voucher({ user }) {
                   <input type="number" step="any" value={nuovoPagamento.importo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, importo: e.target.value })} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Nominativo
-                  <input type="text" value={nuovoPagamento.nominativo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: e.target.value })} />
+                  <input type="text" value={nuovoPagamento.nominativo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: e.target.value })} onBlur={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: formaNome(e.target.value) })} />
                 </label>
                 <div style={{ display: 'flex', alignItems: 'end' }}>
                   <button type="button" className="btn-accent-inline" style={{ padding: '8px 14px', fontSize: '0.85rem' }} onClick={aggiungiPagamento}>+ Pagamento</button>
@@ -870,13 +873,14 @@ function Voucher({ user }) {
             : <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', color: '#c62828' }}>⚠️ {erroreCodice}</p>
           )}
           <label style={{ ...stileLabel, marginTop: '12px' }}>Nominativo *
-            <input type="text" value={form.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} placeholder="Es. Mario Rossi" className={evidenzia('nominativo')} />
+            <input type="text" value={form.nominativo} onChange={(e) => setF({ nominativo: e.target.value })} onBlur={(e) => setF({ nominativo: formaNome(e.target.value) })} placeholder="Es. Mario Rossi" className={evidenzia('nominativo')} />
           </label>
           <label style={{ ...stileLabel, marginTop: '12px' }}>Telefono
-            <input type="tel" value={form.telefono} onChange={(e) => setF({ telefono: e.target.value })} placeholder="Es. 333 1234567" className={evidenzia('telefono')} />
+            <input type="tel" value={form.telefono} onChange={(e) => setF({ telefono: e.target.value })} onBlur={(e) => setF({ telefono: formaTelefono(e.target.value) })} placeholder="Es. 333 1234567" className={evidenzia('telefono')} />
           </label>
           <label style={{ ...stileLabel, marginTop: '12px' }}>Email
-            <input type="email" value={form.email} onChange={(e) => setF({ email: e.target.value })} placeholder="Es. mario.rossi@email.it" className={evidenzia('email')} style={emailNonValida(form.email) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined} />
+            <input type="email" value={form.email} onChange={(e) => setF({ email: e.target.value })} onBlur={(e) => setF({ email: formaEmail(e.target.value) })} placeholder="Es. mario.rossi@email.it" className={evidenzia('email')} style={emailNonValida(form.email) ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : undefined} />
+            <SuggerimentoEmail email={form.email} onCorreggi={(email) => setF({ email })} />
           </label>
           <label style={{ ...stileLabel, marginTop: '12px' }}>Importo € *
             <input type="number" step="any" min="0" value={form.importo} onChange={(e) => setF({ importo: e.target.value })} className={evidenzia('importo')} />

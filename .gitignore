@@ -27,3 +27,6 @@ dist-ssr
 *.sw?
 .vercel
 .env*
+
+# Anteprima di sistemaAnagrafiche.mjs: contiene dati dei clienti
+anteprima_anagrafiche*.xlsx
