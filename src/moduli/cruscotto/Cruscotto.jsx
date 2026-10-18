@@ -96,6 +96,30 @@ const esitoDi = (p) => {
 
 const formattaEuro = (v) => `€${(+v || 0).toFixed(2)}`;
 
+// Il motivo di un annullamento e' testo libero, e lo stesso motivo arriva scritto in modi diversi:
+// "Meteo", "meteo ", "Meteo.". Per contarli insieme si confronta una chiave senza maiuscole, spazi
+// doppi e punteggiatura in fondo; come nome del gruppo si tiene la forma scritta piu' spesso.
+// Chi non ha motivo (gli annullamenti di prima che lo si chiedesse) fa gruppo a se', in fondo.
+const SENZA_MOTIVO = 'Senza motivo scritto';
+const chiaveMotivo = (testo) => String(testo || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[\s.,;:!]+$/, '');
+const raggruppaMotivi = (righe, valoreDi = () => 0) => {
+  const gruppi = {};
+  righe.forEach(r => {
+    const testo = String(r.motivoAnnullamento || '').trim().replace(/\s+/g, ' ');
+    const k = chiaveMotivo(testo);
+    const g = (gruppi[k] = gruppi[k] || { chiave: k, n: 0, valore: 0, forme: {}, righe: [] });
+    g.n++; g.valore += valoreDi(r); g.righe.push(r);
+    if (testo) g.forme[testo] = (g.forme[testo] || 0) + 1;
+  });
+  return Object.values(gruppi)
+    .map(g => ({
+      ...g,
+      nome: g.chiave ? Object.entries(g.forme).sort((a, b) => b[1] - a[1])[0][0] : SENZA_MOTIVO,
+      varianti: Object.keys(g.forme).length,
+    }))
+    .sort((a, b) => (a.chiave === '') - (b.chiave === '') || b.n - a.n || b.valore - a.valore);
+};
+
 // Nella colonna in pila il ricavo non e' una barra: e' l'altezza delle due messe insieme. Il tooltip
 // lo dice per esteso, altrimenti l'unico numero che conta si dovrebbe sommare a mente.
 const TooltipPila = ({ active, payload, label, campi = { costo: 'costo', margine: 'margine' } }) => {
@@ -222,7 +246,7 @@ const statoConsuntivo = (voci) => {
 const ETICHETTA_CONSUNTIVO = { cons: 'Consuntivato', prev: 'Preventivo', misto: 'In parte consuntivato', vuoto: 'Niente da consuntivare' };
 
 function Cruscotto({ user }) {
-  const primaSchedaCR = ['cruscotto', 'andamento', 'pergioco', 'preventivi'].find(s => puoVedere(user, 'costiricavi', s)) || 'cruscotto';
+  const primaSchedaCR = ['cruscotto', 'andamento', 'pergioco', 'preventivi', 'annullati'].find(s => puoVedere(user, 'costiricavi', s)) || 'cruscotto';
   const [currentView, setCurrentView] = useState(primaSchedaCR);
 
   const [prenotazioni, setPrenotazioni] = useState([]);
@@ -266,7 +290,7 @@ function Cruscotto({ user }) {
       supabase.from('op_voci').select('*'),
       supabase.from('op_periodi').select('*'),
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
-      supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, periodo, mostraComeOpzioni, totaleVendita, costoVivoTotale, destinazione, motivoAnnullamento'),
+      supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, periodo, mostraComeOpzioni, totaleVendita, costoVivoTotale, destinazione, nomeReferente, motivoAnnullamento'),
       supabase.from('fatture').select('riferimento, importo').eq('tipo', 'prenotazione'),
       supabase.from('voucher').select('codice, importo'),
       supabase.from('cons_periodi').select('controparte, controparte_id, righe'),
@@ -923,7 +947,6 @@ function Cruscotto({ user }) {
     const perMese = MESI.map((label, i) => ({ periodo: label, mese: i + 1, emessi: 0, vinto: 0, perso: 0, aperto: 0, valoreVinto: 0, valorePerso: 0, valoreAperto: 0, valore: 0 }));
     const perAnno = {};
     const perGruppo = { gioco: {}, sede: {} };
-    const motivi = {};
     let scadutiSenzaRisposta = 0;
 
     nelPeriodo.forEach(p => {
@@ -941,11 +964,6 @@ function Cruscotto({ user }) {
       }
 
       if (statoPreventivoDi(p) === STATO_PREVENTIVO.AZIONE_RICHIESTA) scadutiSenzaRisposta++;
-      const motivo = (p.motivoAnnullamento || '').trim();
-      if (statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO) {
-        const k = motivo || 'Senza motivo scritto';
-        motivi[k] = (motivi[k] || 0) + 1;
-      }
 
       // Un preventivo conta una volta per ogni gioco e per ogni sede che contiene: e' l'offerta a
       // essere vinta o persa, non la singola riga, quindi il valore non si spezza e non si somma
@@ -979,6 +997,8 @@ function Cruscotto({ user }) {
       .map(r => ({ ...r, conversione: conversione(r.vinto, r.perso) }))
       .sort((a, b) => b.emessi - a.emessi);
 
+    const annullati = nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO);
+
     return {
       totali: {
         ...totali,
@@ -990,9 +1010,9 @@ function Cruscotto({ user }) {
       periodi: conRapporto(annoPrevSel ? perMese : Object.values(perAnno).sort((a, b) => a.periodo.localeCompare(b.periodo))),
       giochi: gruppi('gioco'),
       sedi: gruppi('sede'),
-      motivi: Object.entries(motivi).map(([nome, n]) => ({ nome, n })).sort((a, b) => b.n - a.n),
+      motivi: raggruppaMotivi(annullati),
       scadutiSenzaRisposta,
-      annullati: nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO).length,
+      annullati: annullati.length,
     };
   }, [preventivi, annoPrevSel, mesePrevSel, settimanaPrev, senzaOpzioni, dataPrevDi, rigaListino, nomeSedeDiId]);
 
@@ -1003,6 +1023,94 @@ function Cruscotto({ user }) {
   };
 
   const percentuale = (v) => (v == null ? '—' : `${v.toFixed(0)}%`);
+
+  // ====================== ANNULLATI (perche' le cose non si fanno) ======================
+  // Due sottoschede, una per le partite e una per le offerte, con la stessa domanda: quanto si
+  // perde, e perche'. Il motivo oggi e' testo libero, quindi i gruppi sono le frasi scritte (vedi
+  // raggruppaMotivi): servono anche a capire quali categorie fisse avrebbe senso chiedere.
+  //
+  // La data che conta e' quella della partita per le prenotazioni, quella di emissione per i
+  // preventivi: il giorno dell'annullamento non e' scritto da nessuna parte.
+  const vediAnnullati = (v) => puoVedere(user, 'costiricavi', 'annullati', v);
+  const [vistaAnnullati, setVistaAnnullati] = useState(() => ['pren_annullate', 'prev_annullati'].find(vediAnnullati) || 'pren_annullate');
+  const annullatiPren = vistaAnnullati === 'pren_annullate';
+  // Gli annullamenti sono pochi: si parte da tutti gli anni, che e' dove i motivi si ripetono.
+  const [annoAnn, setAnnoAnn] = useState("");
+  const [meseAnn, setMeseAnn] = useState("");
+  const meseAnnSel = annoAnn ? meseAnn : "";
+  const [statoAnn, setStatoAnn] = useState(""); // '' | ANNULLATA | POSTICIPATA, solo per le prenotazioni
+  const [motivoAnn, setMotivoAnn] = useState(null); // chiave del motivo scelto, null = tutti
+
+  const dataAnnullatoDi = useCallback((p) => String((annullatiPren ? p.data : p.dataEmissione) || '').slice(0, 10), [annullatiPren]);
+  const anniAnnullati = useMemo(() => {
+    const fonte = annullatiPren ? tutteLePrenotazioni : preventivi;
+    return [...new Set(fonte.map(dataAnnullatoDi).filter(Boolean).map(d => d.slice(0, 4)))].sort().reverse();
+  }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi]);
+
+  const statAnnullati = useMemo(() => {
+    const nelPeriodo = (annullatiPren ? tutteLePrenotazioni : preventivi).filter(p => {
+      const data = dataAnnullatoDi(p);
+      if (!data) return false;
+      if (annoAnn && data.slice(0, 4) !== annoAnn) return false;
+      if (meseAnnSel && parseInt(data.slice(5, 7), 10) !== parseInt(meseAnnSel, 10)) return false;
+      return true;
+    });
+    const perData = (a, b) => dataAnnullatoDi(b).localeCompare(dataAnnullatoDi(a));
+
+    if (annullatiPren) {
+      const annullate = nelPeriodo.filter(p => p.stato === STATO_PREN.ANNULLATA);
+      const posticipate = nelPeriodo.filter(p => p.stato === STATO_PREN.POSTICIPATA);
+      const inVista = statoAnn === STATO_PREN.ANNULLATA ? annullate : statoAnn === STATO_PREN.POSTICIPATA ? posticipate : [...annullate, ...posticipate];
+      const motivi = raggruppaMotivi(inVista, nettoRicavo);
+      const scelto = motivi.find(m => m.chiave === motivoAnn);
+      return {
+        totale: nelPeriodo.length,
+        annullate, posticipate, motivi,
+        // La posticipata non e' un ricavo perso: l'acconto c'e' e la partita si rifara'. Persa e'
+        // l'annullata, ed e' quella che si somma.
+        ricavoPerso: annullate.reduce((s, p) => s + nettoRicavo(p), 0),
+        daRiprogrammare: posticipate.reduce((s, p) => s + nettoRicavo(p), 0),
+        conCosti: annullate.filter(p => costiAnnullamentoDi(p).size > 0),
+        senzaMotivo: inVista.filter(p => !chiaveMotivo(p.motivoAnnullamento)).length,
+        righe: (scelto ? scelto.righe : inVista).slice().sort(perData),
+      };
+    }
+
+    const valore = (p) => parseFloat(p.totaleVendita) || 0;
+    const annullati = nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO);
+    const motivi = raggruppaMotivi(annullati, valore);
+    const scelto = motivi.find(m => m.chiave === motivoAnn);
+    return {
+      totale: nelPeriodo.length,
+      annullati, motivi,
+      valorePerso: annullati.reduce((s, p) => s + valore(p), 0),
+      // Gli scaduti senza risposta sono persi anche loro, ma un motivo non ce l'hanno ancora: chi li
+      // annulla glielo da'. Si contano per dire quanti potrebbero ancora arrivare in questa lista.
+      azioneRichiesta: nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.AZIONE_RICHIESTA).length,
+      senzaMotivo: annullati.filter(p => !chiaveMotivo(p.motivoAnnullamento)).length,
+      righe: (scelto ? scelto.righe : annullati).slice().sort(perData),
+    };
+  }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi, annoAnn, meseAnnSel, statoAnn, motivoAnn]);
+
+  const esportaAnnullati = () => {
+    if (statAnnullati.righe.length === 0) return alert("Niente da esportare.");
+    const righe = annullatiPren
+      ? statAnnullati.righe.map(p => ({
+        Codice: p.id, 'Data evento': p.data, Nominativo: p.nominativo || '', Partita: etichettaDi(p),
+        Stato: etichettaStatoPren(p.stato), Motivo: p.motivoAnnullamento || '',
+        'Costi da sostenere': [...costiAnnullamentoDi(p)].map(c => ETICHETTA_COSTO_ANNULLAMENTO[c] || c).join(', '),
+        'Ricavo netto': +nettoRicavo(p).toFixed(2),
+      }))
+      : statAnnullati.righe.map(p => ({
+        Codice: p.codice, Emissione: String(p.dataEmissione || '').slice(0, 10), Evento: estraiDateDaPeriodo(p.periodo).inizio || '',
+        Referente: p.nomeReferente || '', Destinazione: p.destinazione || '', Motivo: p.motivoAnnullamento || '',
+        Valore: +(parseFloat(p.totaleVendita) || 0).toFixed(2),
+      }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(righe), 'Elenco');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(statAnnullati.motivi.map(m => ({ Motivo: m.nome, Quanti: m.n, Valore: +m.valore.toFixed(2) }))), 'Motivi');
+    XLSX.writeFile(wb, `Cruscotto_${annullatiPren ? 'Prenotazioni' : 'Preventivi'}_annullati${annoAnn ? `_${annoAnn}` : ''}.xlsx`);
+  };
 
   const esportaPreventivi = () => {
     if (statPreventivi.totali.emessi.n === 0) return alert("Nessun preventivo da esportare.");
@@ -1242,6 +1350,9 @@ function Cruscotto({ user }) {
         )}
         {puoVedere(user, 'costiricavi', 'pergioco') && (
           <button className={`nav-btn ${currentView === 'pergioco' ? 'active' : ''}`} onClick={() => setCurrentView("pergioco")}><Icona nome="giochi" />Per gioco</button>
+        )}
+        {puoVedere(user, 'costiricavi', 'annullati') && (
+          <button className={`nav-btn ${currentView === 'annullati' ? 'active' : ''}`} onClick={() => setCurrentView("annullati")}><Icona nome="annulla" />Annullati</button>
         )}
       </nav>
 
@@ -1754,6 +1865,185 @@ function Cruscotto({ user }) {
                   </div>
                 )}
             </div>
+          </div>
+        );
+      })()}
+
+      {/* ===================== ANNULLATI ===================== */}
+      {currentView === "annullati" && puoVedere(user, 'costiricavi', 'annullati') && (() => {
+        const s = statAnnullati;
+        const riquadro = (titolo, valore, sotto, colore) => (
+          <div className="admin-table-box-full" style={{ flex: '1 1 180px', padding: '14px 16px' }}>
+            <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{titolo}</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: colore || '#0f172a' }}>{valore}</div>
+            <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>{sotto}</div>
+          </div>
+        );
+        const quota = (n) => (s.totale > 0 ? (n / s.totale) * 100 : null);
+        const cambiaVista = (v) => { setVistaAnnullati(v); setMotivoAnn(null); };
+        const sottoschede = [{ id: 'pren_annullate', label: 'Prenotazioni', icona: 'prenotazioni' }, { id: 'prev_annullati', label: 'Preventivi', icona: 'preventivatore' }].filter(v => vediAnnullati(v.id));
+        const massimo = Math.max(1, ...s.motivi.map(m => m.n));
+        const sceltoNome = s.motivi.find(m => m.chiave === motivoAnn)?.nome;
+        const cella = { padding: '8px 10px', verticalAlign: 'top' };
+        const intestazioni = annullatiPren
+          ? ['Data', 'Codice', 'Nominativo', 'Partita', 'Stato', 'Motivo', 'Costi da sostenere', 'Ricavo']
+          : ['Emissione', 'Codice', 'Evento', 'Referente', 'Destinazione', 'Motivo', 'Valore'];
+        return (
+          <div className="schermata-storico no-print">
+            <nav className="modulo-subnav subnav-segmented" style={{ margin: '0 0 14px' }}>
+              {sottoschede.map(v => (
+                <button key={v.id} className={`nav-btn ${vistaAnnullati === v.id ? 'active' : ''}`} onClick={() => cambiaVista(v.id)}><Icona nome={v.icona} />{v.label}</button>
+              ))}
+            </nav>
+            {sottoschede.length === 0 ? <p className="descrizione-pagina">Nessuna sottoscheda abilitata per il tuo ruolo.</p> : (<>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <h2 style={{ margin: 0 }}>
+                  {annullatiPren ? 'Prenotazioni annullate e posticipate' : 'Preventivi annullati'}
+                  {' '}<span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>({annullatiPren ? 'per data della partita, ricavi senza IVA' : 'per data di emissione, importi di vendita'})</span>
+                </h2>
+                <button onClick={esportaAnnullati} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
+              </div>
+              <p className="descrizione-pagina">
+                {annullatiPren
+                  ? <>Una partita senza incasso si <strong>annulla</strong> e il suo ricavo è perso; con un acconto si <strong>posticipa</strong> e resta da riprogrammare. Il motivo si scrive a mano: qui i motivi uguali sono contati insieme anche se scritti con maiuscole o punteggiatura diverse.</>
+                  : <>I preventivi chiusi dal cliente o da noi, con il motivo scritto annullandoli. Quelli scaduti senza risposta non sono qui finché qualcuno non li annulla. I motivi uguali sono contati insieme anche se scritti con maiuscole o punteggiatura diverse.</>}
+                {' '}Clicca un motivo per vedere solo le sue righe.
+              </p>
+
+              <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
+                <div className="filtro-group" style={{ flex: '1 1 140px' }}>
+                  <label>Anno:</label>
+                  <select value={annoAnn} onChange={(e) => { setAnnoAnn(e.target.value); setMeseAnn(""); setMotivoAnn(null); }}>
+                    <option value="">Tutti gli anni</option>
+                    {anniAnnullati.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </div>
+                <div className="filtro-group" style={{ flex: '1 1 140px' }}>
+                  <label>Mese:</label>
+                  <select value={meseAnnSel} onChange={(e) => { setMeseAnn(e.target.value); setMotivoAnn(null); }} disabled={!annoAnn}>
+                    <option value="">Tutti i mesi</option>
+                    {MESI.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
+                  </select>
+                </div>
+                {annullatiPren && (
+                  <div className="filtro-group" style={{ flex: '1 1 160px' }}>
+                    <label>Stato:</label>
+                    <select value={statoAnn} onChange={(e) => { setStatoAnn(e.target.value); setMotivoAnn(null); }}>
+                      <option value="">Annullate e posticipate</option>
+                      <option value={STATO_PREN.ANNULLATA}>Solo annullate</option>
+                      <option value={STATO_PREN.POSTICIPATA}>Solo posticipate</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '20px' }}>
+                {annullatiPren ? (<>
+                  {riquadro('Annullate', s.annullate.length, `${percentuale(quota(s.annullate.length))} delle ${s.totale} partite del periodo`, '#b91c1c')}
+                  {riquadro('Posticipate', s.posticipate.length, `${percentuale(quota(s.posticipate.length))} delle partite, ${formattaEuro(s.daRiprogrammare)} da riprogrammare`, '#a16207')}
+                  {riquadro('Ricavo perso', formattaEuro(s.ricavoPerso), 'quello delle annullate', '#b91c1c')}
+                  {riquadro('Con costi da sostenere', s.conCosti.length, 'annullate ma con campo, rinfresco o operatori da pagare')}
+                  {riquadro('Motivi diversi', s.motivi.filter(m => m.chiave).length, s.senzaMotivo > 0 ? `${s.senzaMotivo} senza motivo scritto` : 'tutte con un motivo scritto')}
+                </>) : (<>
+                  {riquadro('Annullati', s.annullati.length, `${percentuale(quota(s.annullati.length))} dei ${s.totale} preventivi emessi`, '#b91c1c')}
+                  {riquadro('Valore annullato', formattaEuro(s.valorePerso), s.annullati.length > 0 ? `${formattaEuro(s.valorePerso / s.annullati.length)} in media` : 'nessun annullato', '#b91c1c')}
+                  {riquadro('Scaduti senza risposta', s.azioneRichiesta, 'ancora da sentire o da annullare', '#a16207')}
+                  {riquadro('Motivi diversi', s.motivi.filter(m => m.chiave).length, s.senzaMotivo > 0 ? `${s.senzaMotivo} senza motivo scritto` : 'tutti con un motivo scritto')}
+                </>)}
+              </div>
+
+              <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '16px' }}>
+                <h3 style={{ margin: '0 0 10px 0', fontSize: '1rem' }}>Motivi</h3>
+                {s.motivi.length === 0
+                  ? <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: 0 }}>Niente di annullato nel periodo.</p>
+                  : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.72rem', color: '#94a3b8', textTransform: 'uppercase', padding: '0 8px 4px' }}>
+                        <div style={{ flex: 1 }}>Motivo</div>
+                        <div style={{ width: '160px' }} />
+                        <div style={{ width: '40px', textAlign: 'right' }}>Quanti</div>
+                        <div style={{ width: '44px', textAlign: 'right' }}>%</div>
+                        <div style={{ width: '100px', textAlign: 'right' }}>{annullatiPren ? 'Ricavo' : 'Valore'}</div>
+                      </div>
+                      {s.motivi.map(m => {
+                        const attivo = motivoAnn === m.chiave;
+                        const nAnn = annullatiPren ? m.righe.filter(p => p.stato === STATO_PREN.ANNULLATA).length : m.n;
+                        const totaleMotivi = s.motivi.reduce((t, x) => t + x.n, 0);
+                        return (
+                          <div key={m.chiave || '_'} onClick={() => setMotivoAnn(attivo ? null : m.chiave)}
+                            title={m.varianti > 1 ? `Scritto in ${m.varianti} modi diversi: ${Object.keys(m.forme).join(' · ')}` : m.nome}
+                            style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem', padding: '6px 8px', borderRadius: '6px', cursor: 'pointer', background: attivo ? '#fef2f2' : 'transparent', outline: attivo ? '1px solid #fecaca' : 'none' }}>
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: m.chiave ? '#0f172a' : '#94a3b8', fontStyle: m.chiave ? 'normal' : 'italic' }}>
+                              {m.nome}{m.varianti > 1 && <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}> ({m.varianti} varianti)</span>}
+                            </div>
+                            <div style={{ width: '160px', display: 'flex' }}>
+                              <div style={{ width: `${(nAnn / massimo) * 160}px`, height: '10px', background: COLORE_COSTO, borderRadius: nAnn === m.n ? '5px' : '5px 0 0 5px' }} />
+                              <div style={{ width: `${((m.n - nAnn) / massimo) * 160}px`, height: '10px', background: '#eab308', borderRadius: nAnn === 0 ? '5px' : '0 5px 5px 0' }} />
+                            </div>
+                            <strong style={{ width: '40px', textAlign: 'right' }}>{m.n}</strong>
+                            <span style={{ width: '44px', textAlign: 'right', color: '#64748b' }}>{percentuale((m.n / totaleMotivi) * 100)}</span>
+                            <span style={{ width: '100px', textAlign: 'right' }}>{formattaEuro(m.valore)}</span>
+                          </div>
+                        );
+                      })}
+                      {annullatiPren && s.posticipate.length > 0 && statoAnn === '' && (
+                        <div style={{ display: 'flex', gap: '14px', fontSize: '0.75rem', color: '#64748b', padding: '8px 8px 0' }}>
+                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: COLORE_COSTO, marginRight: '5px', verticalAlign: 'middle' }} />Annullate</span>
+                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: '#eab308', marginRight: '5px', verticalAlign: 'middle' }} />Posticipate</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+              </div>
+
+              <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px 4px', flexWrap: 'wrap' }}>
+                  <h3 style={{ margin: 0, fontSize: '1rem' }}>Elenco ({s.righe.length})</h3>
+                  {sceltoNome && (
+                    <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '4px 10px', fontSize: '0.78rem' }} onClick={() => setMotivoAnn(null)} title="Torna a tutti i motivi">
+                      Solo «{sceltoNome}» ✕
+                    </button>
+                  )}
+                </div>
+                <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      {intestazioni.map((c, i) => (
+                        <th key={c} style={{ padding: '8px 10px', fontSize: '0.78rem', color: '#64748b', textAlign: i === intestazioni.length - 1 ? 'right' : 'left' }}>{c}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.righe.length === 0
+                      ? <tr><td colSpan={intestazioni.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Niente di annullato nel periodo.</td></tr>
+                      : annullatiPren
+                        ? s.righe.map(p => (
+                          <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+                            <td style={{ ...cella, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(p.data)}</td>
+                            <td style={cella}>{p.id}</td>
+                            <td style={cella}><strong>{p.nominativo}</strong></td>
+                            <td style={cella}>{etichettaDi(p)}</td>
+                            <td style={cella}><span className={`badge-stato badge-mini ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
+                            <td style={{ ...cella, color: p.motivoAnnullamento ? '#991b1b' : '#94a3b8', fontStyle: 'italic' }}>{p.motivoAnnullamento || SENZA_MOTIVO}</td>
+                            <td style={{ ...cella, color: '#64748b' }}>{[...costiAnnullamentoDi(p)].map(c => ETICHETTA_COSTO_ANNULLAMENTO[c] || c).join(', ') || '—'}</td>
+                            <td style={{ ...cella, textAlign: 'right' }}>{formattaEuro(nettoRicavo(p))}</td>
+                          </tr>
+                        ))
+                        : s.righe.map(p => (
+                          <tr key={p.codice} style={{ borderBottom: '1px solid #eee' }}>
+                            <td style={{ ...cella, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(String(p.dataEmissione || '').slice(0, 10))}</td>
+                            <td style={cella}>{p.codice}</td>
+                            <td style={{ ...cella, whiteSpace: 'nowrap' }}>{estraiDateDaPeriodo(p.periodo).inizio ? formattaDataGGMMAAAA(estraiDateDaPeriodo(p.periodo).inizio) : '—'}</td>
+                            <td style={cella}><strong>{p.nomeReferente || '—'}</strong></td>
+                            <td style={cella}>{p.destinazione || '—'}</td>
+                            <td style={{ ...cella, color: p.motivoAnnullamento ? '#991b1b' : '#94a3b8', fontStyle: 'italic' }}>{p.motivoAnnullamento || SENZA_MOTIVO}</td>
+                            <td style={{ ...cella, textAlign: 'right' }}>{formattaEuro(parseFloat(p.totaleVendita) || 0)}</td>
+                          </tr>
+                        ))}
+                  </tbody>
+                </table>
+              </div>
+            </>)}
           </div>
         );
       })()}

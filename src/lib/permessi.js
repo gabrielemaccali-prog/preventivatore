@@ -119,6 +119,14 @@ export const SCHEDE_REGISTRY = {
       { id: 'andamento', label: 'Andamento' },
       { id: 'pergioco', label: 'Per gioco' },
       { id: 'preventivi', label: 'Preventivi' },
+      {
+        id: 'annullati',
+        label: 'Annullati',
+        sottoschede: [
+          { id: 'pren_annullate', label: 'Prenotazioni' },
+          { id: 'prev_annullati', label: 'Preventivi' },
+        ],
+      },
     ],
   },
   disponibilita: {
