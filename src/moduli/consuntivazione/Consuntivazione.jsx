@@ -10,11 +10,13 @@ import {
   righeClientiExport, leggiExportFatture, abbinaFatture,
 } from '../../lib/fatturazione'
 import Controparti from './Controparti'
+import Compensi from '../compensi/Compensi'
 
 // ============================================================
 // Consuntivazione: quello che è davvero successo, dopo il preventivo.
-// Tre schede: Fatture, i ricavi fatturati di prenotazioni e voucher; Fornitori e Campi, i costi
-// pagati a chi ci noleggia i giochi e ai centri sportivi. Qui dentro arriveranno anche i servizi.
+// Quattro schede: Fatture, i ricavi fatturati di prenotazioni e voucher; Fornitori e Campi, i costi
+// pagati a chi ci noleggia i giochi e ai centri sportivi; Bubbler, i compensi degli operatori.
+// Qui dentro arriveranno anche i servizi.
 // ============================================================
 
 const oggiIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -38,6 +40,8 @@ const SCHEDE = [
   { id: 'fatture', label: 'Fatture', icona: 'fatture' },
   { id: 'fornitori', label: 'Fornitori', icona: 'fornitori' },
   { id: 'campi', label: 'Campi', icona: 'campi' },
+  // I compensi dei bubbler, che erano un modulo a sé: sono costi consuntivati come gli altri.
+  { id: 'bubbler', label: 'Bubbler', icona: 'compensi' },
 ];
 
 const intestatarioVoucher = (v) => [v.fattCognome, v.fattNome].filter(Boolean).join(' ') || v.nominativo || '—';
@@ -244,6 +248,7 @@ function Consuntivazione({ user }) {
   // passando dall'una all'altra, così filtri e righe aperte non si trascinano da una scheda all'altra.
   if (attiva === 'fornitori') return <>{barraSchede}<Controparti key="fornitore" tipo="fornitore" /></>;
   if (attiva === 'campi') return <>{barraSchede}<Controparti key="campo" tipo="campo" /></>;
+  if (attiva === 'bubbler') return <>{barraSchede}<Compensi user={user} /></>;
 
   return (
     <>

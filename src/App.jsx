@@ -7,7 +7,6 @@ import Voucher from './moduli/voucher/Voucher';
 import Prenotazioni from './moduli/prenotazioni/Prenotazioni';
 import Cruscotto from './moduli/cruscotto/Cruscotto';
 import Disponibilita from './moduli/disponibilita/Disponibilita';
-import Compensi from './moduli/compensi/Compensi';
 import Consuntivazione from './moduli/consuntivazione/Consuntivazione';
 import Albatros from './moduli/albatros/Albatros';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
@@ -428,8 +427,6 @@ function App() {
       {currentModule === "costiricavi" && <Cruscotto user={user} />}
 
       {currentModule === "disponibilita" && <Disponibilita user={user} />}
-
-      {currentModule === "compensi" && <Compensi user={user} />}
 
       {currentModule === "consuntivazione" && <Consuntivazione user={user} />}
 

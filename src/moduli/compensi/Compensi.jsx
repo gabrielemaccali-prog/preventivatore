@@ -140,11 +140,22 @@ const leggiAnagrafiche = async () => {
   return ultimo;
 };
 
+// Le schede del vecchio modulo Compensi sono le sotto-schede di Consuntivazione > Bubbler. Le tre
+// fasi della gestione stanno allo stesso livello di configuratore e indicatori: la matrice dei
+// permessi conosce due livelli soli, scheda e sotto-scheda.
+const VISTE = [
+  { id: 'config', label: 'Configuratore', icona: 'configuratore' },
+  { id: 'daconsuntivare', label: 'Da consuntivare', icona: 'daconsuntivare' },
+  { id: 'rimborsi', label: 'Elabora rimborsi', icona: 'rimborsi' },
+  { id: 'evasi', label: 'Rimborsi evasi', icona: 'evasi' },
+  { id: 'indicatori', label: 'Indicatori', icona: 'indicatori' },
+];
+const FASI_GESTIONE = ['daconsuntivare', 'rimborsi', 'evasi'];
+
 function Compensi({ user }) {
-  const primaScheda = ['config', 'gestione', 'indicatori'].find(s => puoVedere(user, 'compensi', s)) || 'config';
-  const [currentView, setCurrentView] = useState(primaScheda);
-  const primaSottoscheda = ['daconsuntivare', 'rimborsi', 'evasi'].find(s => puoVedere(user, 'compensi', 'gestione', s)) || 'daconsuntivare';
-  const [gestioneTab, setGestioneTab] = useState(primaSottoscheda);
+  const vedeVista = (v) => puoVedere(user, 'consuntivazione', 'bubbler', v);
+  const [currentView, setCurrentView] = useState(() => VISTE.find(v => vedeVista(v.id))?.id || 'config');
+  const inGestione = FASI_GESTIONE.includes(currentView);
 
   const [parametri, setParametri] = useState(PARAMETRI_DEFAULT);
   const [salvataggio, setSalvataggio] = useState(false);
@@ -246,8 +257,8 @@ function Compensi({ user }) {
   // Anche gli indicatori leggono i periodi, quindi devono far scattare lo scarico: senza,
   // chi apre la scheda senza passare dalla gestione vedrebbe zero e crederebbe di non aver pagato.
   useEffect(() => {
-    if (currentView === 'gestione' || currentView === 'indicatori') fetchPartite();
-  }, [currentView]);
+    if (inGestione || currentView === 'indicatori') fetchPartite();
+  }, [inGestione, currentView]);
 
   const nelFiltro = useCallback((data) => (!dal || data >= dal) && data <= alEffettivo, [dal, alEffettivo]);
 
@@ -1234,25 +1245,25 @@ function Compensi({ user }) {
     );
   };
 
+  // Le sotto-schede stanno dentro il riquadro, sotto il titolo, come negli altri moduli: sopra
+  // c'è già la barra delle schede di Consuntivazione.
+  const barraViste = (
+    <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
+      {VISTE.filter(v => vedeVista(v.id)).map(v => (
+        <button key={v.id} className={`nav-btn ${currentView === v.id ? 'active' : ''}`} onClick={() => setCurrentView(v.id)}><Icona nome={v.icona} />{v.label}</button>
+      ))}
+    </nav>
+  );
+
   return (
     <>
-      <nav className="modulo-subnav no-print subnav-segmented">
-        {puoVedere(user, 'compensi', 'config') && (
-          <button className={`nav-btn ${currentView === 'config' ? 'active' : ''}`} onClick={() => setCurrentView("config")}><Icona nome="configuratore" />Configuratore</button>
-        )}
-        {puoVedere(user, 'compensi', 'gestione') && (
-          <button className={`nav-btn ${currentView === 'gestione' ? 'active' : ''}`} onClick={() => setCurrentView("gestione")}><Icona nome="gestione" />Gestione</button>
-        )}
-        {puoVedere(user, 'compensi', 'indicatori') && (
-          <button className={`nav-btn ${currentView === 'indicatori' ? 'active' : ''}`} onClick={() => setCurrentView("indicatori")}><Icona nome="indicatori" />Indicatori</button>
-        )}
-      </nav>
 
 
       {/* ===================== CONFIGURATORE ===================== */}
-      {currentView === "config" && puoVedere(user, 'compensi', 'config') && (
+      {currentView === "config" && vedeVista('config') && (
         <div className="schermata-storico no-print">
           <h2 style={{ margin: 0 }}>Configuratore compensi</h2>
+          {barraViste}
           <p className="descrizione-pagina">
             Parametri del calcolo del preventivo, uguali per tutti i bubbler. Valgono da adesso in avanti:
             i periodi già consuntivati conservano i parametri con cui erano stati chiusi.
@@ -1347,26 +1358,13 @@ function Compensi({ user }) {
 
       {/* ===================== SCHEDE IN ARRIVO ===================== */}
       {/* ===================== GESTIONE ===================== */}
-      {/* Un contenitore solo, come negli altri moduli: il titolo e la sotto-barra restano fermi
-          mentre cambia la fase, e ogni fase si spiega con la propria riga di descrizione. */}
-      {currentView === "gestione" && puoVedere(user, 'compensi', 'gestione') && (
+      {/* Le tre fasi condividono il contenitore, e ognuna si spiega con la propria riga di descrizione. */}
+      {inGestione && vedeVista(currentView) && (
         <div className="schermata-storico no-print">
-          <h2 style={{ margin: 0 }}>Gestione</h2>
-          <p className="descrizione-pagina">Le tre fasi che un compenso attraversa, dal calcolo alla ricevuta.</p>
+          <h2 style={{ margin: 0 }}>{VISTE.find(v => v.id === currentView).label}</h2>
+          {barraViste}
 
-          <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
-            {puoVedere(user, 'compensi', 'gestione', 'daconsuntivare') && (
-              <button className={`nav-btn ${gestioneTab === 'daconsuntivare' ? 'active' : ''}`} onClick={() => setGestioneTab("daconsuntivare")}><Icona nome="daconsuntivare" />Da consuntivare</button>
-            )}
-            {puoVedere(user, 'compensi', 'gestione', 'rimborsi') && (
-              <button className={`nav-btn ${gestioneTab === 'rimborsi' ? 'active' : ''}`} onClick={() => setGestioneTab("rimborsi")}><Icona nome="rimborsi" />Elabora rimborsi</button>
-            )}
-            {puoVedere(user, 'compensi', 'gestione', 'evasi') && (
-              <button className={`nav-btn ${gestioneTab === 'evasi' ? 'active' : ''}`} onClick={() => setGestioneTab("evasi")}><Icona nome="evasi" />Rimborsi evasi</button>
-            )}
-          </nav>
-
-      {gestioneTab === "daconsuntivare" && puoVedere(user, 'compensi', 'gestione', 'daconsuntivare') && (
+      {currentView === "daconsuntivare" && (
         <>
           <p className="descrizione-pagina">
             Tutto quello che resta da consuntivare, operatore per operatore, calcolato dalle partite confermate.
@@ -1640,7 +1638,7 @@ function Compensi({ user }) {
         </div>
       )}
 
-      {gestioneTab === "rimborsi" && puoVedere(user, 'compensi', 'gestione', 'rimborsi') && (
+      {currentView === "rimborsi" && (
         <>
           <p className="descrizione-pagina">
             Periodi consuntivati in attesa della ricevuta. Il dettaglio è ricostruito con i parametri di allora,
@@ -1812,7 +1810,7 @@ function Compensi({ user }) {
         </div>
       )}
 
-      {gestioneTab === "evasi" && puoVedere(user, 'compensi', 'gestione', 'evasi') && (
+      {currentView === "evasi" && (
         <>
           <p className="descrizione-pagina">
             Periodi pagati. Il documento si ristampa identico a com'era stato generato:
@@ -1824,9 +1822,10 @@ function Compensi({ user }) {
         </div>
       )}
 
-      {currentView === "indicatori" && puoVedere(user, 'compensi', 'indicatori') && (
+      {currentView === "indicatori" && vedeVista('indicatori') && (
         <div className="schermata-storico no-print">
           <h2 style={{ margin: 0 }}>Indicatori</h2>
+          {barraViste}
           <p className="descrizione-pagina">
             Quanto è stato pagato ai bubbler nell&apos;anno e per quante giornate. Le giornate sono quelle
             scritte sui documenti di rimborso; per i consuntivi diretti, che un documento non ce l'hanno, sono i giorni lavorati del periodo.

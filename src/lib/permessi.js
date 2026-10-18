@@ -7,9 +7,8 @@ export const MODULI_REGISTRY = [
   // Si chiama Cruscotto, ma l'id resta 'costiricavi': e' la chiave con cui i permessi dei ruoli
   // sono gia' salvati a database, e cambiarla toglierebbe l'accesso a chi ce l'ha senza dire niente.
   { id: 'costiricavi', label: 'Cruscotto', icon: 'cruscotto' },
-  { id: 'compensi', label: 'Compensi', icon: 'compensi' },
-  // Quello che e' davvero successo dopo il preventivo. Per ora le fatture; qui arriveranno anche
-  // compensi, campi e servizi.
+  // Quello che e' davvero successo dopo il preventivo: fatture, fornitori, campi e compensi dei
+  // bubbler. Qui arriveranno anche i servizi.
   { id: 'consuntivazione', label: 'Consuntivazione', icon: 'consuntivazione' },
   // La cassa del centro sportivo Albatros: chiusure serali, spese, listino del bar e dei campi.
   { id: 'albatros', label: 'Albatros', icon: 'albatros' },
@@ -46,6 +45,18 @@ export const SCHEDE_REGISTRY = {
       { id: 'fatture', label: 'Fatture' },
       { id: 'fornitori', label: 'Fornitori' },
       { id: 'campi', label: 'Campi' },
+      {
+        // Era il modulo Compensi: sql/compensi_in_consuntivazione.sql ha spostato qui i permessi.
+        id: 'bubbler',
+        label: 'Bubbler',
+        sottoschede: [
+          { id: 'config', label: 'Configuratore' },
+          { id: 'daconsuntivare', label: 'Da consuntivare' },
+          { id: 'rimborsi', label: 'Elabora rimborsi' },
+          { id: 'evasi', label: 'Rimborsi evasi' },
+          { id: 'indicatori', label: 'Indicatori' },
+        ],
+      },
     ],
   },
   catalogo: {
@@ -101,21 +112,6 @@ export const SCHEDE_REGISTRY = {
       { id: 'andamento', label: 'Andamento' },
       { id: 'pergioco', label: 'Per gioco' },
       { id: 'preventivi', label: 'Preventivi' },
-    ],
-  },
-  compensi: {
-    schede: [
-      { id: 'config', label: 'Configuratore' },
-      {
-        id: 'gestione',
-        label: 'Gestione',
-        sottoschede: [
-          { id: 'daconsuntivare', label: 'Da consuntivare' },
-          { id: 'rimborsi', label: 'Elabora rimborsi' },
-          { id: 'evasi', label: 'Rimborsi evasi' },
-        ],
-      },
-      { id: 'indicatori', label: 'Indicatori' },
     ],
   },
   disponibilita: {
