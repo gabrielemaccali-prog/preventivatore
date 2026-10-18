@@ -412,24 +412,54 @@ function Disponibilita({ user }) {
   // sia al riepilogo personale, quindi stanno qui sopra a entrambi.
   const mieRighe = dispCalendario.filter(d => d.utente_id === user.id);
   const mieRigheMese = mieRighe.filter(d => (d.data || '').slice(0, 7) === meseVisualizzato);
-  const mieRigheMeseDi = (campoId) => mieRigheMese.filter(d => d.campo_id === campoId);
+  // Righe di un bubbler qualsiasi in un campo nel mese visualizzato: l'editor può lavorare anche
+  // sul calendario di un altro (vedi puoModificareAltrui).
+  const righeMeseDi = (utenteId, campoId) => dispCalendario.filter(d => d.utente_id === utenteId && d.campo_id === campoId && (d.data || '').slice(0, 7) === meseVisualizzato);
+
+  // ---------------- Scadenza e blocco ----------------
+  // L'accordo con i bubbler: le disponibilità di un mese si inseriscono e si confermano entro il 15
+  // del mese prima. La scadenza non blocca niente da sola, serve a segnalare chi è in ritardo.
+  const scadenzaDi = (mese) => { const [a, m] = mese.split('-').map(Number); return new Date(a, m - 2, 15); };
+  const etichettaScadenza = (mese) => { const s = scadenzaDi(mese); return `15 ${MESI[s.getMonth()].toLowerCase()}`; };
+  const scadenzaPassata = (mese) => oggiIso > toISODate(scadenzaDi(mese));
+  // I mesi già finiti non sono più "da confermare": nessuno li pianifica più.
+  const meseAperto = (mese) => mese >= meseISO(new Date());
+  // Chi ha questo permesso modifica le disponibilità di qualunque bubbler, anche a mese confermato,
+  // e può annullare una conferma. Il bubbler da solo, su un mese confermato, può solo aggiungere.
+  const puoModificareAltrui = puoVedere(user, 'disponibilita', 'riepilogo', 'modifica_altrui');
+
+  // Il mese prossimo, quello da confermare entro il 15: il bubbler lo vede segnalato anche
+  // mentre guarda il mese in corso, che è quello su cui atterra.
+  const meseProssimo = meseISO(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1));
+  const [confermeProssimo, setConfermeProssimo] = useState(null);
+  // Si rilegge a ogni cambio di dispConferme: confermare dall'editor deve far sparire il promemoria.
+  useEffect(() => {
+    if (!user?.id || !user.bubbler) return;
+    supabase.from('disp_conferme').select('campo_id').eq('utente_id', user.id).eq('mese', meseProssimo)
+      .then(r => { segnalaCaricamenti(r); if (r.data) setConfermeProssimo(r.data); });
+  }, [user?.id, user?.bubbler, meseProssimo, dispConferme]);
 
   // ====================== EDITOR DISPONIBILITA' (overlay) ======================
   // Si apre da "Le mie disponibilità": su un singolo campo, oppure su un'intera provincia — nel
   // secondo caso ogni modifica vale contemporaneamente su tutti i campi di quella provincia.
-  const [editor, setEditor] = useState(null); // { tipo: 'campo'|'provincia', titolo, sottotitolo, campiIds }
+  // Dal Riepilogo, chi ha il permesso lo apre sul calendario di un altro bubbler (utenteId).
+  const [editor, setEditor] = useState(null); // { tipo: 'campo'|'provincia', titolo, sottotitolo, campiIds, utenteId }
   const campiTarget = editor?.campiIds || [];
-  const apriEditorCampo = (campo) => setEditor({
+  const utenteEditor = editor?.utenteId ?? user.id;
+  const editorAltrui = utenteEditor !== user.id;
+  const apriEditorCampo = (campo, utenteId = user.id) => setEditor({
     tipo: 'campo',
     titolo: campo.nome,
     sottotitolo: [campo.citta, campo.provincia].filter(Boolean).join(' · '),
     campiIds: [campo.id],
+    utenteId,
   });
-  const apriEditorProvincia = (provincia, campiGruppo) => setEditor({
+  const apriEditorProvincia = (provincia, campiGruppo, utenteId = user.id) => setEditor({
     tipo: 'provincia',
     titolo: provincia,
     sottotitolo: `${campiGruppo.length} camp${campiGruppo.length === 1 ? 'o' : 'i'}: ${campiGruppo.map(c => c.nome).join(', ')}`,
     campiIds: campiGruppo.map(c => c.id),
+    utenteId,
   });
   // Campo da cui copiare un mese già compilato (vedi "Eredita disponibilità" più sotto)
   const [sorgenteEredita, setSorgenteEredita] = useState('');
@@ -440,31 +470,36 @@ function Disponibilita({ user }) {
   // ---------------- Conferma del mese ----------------
   // Un mese confermato è un mese "rivisto e chiuso": nel riepilogo prende il bollino blu e i
   // giorni prendono i colori verde/arancio/rosso, che prima della conferma restano neutri.
-  const campoConfermato = (campoId, mese = meseVisualizzato) => dispConferme.some(c => c.utente_id === user.id && c.campo_id === campoId && c.mese === mese);
-  const targetConfermato = campiTarget.length > 0 && campiTarget.every(cid => campoConfermato(cid));
+  const campoConfermato = (campoId, mese = meseVisualizzato, utenteId = user.id) => dispConferme.some(c => c.utente_id === utenteId && c.campo_id === campoId && c.mese === mese);
+  const targetConfermato = campiTarget.length > 0 && campiTarget.every(cid => campoConfermato(cid, meseVisualizzato, utenteEditor));
+  // Confermato il mese, il bubbler non può più togliere disponibilità: sono quelle su cui si
+  // pianifica. Può ancora aggiungerne. In modalità provincia basta un campo confermato per
+  // bloccare le rimozioni, che varrebbero anche su quello.
+  const meseBloccato = !puoModificareAltrui && campiTarget.some(cid => campoConfermato(cid, meseVisualizzato, utenteEditor));
 
   const confermaMese = async () => {
     if (!sessioneValida()) return;
-    const daInserire = campiTarget.filter(cid => !campoConfermato(cid)).map(cid => ({ utente_id: user.id, campo_id: cid, mese: meseVisualizzato }));
+    const daInserire = campiTarget.filter(cid => !campoConfermato(cid, meseVisualizzato, utenteEditor)).map(cid => ({ utente_id: utenteEditor, campo_id: cid, mese: meseVisualizzato }));
     if (daInserire.length === 0) return;
+    if (!editorAltrui && !window.confirm(`Confermare ${etichettaMese} su ${nomeTarget}?\n\nDopo la conferma potrai ancora aggiungere disponibilità, ma non toglierle: per una correzione dovrai chiedere a chi gestisce le disponibilità.`)) return;
     const { error } = await supabase.from('disp_conferme').insert(daInserire);
     if (error) { return segnalaErrore('Errore conferma del mese', error); }
     fetchTutto();
   };
   const annullaConfermaMese = async () => {
-    if (!sessioneValida()) return;
+    if (!sessioneValida() || !puoModificareAltrui) return;
     if (!window.confirm(`Annullare la conferma di ${etichettaMese} su ${nomeTarget}? Le disponibilità restano, torna solo "da confermare".`)) return;
-    const { error } = await supabase.from('disp_conferme').delete().eq('utente_id', user.id).in('campo_id', campiTarget).eq('mese', meseVisualizzato);
+    const { error } = await supabase.from('disp_conferme').delete().eq('utente_id', utenteEditor).in('campo_id', campiTarget).eq('mese', meseVisualizzato);
     if (error) { return segnalaErrore('Errore annullamento conferma', error); }
     fetchTutto();
   };
 
   // ---------------- Svuota il mese ----------------
   const svuotaMese = async () => {
-    if (!sessioneValida()) return;
+    if (!sessioneValida() || meseBloccato) return;
     const isoList = giorniMese.map(g => toISODate(g));
     if (!window.confirm(`Rimuovere TUTTE le disponibilità di ${etichettaMese} su ${nomeTarget}? Il mese torna completamente vuoto.`)) return;
-    const { error } = await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).in('data', isoList);
+    const { error } = await supabase.from('disp_calendario').delete().eq('utente_id', utenteEditor).in('campo_id', campiTarget).in('data', isoList);
     if (error) { return segnalaErrore('Errore svuotamento del mese', error); }
     fetchTutto();
   };
@@ -475,19 +510,19 @@ function Disponibilita({ user }) {
   // può benissimo essere uno dei campi della provincia ("rendi tutta Milano come questo").
   const campiEreditabili = campi.filter(c =>
     !(campiTarget.length === 1 && campiTarget[0] === c.id) &&
-    mieRigheMeseDi(c.id).length > 0
+    righeMeseDi(utenteEditor, c.id).length > 0
   );
   const ereditaDisponibilita = async () => {
-    if (!sessioneValida()) return;
-    const righeSorgente = mieRigheMeseDi(sorgenteEredita);
+    if (!sessioneValida() || meseBloccato) return;
+    const righeSorgente = righeMeseDi(utenteEditor, sorgenteEredita);
     if (righeSorgente.length === 0) return;
     if (!window.confirm(`Copiare le ${righeSorgente.length} disponibilità di ${nomeCampo(sorgenteEredita)} di ${etichettaMese} su ${nomeTarget}? Quanto già presente in questo mese verrà sostituito.`)) return;
     const isoList = giorniMese.map(g => toISODate(g));
-    const { error: errPulizia } = await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).in('data', isoList);
+    const { error: errPulizia } = await supabase.from('disp_calendario').delete().eq('utente_id', utenteEditor).in('campo_id', campiTarget).in('data', isoList);
     if (errPulizia) { return segnalaErrore('Errore durante la copia', errPulizia); }
     const nuove = [];
     campiTarget.forEach(cid => righeSorgente.forEach(r => nuove.push({
-      utente_id: user.id, campo_id: cid, data: r.data, fascia: r.fascia,
+      utente_id: utenteEditor, campo_id: cid, data: r.data, fascia: r.fascia,
       ora_inizio: r.ora_inizio, ora_fine: r.ora_fine, note: r.note,
     })));
     const { error } = await supabase.from('disp_calendario').insert(nuove);
@@ -498,7 +533,7 @@ function Disponibilita({ user }) {
 
   // Stato di una fascia in un giorno sul bersaglio: attiva su tutti i campi, su alcuni, o su nessuno.
   const statoFascia = (iso, fasciaId) => {
-    const attivi = campiTarget.filter(cid => rigaDisp(user.id, cid, iso, fasciaId)).length;
+    const attivi = campiTarget.filter(cid => rigaDisp(utenteEditor, cid, iso, fasciaId)).length;
     if (attivi === 0) return 'vuota';
     return attivi === campiTarget.length ? 'piena' : 'parziale';
   };
@@ -512,14 +547,16 @@ function Disponibilita({ user }) {
     if (!sessioneValida()) return;
     if (campiTarget.length === 0) return;
     if (statoFascia(iso, fasciaId) === 'piena') {
-      const riga = rigaDisp(user.id, campiTarget[0], iso, fasciaId);
+      // Su un mese confermato orario e rimozione non si toccano più: il dettaglio non si apre.
+      if (meseBloccato) return;
+      const riga = rigaDisp(utenteEditor, campiTarget[0], iso, fasciaId);
       setFasciaSelezionata({ data: iso, fascia: fasciaId });
       setFormOverride({ ora_inizio: oraHHMM(riga.ora_inizio), ora_fine: oraHHMM(riga.ora_fine), note: riga.note || '' });
       return;
     }
     const daInserire = campiTarget
-      .filter(cid => !rigaDisp(user.id, cid, iso, fasciaId))
-      .map(cid => ({ utente_id: user.id, campo_id: cid, data: iso, fascia: fasciaId }));
+      .filter(cid => !rigaDisp(utenteEditor, cid, iso, fasciaId))
+      .map(cid => ({ utente_id: utenteEditor, campo_id: cid, data: iso, fascia: fasciaId }));
     const { error } = await supabase.from('disp_calendario').insert(daInserire);
     if (error) { return segnalaErrore('Errore salvataggio disponibilità', error); }
     fetchTutto();
@@ -537,14 +574,14 @@ function Disponibilita({ user }) {
     if (formOverride.ora_fine && formOverride.ora_fine > fineFascia) return alert(`L'orario di fine non può essere dopo le ${fineFascia} (fine fascia ${f?.label}).`);
     if (formOverride.ora_inizio && formOverride.ora_fine && formOverride.ora_inizio >= formOverride.ora_fine) return alert("L'orario di inizio deve essere precedente all'orario di fine.");
     const rec = { ora_inizio: formOverride.ora_inizio || null, ora_fine: formOverride.ora_fine || null, note: formOverride.note || null };
-    const { error } = await supabase.from('disp_calendario').update(rec).eq('utente_id', user.id).in('campo_id', campiTarget).eq('data', data).eq('fascia', fascia);
+    const { error } = await supabase.from('disp_calendario').update(rec).eq('utente_id', utenteEditor).in('campo_id', campiTarget).eq('data', data).eq('fascia', fascia);
     if (error) { return segnalaErrore('Errore salvataggio disponibilità', error); }
     setFasciaSelezionata(null); fetchTutto();
   };
   const rimuoviDisponibilita = async () => {
-    if (!sessioneValida()) return;
+    if (!sessioneValida() || meseBloccato) return;
     const { data, fascia } = fasciaSelezionata;
-    await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).eq('data', data).eq('fascia', fascia);
+    await supabase.from('disp_calendario').delete().eq('utente_id', utenteEditor).in('campo_id', campiTarget).eq('data', data).eq('fascia', fascia);
     setFasciaSelezionata(null); fetchTutto();
   };
 
@@ -571,6 +608,7 @@ function Disponibilita({ user }) {
   const applicaBulk = async (disponibile) => {
     if (!sessioneValida()) return;
     if (campiTarget.length === 0) return;
+    if (!disponibile && meseBloccato) return;
     const giorni = ambitoBulk === 'mese' ? giorniMese : (settimaneMese[settimanaCorrente] || []);
     const label = fasciaInfo(fasciaBulk)?.label;
     if (!disponibile && !window.confirm(`Rimuovere la disponibilità "${label}" su ${nomeTarget} per ${descrizioneAmbito}?`)) return;
@@ -579,13 +617,13 @@ function Disponibilita({ user }) {
     if (disponibile) {
       const daInserire = [];
       campiTarget.forEach(cid => isoList.forEach(iso => {
-        if (!rigaDisp(user.id, cid, iso, fasciaBulk)) daInserire.push({ utente_id: user.id, campo_id: cid, data: iso, fascia: fasciaBulk });
+        if (!rigaDisp(utenteEditor, cid, iso, fasciaBulk)) daInserire.push({ utente_id: utenteEditor, campo_id: cid, data: iso, fascia: fasciaBulk });
       }));
       if (daInserire.length === 0) return;
       const { error } = await supabase.from('disp_calendario').insert(daInserire);
       if (error) { return segnalaErrore('Errore salvataggio disponibilità', error); }
     } else {
-      const { error } = await supabase.from('disp_calendario').delete().eq('utente_id', user.id).in('campo_id', campiTarget).eq('fascia', fasciaBulk).in('data', isoList);
+      const { error } = await supabase.from('disp_calendario').delete().eq('utente_id', utenteEditor).in('campo_id', campiTarget).eq('fascia', fasciaBulk).in('data', isoList);
       if (error) { return segnalaErrore('Errore rimozione disponibilità', error); }
     }
     fetchTutto();
@@ -626,6 +664,8 @@ function Disponibilita({ user }) {
   // L'id dell'utente resta una stringa: è il valore di una select, e confrontarlo con String(b.id)
   // evita di doverlo riconvertire a numero ogni volta.
   const [filtroBubbler, setFiltroBubbler] = useState("");
+  // Campo ('c:id') o provincia ('p:nome') su cui aprire il calendario del bubbler filtrato.
+  const [sceltaModificaAltrui, setSceltaModificaAltrui] = useState("");
   const bubblersOrdinati = [...bubblers].sort((a, b) => (a.nome_breve || a.cognome || a.username).localeCompare(b.nome_breve || b.cognome || b.username));
 
   const campiFiltroDisponibili = filtroProvincia ? campi.filter(c => (c.provincia || 'Senza provincia') === filtroProvincia) : campi;
@@ -882,6 +922,26 @@ function Disponibilita({ user }) {
           </div>
           <p className="descrizione-pagina">Le tue disponibilità mese per mese. Usa "Modifica" su un campo per aprirne il calendario, oppure quello sulla provincia per lavorare in un colpo solo su tutti i suoi campi. L'asterisco segnala un orario personalizzato o una nota.</p>
 
+          {/* L'accordo: il mese prossimo si inserisce e si conferma entro il 15. Il bubbler atterra
+              sul mese in corso, quindi il promemoria compare qui finché non c'è almeno una conferma. */}
+          {confermeProssimo && confermeProssimo.length === 0 && (() => {
+            const [a, m] = meseProssimo.split('-').map(Number);
+            const nome = `${MESI[m - 1]} ${a}`;
+            const ritardo = scadenzaPassata(meseProssimo);
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', fontSize: '0.82rem', borderRadius: '6px', padding: '9px 12px', margin: '0 0 12px 0', ...(ritardo
+                ? { color: '#991b1b', background: '#fee2e2', border: '1px solid #fca5a5' }
+                : { color: '#92400e', background: '#fef3c7', border: '1px solid #fcd34d' }) }}>
+                <span>{ritardo
+                  ? `⚠ In ritardo: le disponibilità di ${nome} andavano inserite e confermate entro il ${etichettaScadenza(meseProssimo)}.`
+                  : `Inserisci e conferma le disponibilità di ${nome} entro il ${etichettaScadenza(meseProssimo)}.`}</span>
+                {meseVisualizzato !== meseProssimo && (
+                  <button className="btn-accent-inline" style={{ fontSize: '0.78rem', padding: '5px 10px' }} onClick={() => setCalDate(new Date(a, m - 1, 1))}>Vai a {MESI[m - 1]}</button>
+                )}
+              </div>
+            );
+          })()}
+
           <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', margin: '0 0 12px 0', fontSize: '0.75rem' }}>
             {FASCE_ORDINE.map(fid => (
               <span key={fid} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
@@ -1031,6 +1091,30 @@ function Disponibilita({ user }) {
             </div>
             <p style={{ fontSize: '0.78rem', color: '#64748b', margin: '0 0 14px 0' }}>{editor.sottotitolo}</p>
 
+            {/* Chi modifica il calendario di un altro deve vederlo scritto: le lettere sono identiche */}
+            {editorAltrui && (
+              <p style={{ fontSize: '0.8rem', color: '#7c2d12', background: '#ffedd5', border: '1px solid #fdba74', borderRadius: '6px', padding: '8px 10px', margin: '0 0 14px 0' }}>
+                Stai modificando le disponibilità di <strong>{nomeBubbler(utenteEditor)}</strong>{targetConfermato ? `, anche se ha già confermato ${etichettaMese}` : ''}.
+              </p>
+            )}
+
+            {meseBloccato && (
+              <p style={{ fontSize: '0.8rem', color: '#1e3a8a', background: '#dbeafe', border: '1px solid #93c5fd', borderRadius: '6px', padding: '8px 10px', margin: '0 0 14px 0' }}>
+                🔒 {etichettaMese} è confermato: puoi ancora aggiungere disponibilità, ma non toglierle né cambiarne l'orario. Per una correzione chiedi a chi gestisce le disponibilità.
+              </p>
+            )}
+
+            {/* La scadenza dell'accordo: entro il 15 del mese prima. Avvisa, non blocca. */}
+            {!targetConfermato && !editorAltrui && meseAperto(meseVisualizzato) && (
+              <p style={{ fontSize: '0.8rem', borderRadius: '6px', padding: '8px 10px', margin: '0 0 14px 0', ...(scadenzaPassata(meseVisualizzato)
+                ? { color: '#991b1b', background: '#fee2e2', border: '1px solid #fca5a5' }
+                : { color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0' }) }}>
+                {scadenzaPassata(meseVisualizzato)
+                  ? `⚠ In ritardo: ${etichettaMese} andava confermato entro il ${etichettaScadenza(meseVisualizzato)}.`
+                  : `Da inserire e confermare entro il ${etichettaScadenza(meseVisualizzato)}.`}
+              </p>
+            )}
+
             {editor.tipo === 'provincia' && (
               <p style={{ fontSize: '0.78rem', color: '#075985', background: '#e0f2fe', border: '1px solid #7dd3fc', borderRadius: '6px', padding: '8px 10px', margin: '0 0 14px 0' }}>
                 Ogni modifica vale su tutti i {campiTarget.length} campi della provincia. Una lettera con bordo tratteggiato indica che la fascia è attiva solo su alcuni campi: cliccandola la attivi anche sugli altri.
@@ -1054,14 +1138,15 @@ function Disponibilita({ user }) {
               <strong style={{ textTransform: 'capitalize' }}>{MESI[calDate.getMonth()]} {calDate.getFullYear()}</strong>
             </div>
 
-            {/* EREDITA: ricopia su questo bersaglio il mese già compilato di un altro campo */}
-            {campiEreditabili.length > 0 && (
+            {/* EREDITA: ricopia su questo bersaglio il mese già compilato di un altro campo.
+                Sostituisce quanto c'è, quindi su un mese bloccato non si offre. */}
+            {campiEreditabili.length > 0 && !meseBloccato && (
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem' }}>
                   <Icona nome="riporta" size={14} />Eredita disponibilità
                   <select value={sorgenteEredita} onChange={(e) => setSorgenteEredita(e.target.value)} style={{ height: '30px', padding: '2px 6px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.78rem', maxWidth: '100%', minWidth: 0 }}>
                     <option value="">da…</option>
-                    {campiEreditabili.map(c => <option key={c.id} value={c.id}>{c.nome}{c.citta ? ` — ${c.citta}` : ''} ({mieRigheMeseDi(c.id).length})</option>)}
+                    {campiEreditabili.map(c => <option key={c.id} value={c.id}>{c.nome}{c.citta ? ` — ${c.citta}` : ''} ({righeMeseDi(utenteEditor, c.id).length})</option>)}
                   </select>
                 </label>
                 <button className="btn-accent-inline" style={{ fontSize: '0.78rem', padding: '6px 10px' }} disabled={!sorgenteEredita} title={sorgenteEredita ? `Copia ${etichettaMese} da ${nomeCampo(sorgenteEredita)} su ${nomeTarget}` : 'Scegli prima il campo da cui copiare'} onClick={ereditaDisponibilita}>Copia</button>
@@ -1093,12 +1178,14 @@ function Disponibilita({ user }) {
                 )}
                 <div style={{ display: 'flex', gap: '6px' }}>
                   <button className="btn-accent-inline" style={{ fontSize: '1rem', lineHeight: 1, padding: '6px 14px' }} title={`Segna disponibile "${fasciaInfo(fasciaBulk)?.label}" su ${nomeTarget} per ${descrizioneAmbito}`} aria-label="Aggiungi disponibilità" onClick={() => applicaBulk(true)}>+</button>
-                  <button className="btn-annulla-inline" style={{ fontSize: '1rem', lineHeight: 1, padding: '6px 14px' }} title={`Rimuovi la disponibilità "${fasciaInfo(fasciaBulk)?.label}" su ${nomeTarget} per ${descrizioneAmbito}`} aria-label="Rimuovi disponibilità" onClick={() => applicaBulk(false)}>−</button>
+                  <button className="btn-annulla-inline" style={{ fontSize: '1rem', lineHeight: 1, padding: '6px 14px' }} title={`Rimuovi la disponibilità "${fasciaInfo(fasciaBulk)?.label}" su ${nomeTarget} per ${descrizioneAmbito}`} aria-label="Rimuovi disponibilità" disabled={meseBloccato} {...(meseBloccato ? { title: `${etichettaMese} è confermato: le disponibilità non si possono più togliere` } : {})} onClick={() => applicaBulk(false)}>−</button>
                 </div>
               </div>
             </div>
 
-            <p style={{ fontSize: '0.78rem', color: '#666', margin: '0 0 8px 0' }}>Clic su una lettera spenta per attivarla; clic su una lettera già attiva per modificarne l'orario o aggiungere una nota.</p>
+            <p style={{ fontSize: '0.78rem', color: '#666', margin: '0 0 8px 0' }}>{meseBloccato
+              ? 'Clic su una lettera spenta per attivarla.'
+              : "Clic su una lettera spenta per attivarla; clic su una lettera già attiva per modificarne l'orario o aggiungere una nota."}</p>
 
             <div className="cal-mese-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '3px' }}>
               {GIORNI_LABEL.map(g => <div key={g} style={{ fontWeight: 'bold', fontSize: '0.75rem', color: '#64748b', textAlign: 'center', padding: '4px 0' }}>{g}</div>)}
@@ -1111,15 +1198,16 @@ function Disponibilita({ user }) {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'center' }}>
                       {FASCE_ORDINE.map(fid => {
                         const stato = statoFascia(iso, fid);
-                        const riga = rigaDisp(user.id, campiTarget[0], iso, fid);
+                        const riga = rigaDisp(utenteEditor, campiTarget[0], iso, fid);
                         const particolare = stato === 'piena' && !!(riga && (riga.ora_inizio || riga.ora_fine || riga.note));
                         const etichetta = fasciaInfo(fid)?.label;
+                        const fissa = stato === 'piena' && meseBloccato;
                         const titolo = stato === 'piena'
-                          ? `${etichetta} ${riga ? orarioRiga(riga) : ''}${riga?.note ? ` · ${riga.note}` : ''} (clic per modificare)`
+                          ? `${etichetta} ${riga ? orarioRiga(riga) : ''}${riga?.note ? ` · ${riga.note}` : ''}${fissa ? ' (mese confermato)' : ' (clic per modificare)'}`
                           : stato === 'parziale'
                             ? `${etichetta} attiva solo su alcuni campi (clic per attivarla su tutti)`
                             : `${etichetta} non disponibile (clic per attivare)`;
-                        return <BadgeFascia key={fid} attiva={stato === 'piena'} parziale={stato === 'parziale'} fasciaId={fid} size={28} particolare={particolare} onClick={() => onClickBadgeEditor(iso, fid)} title={titolo} />;
+                        return <BadgeFascia key={fid} attiva={stato === 'piena'} parziale={stato === 'parziale'} fasciaId={fid} size={28} particolare={particolare} onClick={fissa ? undefined : () => onClickBadgeEditor(iso, fid)} title={titolo} />;
                       })}
                     </div>
                   </div>
@@ -1136,11 +1224,14 @@ function Disponibilita({ user }) {
                   : `${etichettaMese} non è ancora confermato.`}
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <button className="btn-rimuovi" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.82rem', padding: '8px 12px' }} title={`Svuota ${etichettaMese} su ${nomeTarget}`} onClick={svuotaMese}>
-                  <Icona nome="elimina" size={14} style={{ marginRight: '5px' }} />Svuota disponibilità
-                </button>
+                {!meseBloccato && (
+                  <button className="btn-rimuovi" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.82rem', padding: '8px 12px' }} title={`Svuota ${etichettaMese} su ${nomeTarget}`} onClick={svuotaMese}>
+                    <Icona nome="elimina" size={14} style={{ marginRight: '5px' }} />Svuota disponibilità
+                  </button>
+                )}
+                {/* Annullare una conferma riapre il mese alle rimozioni: lo fa solo chi ha il permesso */}
                 {targetConfermato
-                  ? <button className="btn-annulla-inline" style={{ fontSize: '0.82rem', padding: '8px 14px' }} onClick={annullaConfermaMese}>Annulla conferma</button>
+                  ? (puoModificareAltrui && <button className="btn-annulla-inline" style={{ fontSize: '0.82rem', padding: '8px 14px' }} onClick={annullaConfermaMese}>Annulla conferma</button>)
                   : <button className="btn-accent-inline" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.82rem', padding: '8px 18px' }} title={`Conferma ${etichettaMese} su ${nomeTarget}`} onClick={confermaMese}><Icona nome="salva" size={15} style={{ marginRight: '5px' }} />Conferma</button>}
               </div>
             </div>
@@ -1211,6 +1302,60 @@ function Disponibilita({ user }) {
               {(filtroProvincia || filtroCampo || bubblerCorrente) && <button className="btn-annulla-inline" style={{ fontSize: '0.8rem', padding: '5px 10px' }} onClick={() => { setFiltroProvincia(""); setFiltroCampo(""); setFiltroBubbler(""); }}>Azzera filtri</button>}
             </div>
           </div>
+
+          {/* Chi ha il permesso apre il calendario di un bubbler e lo modifica come farebbe lui, ma
+              senza il blocco del mese confermato. La barra c'è sempre, così la funzione si trova:
+              la scelta del bubbler è la stessa del filtro qui sopra, e sceglierlo filtra anche il
+              calendario. */}
+          {puoModificareAltrui && (() => {
+            const idBubbler = bubblersDelLuogo.find(b => String(b.id) === bubblerCorrente)?.id;
+            const apri = () => {
+              if (sceltaModificaAltrui.startsWith('c:')) {
+                const campo = campoInfo(sceltaModificaAltrui.slice(2));
+                if (campo) apriEditorCampo(campo, idBubbler);
+              } else if (sceltaModificaAltrui.startsWith('p:')) {
+                const provincia = sceltaModificaAltrui.slice(2);
+                const gruppo = gruppiCampiPerProvincia.find(([p]) => p === provincia)?.[1] || [];
+                if (gruppo.length) apriEditorProvincia(provincia, gruppo, idBubbler);
+              }
+            };
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '10px', padding: '9px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '0.82rem' }}>
+                <Icona nome="modifica" size={15} />
+                <strong>Modifica le disponibilità di</strong>
+                <select value={bubblerCorrente} onChange={(e) => setFiltroBubbler(e.target.value)} style={{ height: '30px', padding: '2px 6px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.8rem', maxWidth: '100%', minWidth: 0 }}>
+                  <option value="">scegli il bubbler…</option>
+                  {bubblersDelLuogo.map(b => <option key={b.id} value={b.id}>{nomeBubbler(b.id)}</option>)}
+                </select>
+                <span>su</span>
+                <select value={idBubbler ? sceltaModificaAltrui : ''} disabled={!idBubbler} onChange={(e) => setSceltaModificaAltrui(e.target.value)} style={{ height: '30px', padding: '2px 6px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.8rem', maxWidth: '100%', minWidth: 0 }}>
+                  <option value="">scegli il campo…</option>
+                  {gruppiCampiPerProvincia.map(([provincia, campiGruppo]) => (
+                    <optgroup key={provincia} label={provincia}>
+                      <option value={`p:${provincia}`}>Tutta la provincia ({campiGruppo.length} campi)</option>
+                      {campiGruppo.map(c => <option key={c.id} value={`c:${c.id}`}>{c.nome}{idBubbler && campoConfermato(c.id, meseVisualizzato, idBubbler) ? ' ✓' : ''}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+                <button className="btn-accent-inline" style={{ fontSize: '0.78rem', padding: '6px 12px', ...(!idBubbler || !sceltaModificaAltrui ? { opacity: 0.45, cursor: 'not-allowed' } : {}) }} disabled={!idBubbler || !sceltaModificaAltrui} title={!idBubbler ? 'Scegli prima il bubbler' : !sceltaModificaAltrui ? 'Scegli il campo o la provincia' : undefined} onClick={apri}>Apri</button>
+              </div>
+            );
+          })()}
+
+          {/* Chi non ha ancora confermato il mese: dopo il 15 del mese prima è in ritardo. */}
+          {meseAperto(meseVisualizzato) && (() => {
+            const daConfermare = bubblersFiltrati.filter(b => !dispConferme.some(c => c.utente_id === b.id && c.mese === meseVisualizzato));
+            if (daConfermare.length === 0) return null;
+            const ritardo = scadenzaPassata(meseVisualizzato);
+            return (
+              <div style={{ fontSize: '0.8rem', borderRadius: '6px', padding: '8px 12px', marginTop: '10px', ...(ritardo
+                ? { color: '#991b1b', background: '#fee2e2', border: '1px solid #fca5a5' }
+                : { color: '#92400e', background: '#fef3c7', border: '1px solid #fcd34d' }) }}>
+                <strong>{ritardo ? `⚠ Non confermato (scadenza ${etichettaScadenza(meseVisualizzato)} passata): ` : `Da confermare entro il ${etichettaScadenza(meseVisualizzato)}: `}</strong>
+                {daConfermare.map(b => nomeBubbler(b.id)).join(', ')}
+              </div>
+            );
+          })()}
 
           {bubblersOrdinati.length === 0 && <p style={{ color: '#666', marginTop: '10px' }}>Nessun bubbler configurato.</p>}
           {bubblersOrdinati.length > 0 && bubblersFiltrati.length === 0 && <p style={{ color: '#666', marginTop: '10px' }}>Nessun bubbler disponibile per il filtro selezionato.</p>}

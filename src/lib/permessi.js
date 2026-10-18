@@ -118,7 +118,15 @@ export const SCHEDE_REGISTRY = {
     schede: [
       { id: 'config', label: 'Configuratore' },
       { id: 'miedisp', label: 'Le mie disponibilità' },
-      { id: 'riepilogo', label: 'Riepilogo' },
+      {
+        id: 'riepilogo',
+        label: 'Riepilogo',
+        // Non è una scheda ma un permesso: dal Riepilogo si modificano le disponibilità di un
+        // bubbler, anche sui mesi che lui ha confermato e non può più ridurre.
+        sottoschede: [
+          { id: 'modifica_altrui', label: 'Modifica disponibilità altrui' },
+        ],
+      },
     ],
   },
 };
