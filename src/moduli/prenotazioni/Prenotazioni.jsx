@@ -2171,18 +2171,30 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
               {formPren.senzaOperatori ? (
                 <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem' }}>Nessun operatore da assegnare su questa prenotazione.</p>
               ) : (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {operatori.map(o => {
-                  const sel = formPren.operatoriIds.includes(o.id);
-                  const disp = disponibilitaOperatore(o.id, formPren.data, formPren.oraInizio, oraFineEffettiva, locationDaCampi ? formPren.campoId : null);
-                  const titolo = disp === true ? 'Disponibile' : disp === false ? 'Non disponibile' : 'Disponibilità da verificare';
-                  return (
-                    <label key={o.id} className={`chip-operatore ${sel ? 'sel' : ''} ${disp === false ? 'non-disponibile' : ''}`} title={titolo}>
-                      <input type="checkbox" checked={sel} onChange={() => toggleOperatorePren(o.id)} /> {o.nome}
-                      <span aria-hidden="true">{disp === true ? '🟢' : disp === false ? '🔴' : '⚪'}</span>
-                    </label>
-                  );
-                })}
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+                {(() => {
+                  // Si vedono solo gli assegnati; gli altri stanno nel menu, i disponibili per primi,
+                  // cosi' l'elenco resta di una riga anche con molti bubbler configurati.
+                  const pallino = (d) => d === true ? '🟢' : d === false ? '🔴' : '⚪';
+                  const conDisp = operatori.map(o => ({ ...o, disp: disponibilitaOperatore(o.id, formPren.data, formPren.oraInizio, oraFineEffettiva, locationDaCampi ? formPren.campoId : null) }));
+                  const scelti = conDisp.filter(o => formPren.operatoriIds.includes(o.id));
+                  const ordine = (d) => d === true ? 0 : d === false ? 2 : 1;
+                  const liberi = conDisp.filter(o => !formPren.operatoriIds.includes(o.id)).sort((a, b) => ordine(a.disp) - ordine(b.disp));
+                  return <>
+                    {scelti.map(o => (
+                      <span key={o.id} className={`chip-operatore sel ${o.disp === false ? 'non-disponibile' : ''}`} title={o.disp === true ? 'Disponibile' : o.disp === false ? 'Non disponibile' : 'Disponibilità da verificare'}>
+                        {o.nome} <span aria-hidden="true">{pallino(o.disp)}</span>
+                        <button type="button" className="chip-rimuovi" onClick={() => toggleOperatorePren(o.id)} aria-label={`Togli ${o.nome}`} title="Togli">×</button>
+                      </span>
+                    ))}
+                    {liberi.length > 0 && (
+                      <select className="aggiungi-operatore" value="" onChange={(e) => { const o = liberi.find(x => String(x.id) === e.target.value); if (o) toggleOperatorePren(o.id); }}>
+                        <option value="">+ Aggiungi operatore…</option>
+                        {liberi.map(o => <option key={o.id} value={o.id}>{pallino(o.disp)} {o.nome}</option>)}
+                      </select>
+                    )}
+                  </>;
+                })()}
                 {operatori.length === 0 && <span style={{ color: '#999', fontSize: '0.85rem' }}>Nessun bubbler configurato: attivali in Disponibilità &gt; Configuratore.</span>}
               </div>
               )}
