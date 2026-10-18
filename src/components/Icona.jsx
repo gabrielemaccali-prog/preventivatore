@@ -6,12 +6,15 @@ import {
   IconChartBar, IconShield, IconApps, IconCircle, IconPower, IconBook2,
   IconEdit, IconTrash, IconPlus, IconCheck, IconX, IconFolderOpen, IconArrowBackUp,
   IconPrinter, IconGift, IconLayoutList, IconListCheck, IconCoins, IconFileInvoice, IconChecklist, IconTruck, IconNotes, IconGauge, IconCopy,
-  IconBallFootball, IconCashRegister, IconReceipt, IconTags, IconArrowMerge, IconArchive, IconArrowsExchange
+  IconBallFootball, IconCashRegister, IconReceipt, IconTags, IconArrowMerge, IconArchive, IconArrowsExchange,
+  IconAddressBook, IconUserSquareRounded
 } from '@tabler/icons-react';
 
 // Registro centrale: nome semantico -> componente icona. Un solo punto da aggiornare per cambiare set di icone.
 const REGISTRO_ICONE = {
   catalogo: IconBook2,
+  anagrafiche: IconAddressBook,
+  clienti: IconUserSquareRounded,
   giochi: IconDeviceGamepad2,
   preventivatore: IconCalculator,
   voucher: IconTicket,

@@ -344,3 +344,36 @@ export const validaIBAN = (valore) => {
   }
   return resto === 1;
 };
+
+// Inserisce automaticamente i due punti mentre si digita l'orario: "1900" -> "19:00"
+export const formattaOraInput = (raw) => {
+  const d = (raw || "").replace(/\D/g, "").slice(0, 4);
+  if (d.length <= 2) return d;
+  return d.slice(0, 2) + ':' + d.slice(2);
+};
+
+// Normalizza un orario in formato 24h "HH:MM". I minuti si possono omettere: "16" e "16:"
+// diventano "16:00", "930" diventa "09:30", "1600"/"16:00" restano "16:00".
+// Digitare i minuti resta facoltativo, ma il valore registrato ha sempre la stessa forma "HH:MM".
+// Ritorna "" se vuoto e null se non valido.
+export const normalizzaOra24 = (raw) => {
+  const s = (raw || "").trim();
+  if (s === "") return "";
+  let hh, mm;
+  const conDuePunti = s.match(/^(\d{1,2}):(\d{0,2})$/);
+  if (conDuePunti) {
+    // "16:00", "16:" e "16:3" (minuti parziali letti come decine: 16:30)
+    hh = parseInt(conDuePunti[1], 10);
+    mm = conDuePunti[2] === "" ? 0 : parseInt(conDuePunti[2].padEnd(2, '0'), 10);
+  } else if (/^\d{1,4}$/.test(s)) {
+    // sole cifre: 1-2 sono le ore ("16" -> 16:00), 3-4 sono ore+minuti ("930" -> 09:30)
+    if (s.length <= 2) { hh = parseInt(s, 10); mm = 0; }
+    else {
+      const d = s.padStart(4, '0');
+      hh = parseInt(d.slice(0, 2), 10);
+      mm = parseInt(d.slice(2, 4), 10);
+    }
+  } else return null;
+  if (hh > 23 || mm > 59) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+};

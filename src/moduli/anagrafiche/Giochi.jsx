@@ -22,7 +22,7 @@ const valoriUsati = (righe, campo) => [...new Set(righe.map(r => r[campo]).filte
 const stileInput = { width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' };
 const testoVuoto = <span style={{ color: '#cbd5e1' }}>—</span>;
 
-function Catalogo({ user }) {
+function Giochi({ user }) {
   const [giochi, setGiochi] = useState([]);
   // Quante righe di listino e quante prenotazioni puntano a ciascun gioco: dice quali voci sono
   // davvero in uso, e quindi quali si possono disattivare senza far danni.
@@ -320,4 +320,4 @@ function Catalogo({ user }) {
   );
 }
 
-export default Catalogo
+export default Giochi

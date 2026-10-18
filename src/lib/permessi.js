@@ -12,10 +12,11 @@ export const MODULI_REGISTRY = [
   { id: 'consuntivazione', label: 'Consuntivazione', icon: 'consuntivazione' },
   // La cassa del centro sportivo Albatros: chiusure serali, spese, listino del bar e dei campi.
   { id: 'albatros', label: 'Albatros', icon: 'albatros' },
-  // Il catalogo è la base da cui leggono listino e prenotazioni, ma non è lavoro quotidiano:
-  // sta in fondo perché l'ordine di questo registro decide anche su quale modulo si atterra
-  // dopo l'accesso, e chi entra deve trovarsi al lavoro, non in una pagina di configurazione.
-  { id: 'catalogo', label: 'Catalogo', icon: 'catalogo' },
+  // Le anagrafiche sono la base da cui leggono listino e prenotazioni, ma non sono lavoro
+  // quotidiano: stanno in fondo perché l'ordine di questo registro decide anche su quale modulo si
+  // atterra dopo l'accesso, e chi entra deve trovarsi al lavoro, non in una pagina di configurazione.
+  // Si chiama Anagrafiche, ma l'id resta 'catalogo': è la chiave già salvata nei permessi dei ruoli.
+  { id: 'catalogo', label: 'Anagrafiche', icon: 'anagrafiche' },
 ];
 
 // --- REGISTRO SCHEDE/SOTTOSCHEDE PER MODULO (usato per costruire la matrice permessi in Impostazioni > Ruoli) ---
@@ -62,6 +63,13 @@ export const SCHEDE_REGISTRY = {
   catalogo: {
     schede: [
       { id: 'giochi', label: 'Giochi' },
+      { id: 'clienti', label: 'Clienti' },
+      // Stava nel Configuratore di Disponibilità: sql/bubbler_in_anagrafiche.sql dà questa scheda
+      // a chi aveva quella.
+      { id: 'bubbler', label: 'Bubbler' },
+      // Stava nel Configuratore di Prenotazioni: sql/campi_in_anagrafiche.sql dà questa scheda a
+      // chi aveva quella sottoscheda.
+      { id: 'campi', label: 'Campi' },
     ],
   },
   preventivatore: {
@@ -97,7 +105,6 @@ export const SCHEDE_REGISTRY = {
         label: 'Configuratore',
         sottoschede: [
           { id: 'pacchetti', label: 'Pacchetti' },
-          { id: 'campi', label: 'Campi' },
         ],
       },
       { id: 'gestione', label: 'Gestione' },

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import './App.css'
 import { supabase } from './lib/supabaseClient';
-import Catalogo from './moduli/catalogo/Catalogo';
+import Anagrafiche from './moduli/anagrafiche/Anagrafiche';
 import Preventivatore from './moduli/preventivatore/Preventivatore';
 import Voucher from './moduli/voucher/Voucher';
 import Prenotazioni from './moduli/prenotazioni/Prenotazioni';
@@ -403,7 +403,7 @@ function App() {
       </header>
 
       {/* --- MODULO ATTIVO --- */}
-      {currentModule === "catalogo" && <Catalogo user={user} />}
+      {currentModule === "catalogo" && <Anagrafiche user={user} />}
 
       {currentModule === "preventivatore" && (
         <Preventivatore
