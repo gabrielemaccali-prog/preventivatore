@@ -577,6 +577,7 @@ function Voucher({ user }) {
             <td colSpan={COLONNE_VOUCHER.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
+                  <div><span style={{ color: '#94a3b8' }}>Codice </span><strong>{v.codice}</strong></div>
                   {(v.telefono || v.email) && (
                     <div><span style={{ color: '#94a3b8' }}>Contatti </span>{[v.telefono, v.email].filter(Boolean).join(' · ')}</div>
                   )}

@@ -2020,6 +2020,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
             <td colSpan={colonnePrev.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155', minWidth: 0, flex: 1 }}>
+                  <div><span style={{ color: '#94a3b8' }}>ID </span><strong>{codice}</strong></div>
                   {p.motivoAnnullamento && <div><span style={{ color: '#94a3b8' }}>Motivo annullamento </span><em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
                   <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{p.destinazione || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Periodo </span>{p.periodo || '—'}</div>
