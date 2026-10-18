@@ -4,7 +4,11 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+// La sessione di Supabase Auth sta in sessionStorage e non in localStorage: vale per la scheda
+// del browser e si chiude con essa, com'era prima del passaggio ad Auth.
+export const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: { storage: typeof window !== 'undefined' ? window.sessionStorage : undefined },
+});
 
 // Supabase tronca ogni risposta al limite "Max rows" del progetto (di default 1000 righe) e non
 // segnala nulla: una select su una tabella più grande restituisce un risultato parziale che sembra

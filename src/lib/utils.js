@@ -310,9 +310,29 @@ export const formattaDataGGMMAAAA = (valore) => {
 
 // Un utente può esistere senza poter entrare: è il bubbler creato dal configuratore di
 // Disponibilità, a cui un amministratore non ha ancora dato password e ruolo, o quello a cui
-// l'accesso è stato revocato. Servono entrambi: una password senza ruolo aprirebbe una sessione
-// senza permessi, un ruolo senza password non corrisponde a nessuna credenziale.
-export const haAccesso = (u) => !!u?.password && u?.ruolo_id != null && u?.ruolo_id !== '';
+// l'accesso è stato revocato. Servono entrambi: una credenziale senza ruolo aprirebbe una sessione
+// senza permessi, un ruolo senza credenziale non corrisponde a nessun accesso.
+// La credenziale è in Supabase Auth (sql/accesso_supabase_auth.sql): qui se ne vede solo il legame.
+export const haAccesso = (u) => !!u?.auth_id && u?.ruolo_id != null && u?.ruolo_id !== '';
+
+// La password più corta che si accetta, la stessa che chiedono le funzioni del database.
+export const LUNGHEZZA_MINIMA_PASSWORD = 8;
+
+// L'email con cui Supabase Auth riconosce chi scrive questa credenziale. Chi non ha un'email entra
+// con l'username, che diventa un indirizzo finto: è la stessa trasformazione di
+// riservato.email_di_accesso nel database, e le due devono restare identiche.
+export const emailDiAccesso = (credenziale) => {
+  const c = (credenziale || '').trim().toLowerCase();
+  return c.includes('@') ? c : `${c.replace(/[^a-z0-9]+/g, '.')}@account.invalid`;
+};
+
+// Una password da dare a chi entra per la prima volta: niente caratteri che si confondono a voce o
+// a vista (0/O, 1/l/I), così si può dettare al telefono. Tanto la cambierà al primo accesso.
+export const generaPassword = (lunghezza = 12) => {
+  const alfabeto = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const casuali = crypto.getRandomValues(new Uint32Array(lunghezza));
+  return Array.from(casuali, n => alfabeto[n % alfabeto.length]).join('');
+};
 
 // La data dell'evento di un preventivo non ha una colonna sua: vive nel testo del periodo stampato
 // sul documento ("dal 12/07/2026 al 12/07/2026"). Si legge di li', e chi non lo trova non inventa.

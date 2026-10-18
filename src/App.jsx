@@ -11,18 +11,14 @@ import Consuntivazione from './moduli/consuntivazione/Consuntivazione';
 import Albatros from './moduli/albatros/Albatros';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
 import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
-import { haAccesso } from './lib/utils';
+import { haAccesso, emailDiAccesso, LUNGHEZZA_MINIMA_PASSWORD } from './lib/utils';
 import Icona from './components/Icona';
 
-// Sessione conservata per sopravvivere a un aggiornamento della pagina (F5). Contiene solo
-// l'id dell'utente e il modulo aperto: mai la password. Ruolo e permessi si rileggono dal database a
-// ogni ripristino, così un ruolo modificato o un utente eliminato hanno effetto subito.
-// È in sessionStorage e non in localStorage: vale per la scheda del browser e si chiude con essa.
+// Chi è entrato lo sa Supabase Auth, che tiene la sua sessione in sessionStorage (supabaseClient.js).
+// Qui resta solo il modulo aperto, per riaprire la pagina dov'era dopo un aggiornamento (F5).
+// Ruolo e permessi si rileggono dal database a ogni ripristino, così un ruolo modificato o un
+// accesso revocato hanno effetto subito.
 const CHIAVE_SESSIONE = 'bfm_sessione';
-
-// Lunghezza minima della password che l'utente si sceglie da sé. Non è una politica di sicurezza,
-// è il minimo perché il cambio abbia senso: una password di due caratteri non protegge da niente.
-const LUNGHEZZA_MINIMA_PASSWORD = 6;
 
 // Primo modulo visibile per un utente (evita di atterrare su un modulo senza permessi)
 const primoModuloVisibile = (u) => MODULI_REGISTRY.find(m => moduloVisibile(u, m.id))?.id || "preventivatore";
@@ -57,9 +53,9 @@ function App() {
   const [nuovaPassword, setNuovaPassword] = useState("");
   const [confermaPassword, setConfermaPassword] = useState("");
   const [salvataggioPassword, setSalvataggioPassword] = useState(false);
-  // Al primo montaggio si tenta il ripristino: finché è in corso non si mostra nulla, altrimenti
-  // a ogni F5 comparirebbe un lampo della schermata di accesso.
-  const [ripristinoInCorso, setRipristinoInCorso] = useState(() => !!sessionStorage.getItem(CHIAVE_SESSIONE));
+  // Al primo montaggio si cerca la sessione di Supabase: finché la ricerca è in corso non si mostra
+  // nulla, altrimenti a ogni F5 comparirebbe un lampo della schermata di accesso.
+  const [ripristinoInCorso, setRipristinoInCorso] = useState(true);
 
   // --- NAVIGAZIONE TRA MODULI ---
   const [currentModule, setCurrentModule] = useState("preventivatore");
@@ -70,13 +66,6 @@ function App() {
 
   // --- CONFIGURAZIONE MODULI (flag sperimentale, badge SP in sidebar) ---
   const [moduliConfig, setModuliConfig] = useState({});
-
-  // --- ACCESSO RAPIDO (solo sviluppo locale, nessuna password) ---
-  const [utentiDev, setUtentiDev] = useState([]);
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    supabase.from('utenti').select('*').order('username').then(({ data }) => { if (data) setUtentiDev(data.filter(haAccesso)); });
-  }, []);
 
   // Evita che la rotella del mouse modifichi per sbaglio un campo numerico (prezzi, costi, sconti):
   // togliendo il focus, lo scroll continua a scorrere la pagina invece di cambiare il valore.
@@ -125,164 +114,131 @@ function App() {
     setUser(u => u ? { ...u, permessi: ruolo.permessi, isAdmin: ruolo.isAdmin, ruolo: ruolo.nome || u.ruolo } : u);
   }, [user, fetchRuolo]);
 
-  // Una scheda rimasta aperta attraverso un aggiornamento dell'applicazione tiene in memoria un
-  // utente nato col codice di prima, senza id — e senza id le sue disponibilità non si trovano e
-  // non si salvano. Invece di chiedergli di uscire e rientrare, la sessione si ripara da sola:
-  // l'utente si rilegge dal database e riprende il suo posto.
-  useEffect(() => {
-    if (!user || user.id) return;
-    let annullato = false;
-    (async () => {
-      const { data } = await supabase.from('utenti').select('*').eq('username', user.username).maybeSingle();
-      if (annullato) return;
-      // I permessi già in sessione restano quelli: qui si sta riparando l'identità, non il ruolo.
-      if (data) { setUser(u => (u && !u.id ? { ...u, ...datiSessione(data, { permessi: u.permessi, isAdmin: u.isAdmin, nome: u.ruolo }) } : u)); return; }
-      // L'utente non esiste più: meglio la schermata di accesso di una sessione fantasma.
-      sessionStorage.removeItem(CHIAVE_SESSIONE);
-      setUser(null);
-    })();
-    return () => { annullato = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, user?.username]);
+  // Porta dentro l'utente riconosciuto: ruolo, modulo di atterraggio e configurazione moduli.
+  // Ci passano tutte le strade d'ingresso — accesso, ripristino dopo un F5 e cambio password —
+  // così non possono divergere. Il modulo indicato (quello aperto prima del F5) si riapre solo se
+  // l'utente lo vede ancora.
+  const entra = useCallback(async (u, modulo) => {
+    const nuovoUser = datiSessione(u, await fetchRuolo(u.ruolo_id, u.ruolo));
+    const moduloAncoraVisibile = modulo === 'impostazioni' ? nuovoUser.isAdmin : !!modulo && moduloVisibile(nuovoUser, modulo);
+    setUser(nuovoUser);
+    setCurrentModule(moduloAncoraVisibile ? modulo : primoModuloVisibile(nuovoUser));
+    fetchModuliConfig();
+  }, [fetchRuolo, fetchModuliConfig]);
+
+  // La credenziale è valida: si cerca la riga dell'anagrafica che le è legata. Chi è senza
+  // accesso — bubbler non ancora abilitato, o accesso revocato — esce subito, e chi ha il cambio
+  // password in sospeso si ferma alla schermata che lo chiede: la sessione c'è, ma finché non
+  // sceglie la sua password il database non gli dà nient'altro che la sua riga.
+  // Restituisce falso se l'utente non può entrare.
+  const apriSessione = useCallback(async (authId, modulo) => {
+    const { data, error } = await supabase.from('utenti').select('*').eq('auth_id', authId).maybeSingle();
+    if (error) throw error;
+    if (!data || !haAccesso(data)) { await supabase.auth.signOut(); return false; }
+    if (data.cambio_password) setUtenteDaAggiornare(data);
+    else await entra(data, modulo);
+    return true;
+  }, [entra]);
+
+  // Riporta l'app alla schermata di accesso, senza toccare la sessione di Supabase: la usa chi
+  // l'ha già chiusa (uscita, o sessione scaduta o revocata dall'amministratore).
+  const azzeraSessione = useCallback(() => {
+    sessionStorage.removeItem(CHIAVE_SESSIONE);
+    setUser(null);
+    setUtenteDaAggiornare(null);
+    setLoginPass("");
+    setNuovaPassword("");
+    setConfermaPassword("");
+    setCurrentModule("preventivatore");
+    setSidebarAperta(false);
+  }, []);
 
   // --- RIPRISTINO DELLA SESSIONE DOPO UN AGGIORNAMENTO DELLA PAGINA ---
   useEffect(() => {
-    if (!ripristinoInCorso) return;
     let annullato = false;
     (async () => {
       try {
-        const { id, username, modulo } = JSON.parse(sessionStorage.getItem(CHIAVE_SESSIONE));
-        // L'utente si rilegge sempre dal database: se nel frattempo è stato eliminato o gli è
-        // cambiato ruolo, la sessione salvata non deve dargli accessi che non ha più.
-        // Le sessioni aperte prima di questa versione contengono ancora solo l'username.
-        const query = supabase.from('utenti').select('*');
-        const { data } = await (id ? query.eq('id', id) : query.eq('username', username)).maybeSingle();
-        if (annullato) return;
-        // L'accesso revocato mentre la scheda era aperta vale dal ricaricamento successivo.
-        if (data && !haAccesso(data)) {
-          sessionStorage.removeItem(CHIAVE_SESSIONE);
-        } else if (data?.cambio_password) {
-          // Il cambio password chiesto mentre la scheda era aperta vale dal ricaricamento
-          // successivo: la sessione si chiude e si riparte dalla scelta della password.
-          sessionStorage.removeItem(CHIAVE_SESSIONE);
-          setUtenteDaAggiornare(data);
-        } else if (data) {
-          const ruolo = await fetchRuolo(data.ruolo_id, data.ruolo);
-          if (annullato) return;
-          const ripristinato = datiSessione(data, ruolo);
-          const moduloAncoraVisibile = modulo === 'impostazioni'
-            ? ripristinato.isAdmin
-            : moduloVisibile(ripristinato, modulo);
-          setUser(ripristinato);
-          setCurrentModule(moduloAncoraVisibile ? modulo : primoModuloVisibile(ripristinato));
-          fetchModuliConfig();
-        } else {
-          sessionStorage.removeItem(CHIAVE_SESSIONE);
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session && !annullato) {
+          let modulo;
+          try { modulo = JSON.parse(sessionStorage.getItem(CHIAVE_SESSIONE))?.modulo; } catch { /* nessun modulo salvato */ }
+          await apriSessione(session.user.id, modulo);
         }
-      } catch {
-        sessionStorage.removeItem(CHIAVE_SESSIONE);
+      } catch (err) {
+        console.error(err);
       }
       if (!annullato) setRipristinoInCorso(false);
     })();
     return () => { annullato = true; };
-  }, [ripristinoInCorso, fetchRuolo, fetchModuliConfig]);
+  }, [apriSessione]);
 
-  // Tiene allineata la sessione salvata: bastano l'id e il modulo a video per riaprire la
-  // pagina dov'era, senza conservare nulla di riservato.
+  // Quando la sessione si chiude da sé — scaduta, o revocata perché l'amministratore ha
+  // reimpostato la password o tolto l'accesso — l'app torna alla schermata di accesso invece di
+  // restare aperta su un database che non risponde più.
   useEffect(() => {
-    if (user) sessionStorage.setItem(CHIAVE_SESSIONE, JSON.stringify({ id: user.id, modulo: currentModule }));
-  }, [user, currentModule]);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((evento) => {
+      if (evento === 'SIGNED_OUT') azzeraSessione();
+    });
+    return () => subscription.unsubscribe();
+  }, [azzeraSessione]);
 
-  // Porta dentro l'utente riconosciuto: ruolo, modulo di atterraggio e configurazione moduli.
-  // Ci passano tutte le strade d'ingresso — accesso normale, accesso rapido e cambio password —
-  // così non possono divergere.
-  const entra = async (u) => {
-    const nuovoUser = datiSessione(u, await fetchRuolo(u.ruolo_id, u.ruolo));
-    setUser(nuovoUser);
-    setCurrentModule(primoModuloVisibile(nuovoUser));
-    fetchModuliConfig();
-  };
+  // Tiene allineato il modulo a video, per riaprire la pagina dov'era.
+  useEffect(() => {
+    if (user) sessionStorage.setItem(CHIAVE_SESSIONE, JSON.stringify({ modulo: currentModule }));
+  }, [user, currentModule]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      // Si entra con l'email. L'username resta accettato come ripiego finché non tutti hanno
-      // un'email in anagrafica: i tre account di servizio ne sono ancora sprovvisti, e senza
-      // questa seconda strada resterebbero fuori dalla loro stessa applicazione.
-      const credenziale = loginUser.trim();
-      let { data } = await supabase
-        .from('utenti').select('*')
-        .ilike('email', credenziale).eq('password', loginPass).maybeSingle();
-      if (!data) {
-        ({ data } = await supabase
-          .from('utenti').select('*')
-          .eq('username', credenziale).eq('password', loginPass).maybeSingle());
+      // Si entra con l'email. Chi non ne ha una (un account di servizio) scrive il suo username,
+      // che emailDiAccesso trasforma nell'indirizzo con cui la sua credenziale è registrata.
+      const { data, error } = await supabase.auth.signInWithPassword({ email: emailDiAccesso(loginUser), password: loginPass });
+      if (error) {
+        if (error.status === 400) return alert("Credenziali errate o utente non trovato!");
+        if (error.status === 429) return alert("Troppi tentativi di accesso: riprova tra qualche minuto.");
+        throw error;
       }
-      // Chi è senza accesso — bubbler creato dal configuratore e non ancora abilitato, o accesso
-      // revocato — non entra, anche se per qualche via le credenziali corrispondessero.
-      if (data && !haAccesso(data)) data = null;
-
-      if (data?.cambio_password) {
-        // Le credenziali sono giuste, ma la password è ancora quella scritta dall'amministratore:
-        // prima di entrare l'utente se ne sceglie una sua.
-        setLoginPass("");
-        setUtenteDaAggiornare(data);
-      } else if (data) {
-        await entra(data);
-      } else {
-        alert("Credenziali errate o utente non trovato!");
-      }
+      setLoginPass("");
+      if (!(await apriSessione(data.user.id))) alert("Questo account non ha accesso all'applicazione.");
     } catch (err) {
       alert("Errore di connessione al database. Controlla la console.");
       console.error(err);
     }
   };
 
-  // L'accesso rapido salta la password, non il cambio password: serve anche a provarlo.
-  const handleQuickLogin = async (u) => {
-    if (u.cambio_password) return setUtenteDaAggiornare(u);
-    await entra(u);
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    azzeraSessione();
+    setLoginUser("");
   };
 
-  const annullaCambioPassword = () => {
-    setUtenteDaAggiornare(null);
-    setNuovaPassword("");
-    setConfermaPassword("");
-    setLoginPass("");
-  };
+  // Tornare all'accesso dalla scelta della password chiude la sessione appena aperta.
+  const annullaCambioPassword = handleLogout;
 
-  // La password nuova la sceglie l'utente e la conosce solo lui: appena è salvata la richiesta
-  // dell'amministratore si spegne da sola, e l'accesso prosegue senza doverlo rifare.
+  // La password nuova la sceglie l'utente e la conosce solo lui. La scrive il database
+  // (cambia_mia_password), che controlla che sia davvero nuova e solo allora spegne la richiesta
+  // dell'amministratore: l'accesso prosegue senza doverlo rifare.
   const salvaNuovaPassword = async (e) => {
     e.preventDefault();
     const nuova = nuovaPassword.trim();
     if (nuova.length < LUNGHEZZA_MINIMA_PASSWORD) return alert(`La nuova password deve avere almeno ${LUNGHEZZA_MINIMA_PASSWORD} caratteri.`);
     if (nuova !== confermaPassword.trim()) return alert("Le due password non coincidono.");
-    if (nuova === utenteDaAggiornare.password) return alert("La nuova password deve essere diversa da quella che ti è stata assegnata.");
 
     setSalvataggioPassword(true);
-    const { error } = await supabase.from('utenti')
-      .update({ password: nuova, cambio_password: false })
-      .eq('id', utenteDaAggiornare.id);
+    const { error } = await supabase.rpc('cambia_mia_password', { p_nuova: nuova });
     setSalvataggioPassword(false);
     if (error) {
       console.error(error);
-      return alert("Non è stato possibile salvare la nuova password. Riprova.");
+      // I rifiuti del database (password uguale a quella di prima, troppo corta) sono già in italiano.
+      return alert(error.code === 'P0001' ? error.message : "Non è stato possibile salvare la nuova password. Riprova.");
     }
 
-    const aggiornato = { ...utenteDaAggiornare, password: nuova, cambio_password: false };
-    annullaCambioPassword();
+    const aggiornato = { ...utenteDaAggiornare, cambio_password: false };
+    setUtenteDaAggiornare(null);
+    setNuovaPassword("");
+    setConfermaPassword("");
     setLoginUser("");
     await entra(aggiornato);
-  };
-
-  const handleLogout = () => {
-    sessionStorage.removeItem(CHIAVE_SESSIONE);
-    setUser(null);
-    setLoginUser("");
-    setLoginPass("");
-    setCurrentModule("preventivatore");
-    setSidebarAperta(false);
   };
 
   const cambiaModulo = (idModulo) => {
@@ -307,8 +263,8 @@ function App() {
             almeno {LUNGHEZZA_MINIMA_PASSWORD} caratteri.
           </p>
           <form onSubmit={salvaNuovaPassword}>
-            <input type="password" placeholder="Nuova password" autoFocus value={nuovaPassword} onChange={(e) => setNuovaPassword(e.target.value)} />
-            <input type="password" placeholder="Ripeti la nuova password" value={confermaPassword} onChange={(e) => setConfermaPassword(e.target.value)} />
+            <input type="password" placeholder="Nuova password" autoComplete="new-password" autoFocus value={nuovaPassword} onChange={(e) => setNuovaPassword(e.target.value)} />
+            <input type="password" placeholder="Ripeti la nuova password" autoComplete="new-password" value={confermaPassword} onChange={(e) => setConfermaPassword(e.target.value)} />
             <button type="submit" disabled={salvataggioPassword}>{salvataggioPassword ? 'Salvataggio…' : 'Salva ed entra'}</button>
           </form>
           <button
@@ -329,23 +285,10 @@ function App() {
           <img src="/logo.png" alt="Logo Azienda" style={{ maxWidth: '140px', display: 'block', margin: '0 auto 15px auto' }} />
           <h2>Accesso Gestionale</h2>
           <form onSubmit={handleLogin}>
-            <input type="text" placeholder="Email" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} />
-            <input type="password" placeholder="Password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} />
+            <input type="text" placeholder="Email" autoComplete="username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} />
+            <input type="password" placeholder="Password" autoComplete="current-password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} />
             <button type="submit">Accedi</button>
           </form>
-
-          {import.meta.env.DEV && utentiDev.length > 0 && (
-            <div style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px dashed #cbd5e1' }}>
-              <p style={{ fontSize: '0.75rem', color: '#94a3b8', textAlign: 'center', margin: '0 0 8px 0' }}>🛠️ Accesso rapido (solo sviluppo locale, senza password)</p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center' }}>
-                {utentiDev.map(u => (
-                  <button key={u.id} type="button" onClick={() => handleQuickLogin(u)} style={{ padding: '6px 12px', fontSize: '0.8rem', background: '#e2e8f0', color: '#334155', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
-                    {[u.nome, u.cognome].filter(Boolean).join(" ") || u.username} <span style={{ opacity: 0.6 }}>({u.ruolo})</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     );

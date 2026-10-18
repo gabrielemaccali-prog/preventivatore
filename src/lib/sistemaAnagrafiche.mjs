@@ -9,8 +9,8 @@
 // non si toccano da sole perché lì serve un occhio umano. Il file contiene dati dei clienti:
 // non va committato, e conviene cancellarlo finito il lavoro.
 //
-// Si scrivono solo i campi che cambiano, record per record. Le credenziali sono quelle dell'app:
-// VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY, dall'ambiente oppure da .env.local.
+// Si scrivono solo i campi che cambiano, record per record. Le credenziali: VITE_SUPABASE_URL e
+// SUPABASE_SERVICE_ROLE_KEY (non la chiave anon dell'app), dall'ambiente oppure da .env.local.
 // ============================================================
 import fs from 'fs';
 import * as XLSX from 'xlsx';
@@ -28,11 +28,13 @@ const daFile = () => {
   } catch { return {}; }
 };
 const env = { ...daFile(), ...process.env };
-if (!env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_ANON_KEY) {
-  console.error('Mancano VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY: mettile in .env.local o nell\'ambiente.');
+// Con il Row Level Security attivo (sql/accesso_supabase_auth.sql) la chiave anon non legge
+// niente: lo script entra con la chiave service_role, che non va mai nel codice dell'app.
+if (!env.VITE_SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('Mancano VITE_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY: mettile in .env.local o nell\'ambiente.\nLa chiave service_role è in Supabase > Project Settings > API.');
   process.exit(1);
 }
-const db = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
+const db = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 
 // Per ogni tabella: la chiave e la regola di ogni campo, le stesse dei salvataggi nei moduli.
 const TABELLE = [

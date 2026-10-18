@@ -253,7 +253,7 @@ function Bubbler() {
       ...pulisciBubbler(nuovoBubbler),
       // L'username è la vecchia credenziale di ripiego: per chi nasce oggi coincide con l'email.
       username: email, email, bubbler: true,
-      password: null, ruolo_id: null, ruolo: null,
+      ruolo_id: null, ruolo: null,
     }]);
     if (error) {
       if (error.code === '23505') return alert(`Esiste già un utente con l'email ${email}.`);

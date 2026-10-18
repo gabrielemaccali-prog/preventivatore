@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient';
 import { MODULI_REGISTRY, SCHEDE_REGISTRY } from '../../lib/permessi';
 import Icona from '../../components/Icona';
-import { haAccesso } from '../../lib/utils';
+import { haAccesso, generaPassword, LUNGHEZZA_MINIMA_PASSWORD } from '../../lib/utils';
 
 const permessiVuoti = () => {
   const base = {};
@@ -11,9 +11,24 @@ const permessiVuoti = () => {
 };
 
 const RUOLO_VUOTO = { nome: "", permessi: permessiVuoti() };
-const UTENTE_VUOTO = { username: "", nome: "", cognome: "", email: "", password: "", ruolo_id: "", bubbler: false, cambio_password: false };
-// Abilitando un account la password la sceglie l'amministratore: il cambio al primo accesso parte già spuntato.
-const ABILITAZIONE_VUOTA = { password: "", ruolo_id: "", cambio_password: true };
+// La password di un account nuovo la sceglie l'amministratore: il cambio al primo accesso parte già spuntato.
+const UTENTE_VUOTO = { username: "", nome: "", cognome: "", email: "", password: "", ruolo_id: "", bubbler: false, cambio_password: true };
+const ACCESSO_VUOTO = { password: "", ruolo_id: "", cambio_password: true };
+
+// Il campo della password che l'amministratore scrive o fa generare. È in chiaro perché va letta
+// per comunicarla alla persona; salvata, non la rivede più nessuno.
+function CampoPassword({ value, onChange, autoFocus }) {
+  return (
+    <div style={{ display: 'flex', gap: '6px' }}>
+      <input
+        type="text" placeholder={`Password (almeno ${LUNGHEZZA_MINIMA_PASSWORD} caratteri)`} autoComplete="off" autoFocus={autoFocus}
+        value={value} onChange={(e) => onChange(e.target.value)}
+        style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', fontFamily: 'monospace' }}
+      />
+      <button type="button" className="btn-outline-annulla" onClick={() => onChange(generaPassword())} style={{ padding: '0 12px', fontSize: '0.8rem', borderRadius: '4px', whiteSpace: 'nowrap' }}>Genera</button>
+    </div>
+  );
+}
 
 function MatricePermessi({ permessi, onToggleScheda, onToggleSottoscheda }) {
   return (
@@ -67,12 +82,10 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
   const [showFormUtente, setShowFormUtente] = useState(false);
   const [idUtenteInModifica, setIdUtenteInModifica] = useState(null);
   const [datiUtenteInModifica, setDatiUtenteInModifica] = useState(UTENTE_VUOTO);
-  // Vero finché sql/cambio_password.sql non è stato eseguito: senza la colonna il flag non si può
-  // né leggere né scrivere, e senza avviso il salvataggio fallirebbe senza dire perché.
-  const [mancaCambioPassword, setMancaCambioPassword] = useState(false);
-  // L'utente senza accesso a cui si stanno dando ruolo e password (vedi abilitaUtente).
-  const [utenteDaAbilitare, setUtenteDaAbilitare] = useState(null);
-  const [datiAbilitazione, setDatiAbilitazione] = useState(ABILITAZIONE_VUOTA);
+  // L'utente a cui si sta dando una password: chi è senza accesso la riceve insieme al ruolo
+  // (Abilita), chi ce l'ha già se la vede reimpostare (vedi impostaAccesso).
+  const [utenteAccesso, setUtenteAccesso] = useState(null);
+  const [datiAccesso, setDatiAccesso] = useState(ACCESSO_VUOTO);
 
   // --- RUOLI ---
   const [ruoli, setRuoli] = useState([]);
@@ -90,9 +103,6 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
     // In ordine di cognome, che è come l'elenco presenta le persone.
     const { data } = await supabase.from('utenti').select('*').order('cognome');
     if (data) setUtenti(data);
-    // La riga arriva con tutte le colonne che esistono davvero: se il flag non c'è, la migrazione
-    // non è ancora passata. Si scopre così, senza una query in più solo per chiederlo.
-    if (data?.length) setMancaCambioPassword(!('cambio_password' in data[0]));
   };
 
   const fetchRuoli = async () => {
@@ -114,9 +124,14 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
   // e il riferimento con cui la si riconosce. Se proprio va corretta si interviene sul database.
   // Si può solo dare a chi non l'ha mai avuta (gli account di servizio).
   //
-  // Chi è senza accesso (vedi haAccesso) si modifica senza password e ruolo: glieli dà "Abilita".
-  const utenteIncompleto = (u, conAccesso = true) => !u.email || (conAccesso && (!u.password || !u.ruolo_id));
-  const avvisoIncompleto = (conAccesso = true) => conAccesso ? "Compila email, password e ruolo" : "Compila l'email";
+  // Chi è senza accesso (vedi haAccesso) si modifica senza ruolo: glielo dà "Abilita".
+  //
+  // La password non si legge e non si modifica da qui: è in Supabase Auth, cifrata, e nessuno la
+  // vede. Si può solo sostituirla con una nuova (Password), di norma chiedendo all'utente di
+  // sceglierne una sua al primo accesso.
+  const utenteIncompleto = (u, conAccesso = true) => !u.email || (conAccesso && !u.ruolo_id);
+  const avvisoIncompleto = (conAccesso = true) => conAccesso ? "Compila email e ruolo" : "Compila l'email";
+  const passwordTroppoCorta = (p) => (p || '').length < LUNGHEZZA_MINIMA_PASSWORD;
 
   // Un nome lasciato in bianco si scrive nullo, non stringa vuota: è così che stanno a database
   // gli account che non l'hanno mai avuto, e mescolare le due cose renderebbe le ricerche bugiarde.
@@ -128,23 +143,32 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
   const ruoloDaId = (id) => ruoli.find(r => String(r.id) === String(id));
   const campiRuolo = (ruoloId) => ({ ruolo_id: ruoloId, ruolo: ruoloDaId(ruoloId)?.nome || null });
 
-  // Finché la colonna non esiste il flag non si scrive: mandarlo lo stesso farebbe fallire anche
-  // il salvataggio di tutto il resto, che invece deve continuare a funzionare.
-  const campoCambioPassword = (valore) => mancaCambioPassword ? {} : { cambio_password: !!valore };
+  // I rifiuti delle funzioni del database (sql/accesso_supabase_auth.sql) sono già in italiano.
+  const messaggioErrore = (error, ripiego) => (error?.code === 'P0001' ? error.message : ripiego);
 
+  // L'utente nasce in due passi: prima l'anagrafica, senza accesso, poi la credenziale col ruolo.
+  // Se il secondo fallisce l'utente resta in elenco "senza accesso", e glielo si dà con Abilita.
   const addUtente = async (e) => {
     e.preventDefault();
     if (utenteIncompleto(nuovoUtente)) return alert(avvisoIncompleto());
-    const { ruolo_id, cambio_password, ...resto } = nuovoUtente;
-    const { error } = await supabase.from('utenti')
+    if (passwordTroppoCorta(nuovoUtente.password)) return alert(`La password deve avere almeno ${LUNGHEZZA_MINIMA_PASSWORD} caratteri.`);
+    const { ruolo_id, cambio_password, password, ...resto } = nuovoUtente;
+    const { data, error } = await supabase.from('utenti')
       .insert([{
         ...resto,
+        email: nuovoUtente.email.trim().toLowerCase(),
         nome: testoONullo(nuovoUtente.nome), cognome: testoONullo(nuovoUtente.cognome),
-        username: nuovoUtente.username || nuovoUtente.email, ...campiRuolo(ruolo_id),
-        ...campoCambioPassword(cambio_password),
-      }]);
-    if (!error) { setNuovoUtente(UTENTE_VUOTO); setShowFormUtente(false); fetchUtenti(); }
-    else { console.error(error); alert("Errore salvataggio utente: email già usata da un altro account?"); }
+        username: nuovoUtente.username || nuovoUtente.email.trim().toLowerCase(),
+      }]).select('id').single();
+    if (error) { console.error(error); return alert("Errore salvataggio utente: email già usata da un altro account?"); }
+    const { error: erroreAccesso } = await supabase.rpc('admin_imposta_accesso', {
+      p_utente_id: data.id, p_password: password, p_cambio_password: !!cambio_password, p_ruolo_id: Number(ruolo_id),
+    });
+    setNuovoUtente(UTENTE_VUOTO); setShowFormUtente(false); fetchUtenti();
+    if (erroreAccesso) {
+      console.error(erroreAccesso);
+      alert(`L'utente è stato creato, ma senza accesso: ${messaggioErrore(erroreAccesso, "errore nel salvataggio della password")}.\n\nDaglielo con Abilita.`);
+    }
   };
 
   const salvaModificaUtente = async () => {
@@ -157,9 +181,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
       // L'email si scrive solo se prima non c'era: quella esistente non si tocca.
       ...(originale?.email ? {} : { email: datiUtenteInModifica.email.trim() }),
       ...(conAccesso ? {
-        password: datiUtenteInModifica.password,
         ...campiRuolo(datiUtenteInModifica.ruolo_id),
-        ...campoCambioPassword(datiUtenteInModifica.cambio_password),
+        cambio_password: !!datiUtenteInModifica.cambio_password,
       } : {}),
       bubbler: datiUtenteInModifica.bubbler,
     }).eq('id', idUtenteInModifica);
@@ -176,45 +199,51 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
     // quei dati andrebbero riassegnati o rimossi, altrimenti resterebbero senza padrone.
     if (error) {
       console.error(error);
-      return alert(`Impossibile eliminare ${nome}: ha disponibilità o compensi collegati.\n\nPer togliergli l'accesso senza perdere lo storico, cambiagli la password o il ruolo.`);
+      return alert(`Impossibile eliminare ${nome}: ha disponibilità o compensi collegati.\n\nPer togliergli l'accesso senza perdere lo storico, usa Revoca.`);
     }
     fetchUtenti();
   };
 
-  // Dare l'accesso a chi non ce l'ha: tipicamente un bubbler creato dal configuratore di
-  // Disponibilità, con l'anagrafica già completa e senza ancora ruolo né password.
-  const apriAbilitazione = (u) => { setUtenteDaAbilitare(u); setDatiAbilitazione({ ...ABILITAZIONE_VUOTA, cambio_password: !mancaCambioPassword }); };
-  const abilitaUtente = async (e) => {
+  // Dare una password: a chi non ha l'accesso — tipicamente un bubbler creato in Anagrafiche, con
+  // l'anagrafica già completa — insieme al ruolo (Abilita); a chi ce l'ha già, al posto di quella
+  // che ha (Password), per esempio perché l'ha dimenticata. In tutti e due i casi le sue sessioni
+  // aperte si chiudono, e di norma al primo accesso se ne sceglie una sua. Per la propria password
+  // il cambio non parte spuntato: chiederlo a sé stessi chiuderebbe fuori dalla sessione in corso.
+  const apriAccesso = (u) => {
+    setUtenteAccesso(u);
+    setDatiAccesso({ ...ACCESSO_VUOTO, cambio_password: u.id !== user.id });
+  };
+  const impostaAccesso = async (e) => {
     e.preventDefault();
-    if (!datiAbilitazione.password || !datiAbilitazione.ruolo_id) return alert("Scegli ruolo e password");
-    const { error } = await supabase.from('utenti').update({
-      password: datiAbilitazione.password,
-      ...campiRuolo(datiAbilitazione.ruolo_id),
-      ...campoCambioPassword(datiAbilitazione.cambio_password),
-    }).eq('id', utenteDaAbilitare.id);
-    if (!error) { setUtenteDaAbilitare(null); fetchUtenti(); }
-    else { console.error(error); alert("Errore abilitazione utente"); }
+    const abilitazione = !haAccesso(utenteAccesso);
+    if (abilitazione && !datiAccesso.ruolo_id) return alert("Scegli il ruolo");
+    if (passwordTroppoCorta(datiAccesso.password)) return alert(`La password deve avere almeno ${LUNGHEZZA_MINIMA_PASSWORD} caratteri.`);
+    const { error } = await supabase.rpc('admin_imposta_accesso', {
+      p_utente_id: utenteAccesso.id, p_password: datiAccesso.password, p_cambio_password: !!datiAccesso.cambio_password,
+      p_ruolo_id: abilitazione ? Number(datiAccesso.ruolo_id) : null,
+    });
+    if (!error) { setUtenteAccesso(null); setDatiAccesso(ACCESSO_VUOTO); fetchUtenti(); }
+    else { console.error(error); alert(messaggioErrore(error, abilitazione ? "Errore abilitazione utente" : "Errore salvataggio della password")); }
   };
 
   // Revocare l'accesso invece di eliminare: la persona resta, con le sue disponibilità e i suoi
-  // compensi, ma non entra più. Se è un bubbler resta anche selezionabile come operatore.
+  // compensi, ma non entra più. La credenziale si cancella e le sue sessioni aperte si chiudono.
+  // Se è un bubbler resta anche selezionabile come operatore.
   const revocaAccesso = async (u) => {
     if (u.id === user.id) return alert("Non puoi revocare l'accesso all'utente con cui hai effettuato l'accesso.");
     const nome = [u.nome, u.cognome].filter(Boolean).join(' ') || u.username;
     if (!window.confirm(`Revocare l'accesso a ${nome}?\n\nPassword e ruolo vengono tolti, i suoi dati restano.`)) return;
-    const { error } = await supabase.from('utenti').update({
-      password: null, ruolo_id: null, ruolo: null, ...campoCambioPassword(false),
-    }).eq('id', u.id);
+    const { error } = await supabase.rpc('admin_revoca_accesso', { p_utente_id: u.id });
     if (!error) fetchUtenti();
-    else { console.error(error); alert("Errore revoca accesso: è stato eseguito sql/bubbler_senza_accesso.sql?"); }
+    else { console.error(error); alert(messaggioErrore(error, "Errore revoca accesso")); }
   };
 
-  // Chiedere il cambio password è la cosa che si fa subito dopo aver scritto una password a un
-  // utente, quindi si spunta al volo dall'elenco, senza entrare in modifica.
+  // Chiedere il cambio password si spunta al volo dall'elenco, senza entrare in modifica.
   // Il flag si spegne da solo quando l'utente sceglie la sua password: qui si può solo chiedere,
-  // o revocare la richiesta se era stata fatta per sbaglio.
+  // o revocare la richiesta se era stata fatta per sbaglio. Chi ce l'ha in sospeso non lavora
+  // finché non l'ha fatto: è il database a fermarlo, non solo la schermata.
   const toggleCambioPassword = async (u) => {
-    if (mancaCambioPassword) return;
+    if (u.id === user.id && !u.cambio_password && !window.confirm("Chiedere il cambio password a te stesso ti blocca subito: dovrai uscire, rientrare e sceglierne una nuova. Continuare?")) return;
     const { error } = await supabase.from('utenti').update({ cambio_password: !u.cambio_password }).eq('id', u.id);
     if (!error) fetchUtenti();
     else { console.error(error); alert("Errore salvataggio del cambio password"); }
@@ -285,17 +314,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
       {currentView === "utenti" && (
         <div className="schermata-admin no-print" style={{ padding: '20px' }}>
           <h2>Utenti</h2>
-          <p className="descrizione-pagina">Gestisci gli utenti dell'applicazione e assegna loro un ruolo. Spuntando <strong>Cambio psw</strong> l'utente, al primo accesso, dovrà scegliere una password nuova prima di entrare. I bubbler si creano da Disponibilità &gt; Configuratore e compaiono qui <strong>senza accesso</strong>: con <strong>Abilita</strong> gli si assegnano ruolo e password. L'email, una volta salvata, non si modifica più.</p>
-
-          {mancaCambioPassword && (
-            <div style={{ margin: '14px 0', padding: '14px 18px', background: '#fff8e1', border: '1px solid #f0d999', borderLeft: '4px solid #f0a000', borderRadius: '4px' }}>
-              <strong style={{ display: 'block', marginBottom: '4px' }}>Schema del database non ancora aggiornato</strong>
-              <span style={{ fontSize: '0.85rem', color: '#555' }}>
-                Esegui <code>sql/cambio_password.sql</code> nell'SQL Editor di Supabase: finché manca la colonna,
-                il cambio password non si può chiedere e la colonna qui sotto resta disattivata. Tutto il resto funziona.
-              </span>
-            </div>
-          )}
+          <p className="descrizione-pagina">Gestisci gli utenti dell'applicazione e assegna loro un ruolo. Le password sono cifrate e non le vede nessuno: con <strong>Password</strong> se ne assegna una nuova al posto di quella dimenticata. Spuntando <strong>Cambio psw</strong> l'utente, al prossimo accesso, dovrà scegliere una password sua prima di entrare. I bubbler si creano da Anagrafiche &gt; Bubbler e compaiono qui <strong>senza accesso</strong>: con <strong>Abilita</strong> gli si assegnano ruolo e password. L'email, una volta salvata, non si modifica più.</p>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '15px 0', gap: '10px', flexWrap: 'wrap' }}>
             <h3 style={{ margin: 0 }}>Elenco ({utenti.length})</h3>
@@ -314,7 +333,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                     <input type="text" placeholder="Cognome" value={nuovoUtente.cognome} onChange={(e) => setNuovoUtente({ ...nuovoUtente, cognome: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
                   </div>
                   <input type="email" placeholder="Email" value={nuovoUtente.email} onChange={(e) => setNuovoUtente({ ...nuovoUtente, email: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                  <input type="text" placeholder="Password" value={nuovoUtente.password} onChange={(e) => setNuovoUtente({ ...nuovoUtente, password: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <CampoPassword value={nuovoUtente.password} onChange={(password) => setNuovoUtente({ ...nuovoUtente, password })} />
                   <select value={nuovoUtente.ruolo_id} onChange={(e) => setNuovoUtente({ ...nuovoUtente, ruolo_id: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}>
                     <option value="">Seleziona ruolo...</option>
                     {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
@@ -323,8 +342,8 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                       l'anagrafica completa. Su un utente esistente il flag si cambia in modifica. */}
                   {/* La password qui sopra la sceglie l'amministratore, quindi la conoscono in due:
                       spuntando questo l'utente se ne dà una sua al primo accesso. */}
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: mancaCambioPassword ? '#aaa' : 'inherit' }}>
-                    <input type="checkbox" disabled={mancaCambioPassword} checked={!!nuovoUtente.cambio_password} onChange={(e) => setNuovoUtente({ ...nuovoUtente, cambio_password: e.target.checked })} /> Deve cambiare la password al primo accesso
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
+                    <input type="checkbox" checked={!!nuovoUtente.cambio_password} onChange={(e) => setNuovoUtente({ ...nuovoUtente, cambio_password: e.target.checked })} /> Deve cambiare la password al primo accesso
                   </label>
                   <button type="submit" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Salva Utente</button>
                 </form>
@@ -332,24 +351,28 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
             </div>
           )}
 
-          {utenteDaAbilitare && (
-            <div className="modal-form-backdrop" onClick={() => setUtenteDaAbilitare(null)}>
+          {utenteAccesso && (
+            <div className="modal-form-backdrop" onClick={() => setUtenteAccesso(null)}>
               <div className="modal-form-box" onClick={(e) => e.stopPropagation()}>
-                <button type="button" className="modal-form-close" onClick={() => setUtenteDaAbilitare(null)} aria-label="Chiudi">✕</button>
-                <h3 style={{ margin: '0 0 6px 0', fontSize: '1.1rem', color: '#0288d1' }}>Abilita accesso</h3>
+                <button type="button" className="modal-form-close" onClick={() => setUtenteAccesso(null)} aria-label="Chiudi">✕</button>
+                <h3 style={{ margin: '0 0 6px 0', fontSize: '1.1rem', color: '#0288d1' }}>{haAccesso(utenteAccesso) ? 'Reimposta password' : 'Abilita accesso'}</h3>
                 <p style={{ margin: '0 0 15px 0', fontSize: '0.85rem', color: '#555' }}>
-                  <strong>{[utenteDaAbilitare.nome, utenteDaAbilitare.cognome].filter(Boolean).join(' ') || utenteDaAbilitare.username}</strong> entrerà con <strong>{utenteDaAbilitare.email}</strong>.
+                  <strong>{[utenteAccesso.nome, utenteAccesso.cognome].filter(Boolean).join(' ') || utenteAccesso.username}</strong> entrerà con <strong>{utenteAccesso.email || utenteAccesso.username}</strong>.
+                  {haAccesso(utenteAccesso) && ' La password attuale smette di funzionare e le sue sessioni aperte si chiudono.'}
+                  {' '}Dopo il salvataggio la password non si potrà più rivedere: copiala prima di comunicargliela.
                 </p>
-                <form onSubmit={abilitaUtente} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <input type="text" placeholder="Password" autoFocus value={datiAbilitazione.password} onChange={(e) => setDatiAbilitazione({ ...datiAbilitazione, password: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }} />
-                  <select value={datiAbilitazione.ruolo_id} onChange={(e) => setDatiAbilitazione({ ...datiAbilitazione, ruolo_id: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}>
-                    <option value="">Seleziona ruolo...</option>
-                    {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
-                  </select>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: mancaCambioPassword ? '#aaa' : 'inherit' }}>
-                    <input type="checkbox" disabled={mancaCambioPassword} checked={!!datiAbilitazione.cambio_password} onChange={(e) => setDatiAbilitazione({ ...datiAbilitazione, cambio_password: e.target.checked })} /> Deve cambiare la password al primo accesso
+                <form onSubmit={impostaAccesso} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <CampoPassword autoFocus value={datiAccesso.password} onChange={(password) => setDatiAccesso({ ...datiAccesso, password })} />
+                  {!haAccesso(utenteAccesso) && (
+                    <select value={datiAccesso.ruolo_id} onChange={(e) => setDatiAccesso({ ...datiAccesso, ruolo_id: e.target.value })} style={{ width: '100%', boxSizing: 'border-box', height: '36px', padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                      <option value="">Seleziona ruolo...</option>
+                      {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                    </select>
+                  )}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
+                    <input type="checkbox" checked={!!datiAccesso.cambio_password} onChange={(e) => setDatiAccesso({ ...datiAccesso, cambio_password: e.target.checked })} /> Deve cambiare la password al primo accesso
                   </label>
-                  <button type="submit" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Abilita</button>
+                  <button type="submit" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />{haAccesso(utenteAccesso) ? 'Salva password' : 'Abilita'}</button>
                 </form>
               </div>
             </div>
@@ -362,11 +385,10 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                   <th style={{ padding: '10px 12px' }}>Nome</th>
                   <th style={{ padding: '10px 12px' }}>Cognome</th>
                   <th style={{ padding: '10px 12px' }}>Email</th>
-                  <th style={{ padding: '10px 12px', width: '110px' }}>Password</th>
                   <th style={{ padding: '10px 12px', width: '130px' }}>Ruolo</th>
                   <th style={{ padding: '10px 12px', textAlign: 'center', width: '80px' }}>Bubbler</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', width: '100px' }} title="Al primo accesso l'utente deve scegliere una password nuova">Cambio psw</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', width: '170px' }}>Azioni</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', width: '100px' }} title="Al prossimo accesso l'utente deve scegliere una password nuova">Cambio psw</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', width: '230px' }}>Azioni</th>
                 </tr>
               </thead>
               <tbody>
@@ -382,22 +404,19 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                             : <input type="email" className="table-input" placeholder="Email" value={datiUtenteInModifica.email} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, email: e.target.value })} style={{ width: '100%', height: '30px' }} />}
                         </td>
                         {haAccesso(u) ? (
-                          <>
-                            <td style={{ padding: '10px 12px' }}><input type="text" className="table-input" value={datiUtenteInModifica.password} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, password: e.target.value })} style={{ width: '100%', height: '30px' }} /></td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <select className="table-input" value={datiUtenteInModifica.ruolo_id} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, ruolo_id: e.target.value })} style={{ width: '100%', height: '30px' }}>
-                                {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
-                              </select>
-                            </td>
-                          </>
+                          <td style={{ padding: '10px 12px' }}>
+                            <select className="table-input" value={datiUtenteInModifica.ruolo_id} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, ruolo_id: e.target.value })} style={{ width: '100%', height: '30px' }}>
+                              {ruoli.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                            </select>
+                          </td>
                         ) : (
-                          <td colSpan="2" style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#94a3b8', fontSize: '0.78rem' }}>Senza accesso: si dà con Abilita</td>
+                          <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#94a3b8', fontSize: '0.78rem' }}>Senza accesso: si dà con Abilita</td>
                         )}
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <input type="checkbox" checked={!!datiUtenteInModifica.bubbler} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, bubbler: e.target.checked })} />
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          <input type="checkbox" disabled={mancaCambioPassword || !haAccesso(u)} checked={!!datiUtenteInModifica.cambio_password} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, cambio_password: e.target.checked })} />
+                          <input type="checkbox" disabled={!haAccesso(u)} checked={!!datiUtenteInModifica.cambio_password} onChange={(e) => setDatiUtenteInModifica({ ...datiUtenteInModifica, cambio_password: e.target.checked })} />
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
@@ -418,12 +437,9 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                           {u.email || <span style={{ fontSize: '0.78rem', color: '#888' }}>nessuna email: entra ancora con l&apos;username</span>}
                         </td>
                         {haAccesso(u) ? (
-                          <>
-                            <td style={{ padding: '10px 12px', verticalAlign: 'middle', color: '#888' }}>••••••••</td>
-                            <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{ruoloDaId(u.ruolo_id)?.nome || u.ruolo || "—"}</td>
-                          </>
+                          <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>{ruoloDaId(u.ruolo_id)?.nome || u.ruolo || "—"}</td>
                         ) : (
-                          <td colSpan="2" style={{ padding: '10px 12px', verticalAlign: 'middle' }}>
+                          <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>
                             <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '10px', background: '#fff8e1', border: '1px solid #f0d999', color: '#8a6d00', fontSize: '0.75rem', fontWeight: 600 }}>Senza accesso</span>
                           </td>
                         )}
@@ -434,17 +450,20 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <input
-                            type="checkbox" disabled={mancaCambioPassword || !haAccesso(u)} checked={!!u.cambio_password}
+                            type="checkbox" disabled={!haAccesso(u)} checked={!!u.cambio_password}
                             onChange={() => toggleCambioPassword(u)}
                             title={u.cambio_password ? "Al prossimo accesso dovrà scegliere una password nuova" : "Chiedi il cambio password al prossimo accesso"}
                           />
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                            <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, nome: u.nome || "", cognome: u.cognome || "", email: u.email || "", password: u.password || "", ruolo_id: u.ruolo_id ?? "", bubbler: !!u.bubbler, cambio_password: !!u.cambio_password }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
-                            {haAccesso(u)
-                              ? <button className="btn-outline-annulla" title="Toglie password e ruolo, i dati dell'utente restano" onClick={() => revocaAccesso(u)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px' }}>Revoca</button>
-                              : <button className="btn-accent-inline" title="Assegna ruolo e password" onClick={() => apriAbilitazione(u)} style={{ fontSize: '0.75rem', padding: '3px 8px' }}>Abilita</button>}
+                            <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdUtenteInModifica(u.id); setDatiUtenteInModifica({ username: u.username, nome: u.nome || "", cognome: u.cognome || "", email: u.email || "", ruolo_id: u.ruolo_id ?? "", bubbler: !!u.bubbler, cambio_password: !!u.cambio_password }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                            {haAccesso(u) ? (
+                              <>
+                                <button className="btn-outline-annulla" title="Assegna una password nuova al posto di quella attuale" onClick={() => apriAccesso(u)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px' }}>Password</button>
+                                <button className="btn-outline-annulla" title="Toglie password e ruolo, i dati dell'utente restano" onClick={() => revocaAccesso(u)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px' }}>Revoca</button>
+                              </>
+                            ) : <button className="btn-accent-inline" title="Assegna ruolo e password" onClick={() => apriAccesso(u)} style={{ fontSize: '0.75rem', padding: '3px 8px' }}>Abilita</button>}
                             <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviUtente(u)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
                           </div>
                         </td>
@@ -452,7 +471,7 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
                     )}
                   </tr>
                 ))}
-                {utenti.length === 0 && <tr><td colSpan="8" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun utente.</td></tr>}
+                {utenti.length === 0 && <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun utente.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -512,10 +531,16 @@ function Impostazioni({ user, moduliConfig, onModuliConfigChange, onRuoliChange 
               <div key={r.id} className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '14px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <strong style={{ fontSize: '1rem' }}>{r.nome}</strong>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdRuoloInModifica(r.id); setDatiRuoloInModifica({ nome: r.nome, permessi: { ...permessiVuoti(), ...r.permessi } }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
-                    <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviRuolo(r)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
-                  </div>
+                  {/* L'amministratore vede sempre tutto (puoVedere in permessi.js): i suoi permessi non
+                      si leggono mai, quindi non si mostrano nemmeno da configurare. E non si elimina. */}
+                  {(r.is_admin ?? r.nome === 'admin') ? (
+                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Amministratore: vede tutto</span>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button className="btn-icon-action" aria-label="Modifica" title="Modifica" onClick={() => { setIdRuoloInModifica(r.id); setDatiRuoloInModifica({ nome: r.nome, permessi: { ...permessiVuoti(), ...r.permessi } }); }}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                      <button className="btn-icon-action danger" aria-label="Elimina" title="Elimina" onClick={() => rimuoviRuolo(r)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

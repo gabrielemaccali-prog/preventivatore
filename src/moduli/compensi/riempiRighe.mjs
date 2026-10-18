@@ -10,7 +10,7 @@
 // averla congelata allora -- se nel frattempo una voce e' stata toccata, il conto la segue -- ma e'
 // il meglio che si puo' dire oggi, e da qui in avanti non si muove piu'.
 //
-// Le credenziali sono quelle dell'app: VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY, dall'ambiente
+// Le credenziali: VITE_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY (non la chiave anon dell'app), dall'ambiente
 // oppure da un file .env.local nella radice del progetto.
 // ============================================================
 import fs from 'fs';
@@ -29,9 +29,11 @@ const daFile = () => {
 };
 const env = { ...daFile(), ...process.env };
 const url = env.VITE_SUPABASE_URL;
-const chiave = env.VITE_SUPABASE_ANON_KEY;
+// Con il Row Level Security attivo (sql/accesso_supabase_auth.sql) la chiave anon non legge
+// niente: lo script entra con la chiave service_role, che non va mai nel codice dell'app.
+const chiave = env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !chiave) {
-  console.error('Mancano VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY: mettile in .env.local o nell\'ambiente.');
+  console.error('Mancano VITE_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY: mettile in .env.local o nell\'ambiente.\nLa chiave service_role è in Supabase > Project Settings > API.');
   process.exit(1);
 }
 const db = createClient(url, chiave);
