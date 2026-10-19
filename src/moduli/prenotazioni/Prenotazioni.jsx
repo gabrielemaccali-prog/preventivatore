@@ -17,7 +17,24 @@ import SuggerimentoEmail from '../../components/SuggerimentoEmail'
 const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", prevedeRinfresco: false, numeroPartecipanti: "", giochi_richiesti: "1" };
 
 // Riga vuota del pagamento che si sta digitando, prima di aggiungerla alla prenotazione.
-const PAGAMENTO_VUOTO = { importo: "", data: "", nominativo: "" };
+const PAGAMENTO_VUOTO = { importo: "", data: "", nominativo: "", contanti: false, ritiratoDa: "" };
+
+// Quanto di una prenotazione è stato incassato in contanti: soldi che non sono passati dall'azienda
+// ma stanno in tasca a un operatore. Non si fatturano, e vanno restituiti o scalati dal suo compenso.
+const contantiDi = (p) => (p?.pagamenti || []).filter(pg => pg.contanti).reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0);
+
+// Quanto paga davvero il cliente: la parte in contanti vale il netto (niente fattura, niente IVA),
+// il resto porta l'IVA come sempre. Con 300 netti: tutto in contanti sono 300, niente contanti
+// sono 366, metà e metà sono 150 + 183. Il contante non può coprire più del netto: oltre quello
+// non resterebbe niente da scontare e il totale tornerebbe a salire.
+const lordoConContanti = (netto, contanti, iva) => {
+  const n = parseFloat(netto) || 0;
+  const inContanti = Math.min(Math.max(parseFloat(contanti) || 0, 0), n);
+  return inContanti + (n - inContanti) * (1 + iva);
+};
+const contantiDiOperatore = (p, operatoreId) => (p?.pagamenti || [])
+  .filter(pg => pg.contanti && String(pg.ritiratoDa ?? pg.ritirato_da ?? '') === String(operatoreId))
+  .reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0);
 
 const PREN_VUOTA = {
   data: "", altriGiorni: [], piuGiorni: false, senzaOrario: false, pacchettoId: "", giocoId: "", oraInizio: "", oraFine: "",
@@ -226,6 +243,22 @@ const statoPagamentoDi = (pagamenti, prezzoVendita, valoreVoucher = 0, clienteFo
 // Il colore del pallino del pagamento, uguale in tabella, calendario e riepiloghi.
 const colorePagamento = (stato) => ({ saldato: '#16a34a', acconto: '#ca8a04', compensazione: '#7c3aed', omaggio: '#0284c7' }[stato] || '#dc2626');
 
+// Segnalino del pagamento nei chip del calendario: la targhetta con l'euro quando c'è di mezzo
+// il contante, altrimenti il quadratino col colore dello stato.
+const SegnoPagamento = ({ p, stato, colore, titolo }) => (contantiDi(p) > 0
+  ? (
+    <span
+      title={titolo}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        minWidth: '13px', height: '13px', padding: '0 2px', flexShrink: 0,
+        background: '#fff', border: '1px solid #166534', color: '#166534',
+        borderRadius: '2px', fontSize: '0.6rem', fontWeight: 'bold', lineHeight: 1,
+      }}
+    >€</span>
+  )
+  : <span title={titolo || `pagamento ${stato || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: colore, borderRadius: '2px', flexShrink: 0 }}></span>);
+
 // Colonne della tabella prenotazioni (Storico e Gestione): etichetta mostrata e valore su cui ordinare.
 // Le colonne composite ordinano sul dato che conta: la data evento tiene conto anche dell'ora, e
 // "Pagato / Totale" ordina sul totale, cioè sul valore della prenotazione.
@@ -381,7 +414,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       const righePag = pag.data || [];
       const conPagamenti = pr.data.map(p => ({
         ...p,
-        pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "" })),
+        pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", contanti: !!x.contanti, ritiratoDa: x.ritirato_da ?? "" })),
         // valore dell'eventuale voucher usato: conta come pagamento pur non essendo una riga di pagamenti
         voucherValore: parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherCodice))?.importo) || 0
       }));
@@ -695,7 +728,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       operatoriIds: (p.operatori || []).map(o => o.id), senzaOperatori: !!p.senzaOperatori,
       sconto: String(p.sconto ?? "0"), prezzoManuale, prezzoPacchetto,
       tipoRinfresco: p.tipoRinfresco || "", numeroPartecipanti: p.numeroPartecipanti ?? "", partecipantiEffettivi: p.partecipantiEffettivi ?? "", etaMedia: p.etaMedia || "", note: p.note || "",
-      pagamenti: p.pagamenti || [], voucherCodice: p.voucherCodice || "", clienteSedeId: p.clienteSedeId || "", clienteCampoId: p.clienteCampoId || "",
+      pagamenti: (p.pagamenti || []).map(pg => ({ ...pg, contanti: !!pg.contanti, ritiratoDa: pg.ritiratoDa ?? "" })), voucherCodice: p.voucherCodice || "", clienteSedeId: p.clienteSedeId || "", clienteCampoId: p.clienteCampoId || "",
       preventivoCollegato: p.preventivoCollegato || "", ereditaCosti: !!p.ereditaCosti, costoEreditato: p.costoEreditato ?? "", voci: p.voci || [],
       // I giochi oltre il primo si rileggono dalle righe: e' li' che erano stati scritti.
       giochiAltri: (p.voci || []).map(v => v.giocoId).filter(Boolean).slice(1),
@@ -1100,9 +1133,14 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
               : <span style={{ color: '#94a3b8' }} title={p.senzaOperatori ? 'Dichiarata senza operatori' : 'Operatori non ancora assegnati'}>{p.senzaOperatori ? 'non richiesti' : '—'}</span>}
           </td>
           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
-            <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
+            <span title={`pagamento ${statoIncassoDi(p) || 'in attesa'}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
             €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{totale.toFixed(2)}</span>
             {fatturataPerIntero(p) && <span title="Fatturata per intero" style={{ color: '#0284c7', fontWeight: 'bold', marginLeft: '6px' }}>✓</span>}
+            {/* I contanti non seguono la strada della fattura: al posto della spunta blu, le
+                banconote. Chi li ha in mano si legge nel titolo e nella consuntivazione bubbler. */}
+            {contantiDi(p) > 0 && (
+              <span title={`€${contantiDi(p).toFixed(2)} in contanti${nomiRitiroContanti(p) ? ' ritirati da ' + nomiRitiroContanti(p) : ', operatore da indicare'}`} style={{ marginLeft: '6px' }}>💶</span>
+            )}
           </td>
         </tr>
         {espansa && (
@@ -1355,13 +1393,41 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   };
 
   const aggiungiPagamento = () => {
-    if (nuovoPagamento.importo === "" || !nuovoPagamento.data) return alert("Inserisci importo e data del pagamento.");
-    setFormPren(prev => ({ ...prev, pagamenti: [...prev.pagamenti, { importo: parseFloat(nuovoPagamento.importo) || 0, data: nuovoPagamento.data, nominativo: nuovoPagamento.nominativo }] }));
+    // Un contante si incassa sul posto: la data è quella dell'evento, non si digita. E nessuno
+    // l'ha ancora versato, quindi non c'è un nominativo da chiedere -- c'è un operatore che lo ritira.
+    const dataPagamento = nuovoPagamento.contanti ? formPren.data : nuovoPagamento.data;
+    if (nuovoPagamento.importo === "") return alert("Inserisci l'importo del pagamento.");
+    if (!dataPagamento) {
+      return alert(nuovoPagamento.contanti
+        ? "I contanti si ritirano il giorno dell'evento: indica prima la data della prenotazione."
+        : "Inserisci la data del pagamento.");
+    }
+    // Con un operatore solo non c'è niente da scegliere: i soldi li ritira lui.
+    const assegnati = formPren.operatoriIds || [];
+    const ritiratoDa = nuovoPagamento.contanti
+      ? (nuovoPagamento.ritiratoDa || (assegnati.length === 1 ? String(assegnati[0]) : ""))
+      : "";
+    if (nuovoPagamento.contanti && !ritiratoDa && assegnati.length > 1) {
+      return alert("Scegli quale operatore ritira i contanti.");
+    }
+    setFormPren(prev => ({ ...prev, pagamenti: [...prev.pagamenti, {
+      importo: parseFloat(nuovoPagamento.importo) || 0, data: dataPagamento,
+      nominativo: nuovoPagamento.contanti ? "" : nuovoPagamento.nominativo,
+      contanti: !!nuovoPagamento.contanti, ritiratoDa,
+    }] }));
     setNuovoPagamento(PAGAMENTO_VUOTO);
   };
   const rimuoviPagamento = (idx) => setFormPren(prev => ({ ...prev, pagamenti: prev.pagamenti.filter((_, i) => i !== idx) }));
 
   // Valore del voucher usato sulla prenotazione: conta come pagamento senza essere una riga di pagamenti.
+  const nomeOperatoreDi = (id) => operatori.find(o => String(o.id) === String(id))?.nome || '';
+  // Chi ha in mano i contanti di una prenotazione, per esteso: può essere più d'uno se gli incassi
+  // in contanti sono stati ritirati in momenti diversi da persone diverse.
+  const nomiRitiroContanti = (p) => [...new Set((p.pagamenti || [])
+    .filter(pg => pg.contanti && pg.ritiratoDa)
+    .map(pg => nomeOperatoreDi(pg.ritiratoDa))
+    .filter(Boolean))].join(', ');
+
   const valoreVoucherDi = (codice) => {
     const v = voucher.find(x => String(x.codice) === String(codice));
     return v ? (parseFloat(v.importo) || 0) : 0;
@@ -1373,7 +1439,13 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     await supabase.from('pagamenti').delete().eq('tipo', 'prenotazione').eq('riferimento', riferimento);
     const daInserire = (righe || [])
       .filter(pg => pg.data)
-      .map(pg => ({ tipo: 'prenotazione', riferimento, data: pg.data, importo: parseFloat(pg.importo) || 0, nominativo: formaNome(pg.nominativo) || null }));
+      .map(pg => ({
+        tipo: 'prenotazione', riferimento, data: pg.data, importo: parseFloat(pg.importo) || 0,
+        nominativo: formaNome(pg.nominativo) || null,
+        contanti: !!pg.contanti,
+        // Chi li tiene vale solo sui contanti: su un bonifico non c'è nessuno a cui chiederli.
+        ritirato_da: pg.contanti && pg.ritiratoDa ? Number(pg.ritiratoDa) : null,
+      }));
     if (daInserire.length > 0) await supabase.from('pagamenti').insert(daInserire);
   };
 
@@ -1496,9 +1568,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const baseNetta = (conVoci && totVoci.ricavo > 0) ? totVoci.ricavo : (parseFloat(f.prezzoManuale) || 0);
     const prezzoPacchettoApplicato = prezzoPacchettoDi(f, pac);
     const prezzoBaseNetto = pacHaPrezzo ? (prezzoPacchettoApplicato / (1 + IVA)) : baseNetta;
-    const prezzoBaseLordo = pacHaPrezzo ? prezzoPacchettoApplicato : (baseNetta * (1 + IVA));
     const prezzoVenditaNetto = prezzoBaseNetto * scontoFrac;
-    const prezzoVenditaLordo = prezzoBaseLordo * scontoFrac;
+    // Il lordo dipende da come si paga: la quota in contanti resta senza IVA.
+    const prezzoVenditaLordo = lordoConContanti(prezzoVenditaNetto, contantiDi(f), IVA);
     const numPart = numOrNull(f.numeroPartecipanti);
     const { costoCampoNetto, costoCampoLordo, costoRinfrescoNetto, costoRinfrescoLordo } = costiCampoDi({
       campo, tariffe, data: f.data, oraInizio, tipoRinfresco: pac.prevedeRinfresco ? f.tipoRinfresco : null, numeroPartecipanti: numPart,
@@ -1681,8 +1753,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const prezzoBaseLordo = pacHaPrezzo
           ? prezzoPacchettoDi(formPren, pac)
           : ((conVoci ? totaliVoci.ricavo : (parseFloat(formPren.prezzoManuale) || 0)) * (1 + IVA));
-        const prezzoLordo = prezzoBaseLordo * scontoFrac;
-        const prezzoVendita = prezzoLordo; // il cliente paga il lordo
+        const prezzoNetto = (pacHaPrezzo ? prezzoBaseLordo / (1 + IVA) : (conVoci ? totaliVoci.ricavo : (parseFloat(formPren.prezzoManuale) || 0))) * scontoFrac;
+        const contantiInseriti = contantiDi(formPren);
+        const prezzoLordo = lordoConContanti(prezzoNetto, contantiInseriti, IVA);
+        const prezzoVendita = prezzoLordo; // il cliente paga il lordo, meno l'IVA sulla quota in contanti
         // Costo rinfresco (i valori sono lordi o netti a seconda del flag ivaInclusaRinfresco del campo)
         const campoIvaInclRinfresco = campoSel ? !!campoSel.ivaInclusaRinfresco : false;
         // Rinfresco
@@ -1711,7 +1785,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const daChiudere = !!codicePrenInModifica && formPren.stato === STATO_PREN.CONFERMATO;
         // Niente fattura da emettere, quindi niente anagrafica da chiedere: in compensazione con
         // un fornitore o un campo, oppure coperta per intero da un voucher.
-        const nienteFattura = !!(formPren.clienteSedeId || formPren.clienteCampoId) || prezzoVendita - valoreVoucher <= 0.01;
+        const nienteFattura = !!(formPren.clienteSedeId || formPren.clienteCampoId) || prezzoVendita - valoreVoucher - contantiInseriti <= 0.01;
         const mancanzeCompletamento = daChiudere
           ? [
               ...(nienteFattura ? [] : campiFatturazioneMancanti(formPren)),
@@ -2300,6 +2374,13 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
               </label>
               <div style={{ padding: '10px 0' }}>
                 Prezzo finale: <strong style={{ color: '#10b981', fontSize: '1.2rem' }}>€{prezzoLordo.toFixed(2)}</strong> <span style={{ fontSize: '0.75rem', color: '#666' }}>(IVA incl.)</span>
+                {/* Senza questa riga il totale sembrerebbe sbagliato: chi guarda vede un lordo che
+                    non torna con il netto per 1,22, e non ha modo di capire perché. */}
+                {contantiInseriti > 0 && (
+                  <div style={{ fontSize: '0.75rem', color: '#166534' }}>
+                    💶 €{Math.min(contantiInseriti, prezzoNetto).toFixed(2)} in contanti, senza IVA · imponibile €{prezzoNetto.toFixed(2)}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2329,8 +2410,15 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     {formPren.pagamenti.map((pg, i) => (
                       <tr key={i}>
                         <td style={{ padding: '4px' }}>{formattaDataGGMMAAAA(pg.data)}</td>
-                        <td style={{ padding: '4px' }}>€{(parseFloat(pg.importo) || 0).toFixed(2)}</td>
-                        <td style={{ padding: '4px' }}>{pg.nominativo || '—'}</td>
+                        <td style={{ padding: '4px' }}>
+                          €{(parseFloat(pg.importo) || 0).toFixed(2)}
+                          {pg.contanti && <span title={nomeOperatoreDi(pg.ritiratoDa) ? `Contanti ritirati da ${nomeOperatoreDi(pg.ritiratoDa)}` : 'Contanti: operatore da indicare'} style={{ marginLeft: '6px' }}>💶</span>}
+                        </td>
+                        <td style={{ padding: '4px' }}>
+                          {pg.contanti
+                            ? <span style={{ color: '#b45309' }} title={nomeOperatoreDi(pg.ritiratoDa) ? `Li ritira ${nomeOperatoreDi(pg.ritiratoDa)}` : 'Operatore da indicare'}>da ritirare{nomeOperatoreDi(pg.ritiratoDa) ? ` · ${nomeOperatoreDi(pg.ritiratoDa)}` : ''}</span>
+                            : (pg.nominativo || '—')}
+                        </td>
                         <td style={{ padding: '4px', textAlign: 'right' }}><button className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => rimuoviPagamento(i)}>🗑</button></td>
                       </tr>
                     ))}
@@ -2354,14 +2442,37 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                   )}
                   <div className="pren-row">
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Data pagamento
-                      <input type="date" value={nuovoPagamento.data} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, data: e.target.value })} />
+                      <input
+                        type="date"
+                        value={nuovoPagamento.contanti ? (formPren.data || '') : nuovoPagamento.data}
+                        readOnly={!!nuovoPagamento.contanti}
+                        title={nuovoPagamento.contanti ? "I contanti si ritirano il giorno dell'evento" : undefined}
+                        style={nuovoPagamento.contanti ? STILE_CAMPO_IMPOSTO : undefined}
+                        onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, data: e.target.value })}
+                      />
                     </label>
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Importo €
                       <input type="number" step="any" value={nuovoPagamento.importo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, importo: e.target.value })} />
                     </label>
+                    {!nuovoPagamento.contanti && (
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Nominativo
                       <input type="text" value={nuovoPagamento.nominativo} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: e.target.value })} onBlur={(e) => setNuovoPagamento({ ...nuovoPagamento, nominativo: formaNome(e.target.value) })} />
                     </label>
+                    )}
+                    {/* Un pagamento nasce elettronico: la spunta lo trasforma in contante, e allora
+                        serve sapere chi lo tiene -- con un operatore solo è lui, senza scelte. */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 'normal', whiteSpace: 'nowrap', color: '#475569', paddingBottom: '8px' }}>
+                      <input type="checkbox" checked={!!nuovoPagamento.contanti} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, contanti: e.target.checked, ritiratoDa: e.target.checked && formPren.operatoriIds.length === 1 ? String(formPren.operatoriIds[0]) : "" })} />
+                      💶 In contanti
+                    </label>
+                    {nuovoPagamento.contanti && formPren.operatoriIds.length !== 1 && (
+                      <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Ritirati da
+                        <select value={nuovoPagamento.ritiratoDa} onChange={(e) => setNuovoPagamento({ ...nuovoPagamento, ritiratoDa: e.target.value })}>
+                          <option value="">{formPren.operatoriIds.length === 0 ? '-- nessun operatore assegnato --' : '-- Scegli --'}</option>
+                          {operatori.filter(o => formPren.operatoriIds.includes(o.id)).map(o => <option key={o.id} value={String(o.id)}>{o.nome}</option>)}
+                        </select>
+                      </label>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'end' }}>
                       <button type="button" className="btn-accent-inline" style={{ padding: '8px 14px', fontSize: '0.85rem' }} onClick={aggiungiPagamento}>+ Pagamento</button>
                     </div>
@@ -2667,7 +2778,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           const pagColore = colorePagamento(statoIncassoDi(p));
           const hasOp = p.operatori && p.operatori.length > 0;
           return (
-            <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${etichettaStatoPren(p.stato)} · ${p.nominativo} · ${campoTxt} · ${etichettaDi(p)} · pagamento ${p.statoPagamento || 'in attesa'}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
+            <div onClick={(e) => { e.stopPropagation(); setPrenSelezionata(p); }} title={`${p.oraInizio || ''} ${etichettaStatoPren(p.stato)} · ${p.nominativo} · ${campoTxt} · ${etichettaDi(p)} · pagamento ${statoIncassoDi(p) || 'in attesa'}${contantiDi(p) > 0 ? ' (contanti)' : ''}`} style={{ cursor: 'pointer', background: c.bg, borderLeft: `3px solid ${c.bd}`, color: c.tx, fontSize: '0.7rem', padding: '3px 5px', borderRadius: '4px', lineHeight: 1.25, ...(riempi ? { height: '100%', boxSizing: 'border-box', overflow: 'hidden' } : { marginBottom: '3px' }) }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4px' }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span title={p.googleCalendarSync ? 'Sincronizzato con Google Calendar' : 'Non sincronizzato con Google Calendar'}>{p.googleCalendarSync ? '✅' : '⚠️'}</span> {p.senzaOrario ? <strong>tutto il giorno</strong> : (p.oraInizio ? <strong>{p.oraInizio}</strong> : '')} - {p.nominativo}
@@ -2675,7 +2786,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                   {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'campo prenotato' : 'campo da prenotare'} style={{ margin: 0 }} />}
                   <span title={hasOp ? `${p.operatori.length} operatori assegnati` : 'nessun operatore'}>{hasOp ? `🧑${p.operatori.length}` : '🚫'}</span>
-                  <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
+                  <SegnoPagamento p={p} stato={statoIncassoDi(p)} colore={pagColore} titolo={contantiDi(p) > 0 ? `€${contantiDi(p).toFixed(2)} in contanti${nomiRitiroContanti(p) ? ' · ' + nomiRitiroContanti(p) : ''}` : `pagamento ${statoIncassoDi(p) || 'in attesa'}`} />
                 </span>
               </div>
               <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaBreveDi(p) || '—'} - {campoTxt}</div>
@@ -2890,7 +3001,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                                       {p.campoId && <input type="checkbox" checked={!!p.campoPrenotato} onClick={(e) => e.stopPropagation()} onChange={() => toggleCampoPrenotato(p)} title={p.campoPrenotato ? 'campo prenotato' : 'campo da prenotare'} style={{ margin: 0 }} />}
                                       <span title={hasOp ? `${p.operatori.length} operatori assegnati` : 'nessun operatore'}>{hasOp ? `🧑${p.operatori.length}` : '🚫'}</span>
-                                      <span title={`pagamento ${p.statoPagamento || 'in attesa'}`} style={{ display: 'inline-block', width: '11px', height: '11px', background: pagColore, borderRadius: '2px', flexShrink: 0 }}></span>
+                                      <SegnoPagamento p={p} stato={statoIncassoDi(p)} colore={pagColore} titolo={contantiDi(p) > 0 ? `€${contantiDi(p).toFixed(2)} in contanti${nomiRitiroContanti(p) ? ' · ' + nomiRitiroContanti(p) : ''}` : `pagamento ${statoIncassoDi(p) || 'in attesa'}`} />
                                     </span>
                                   </div>
                                   <div style={{ fontSize: '0.76rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>{etichettaBreveDi(p) || '—'} - {p.campoNome || [p.locationCitta, p.locationProvincia].filter(Boolean).join(' ') || '—'}</div>
@@ -3003,11 +3114,18 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
             }));
         };
 
-        const righeGiorno = (righe, conLuogo) => perGiorno(righe).flatMap(g => [
+        // Con un operatore indicato, le sue righe dicono anche quanto deve farsi dare in contanti:
+        // è l'unica cosa del messaggio che riguarda soldi, e si legge di corsa su WhatsApp -- per
+        // questo sta su una riga sua, in maiuscolo.
+        const righeGiorno = (righe, conLuogo, operatoreId = null) => perGiorno(righe).flatMap(g => [
           formattaDataEstesaIT(g.data),
-          ...g.eventi.map(p => {
+          ...g.eventi.flatMap(p => {
             const luogo = conLuogo && locLabelRiep(p) !== '—' ? ` · ${locLabelRiep(p)}` : '';
-            return `  ${orarioDi(p)} · ${specificaDi(p)}${luogo}`;
+            const riga = `  ${orarioDi(p)} · ${specificaDi(p)}${luogo}`;
+            const daRitirare = operatoreId ? contantiDiOperatore(p, operatoreId) : 0;
+            return daRitirare > 0
+              ? [riga, `  ⚠️ DA RITIRARE €${daRitirare.toFixed(2)} IN CONTANTI`]
+              : [riga];
           }),
           '',
         ]);
@@ -3039,7 +3157,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           `Ciao ${op.nome}! 👋`,
           'Ecco le tue prossime prenotazioni:',
           '',
-          ...righeGiorno(op.righe, true),
+          ...righeGiorno(op.righe, true, op.id),
           'Grazie! 💪'
         ].join('\n');
 

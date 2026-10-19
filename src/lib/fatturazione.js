@@ -19,8 +19,11 @@ export const sommaImporti = (righe) => (righe || []).reduce((s, r) => s + (parse
 // già stato fatturato quando è stato venduto, quindi la parte che copre non si fattura di nuovo:
 // una partita pagata tutta col voucher non ha niente da fatturare, una pagata in parte fattura il
 // saldo.
-export const daFatturarePrenotazione = (p, valoreVoucher = 0) =>
-  Math.max((parseFloat(p?.prezzoVendita) || 0) - (parseFloat(valoreVoucher) || 0), 0);
+// I contanti non entrano nel giro delle fatture: sono soldi che il cliente ha dato in mano a un
+// operatore, e che si regolano con lui nella consuntivazione dei bubbler. Quello che resta da
+// fatturare è il prezzo meno il voucher e meno il contante.
+export const daFatturarePrenotazione = (p, valoreVoucher = 0, incassatoInContanti = 0) =>
+  Math.max((parseFloat(p?.prezzoVendita) || 0) - (parseFloat(valoreVoucher) || 0) - (parseFloat(incassatoInContanti) || 0), 0);
 
 // Un voucher si fattura per il suo valore. Quelli pregressi sono stati venduti col vecchio
 // sistema e lì sono stati fatturati: qui non c'è niente da fare.

@@ -234,8 +234,14 @@ export const partitaInCompensazione = (p) => !!(p?.clienteSedeId || p?.clienteCa
 // I campi restano compilabili: semplicemente non sono più un requisito.
 // "voucherValore" lo aggancia il modulo prenotazioni leggendo l'importo del voucher usato; la
 // tolleranza di un centesimo è la stessa di lib/fatturazione.js, perché i lordi vengono da conti con l'IVA.
+// Quanto di una prenotazione è stato incassato in contanti: soldi dati in mano a un operatore, che
+// non passano da una fattura. Su quella quota l'IVA non si applica e il cliente paga il netto.
+export const contantiIncassatiDi = (p) => (p?.pagamenti || [])
+  .filter(pg => pg.contanti)
+  .reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0);
+
 export const senzaFatturaDaEmettere = (p) => partitaInCompensazione(p)
-  || (parseFloat(p?.prezzoVendita) || 0) - (parseFloat(p?.voucherValore) || 0) <= 0.01;
+  || (parseFloat(p?.prezzoVendita) || 0) - (parseFloat(p?.voucherValore) || 0) - contantiIncassatiDi(p) <= 0.01;
 
 // L'anagrafica di fatturazione serve solo se una fattura va emessa.
 export const anagraficaFatturazioneAPosto = (p) => senzaFatturaDaEmettere(p) || fatturazioneCompletaDi(p);

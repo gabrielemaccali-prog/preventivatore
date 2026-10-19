@@ -113,7 +113,10 @@ function Consuntivazione({ user }) {
     const valore = (codice) => parseFloat(voucherPerCodice[String(codice)]?.importo) || 0;
     const daPrenotazioni = fatturabili.map(p => {
       const lista = fatturePer[`prenotazione|${p.id}`] || [];
-      const dovuto = daFatturarePrenotazione(p, p.voucherCodice ? valore(p.voucherCodice) : 0);
+      const inContanti = (pagamentiPer[`prenotazione|${p.id}`] || [])
+        .filter(pg => pg.contanti)
+        .reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0);
+      const dovuto = daFatturarePrenotazione(p, p.voucherCodice ? valore(p.voucherCodice) : 0, inContanti);
       const fatturato = sommaImporti(lista);
       return {
         tipo: 'prenotazione', codice: String(p.id), data: p.data, fine: fineEventoDi(p), intestatario: intestatarioPren(p),
@@ -134,7 +137,7 @@ function Consuntivazione({ user }) {
       };
     });
     return [...daPrenotazioni, ...daVoucher].sort((a, b) => String(b.data).localeCompare(String(a.data)));
-  }, [fatturabili, voucher, fatturePer, voucherPerCodice]);
+  }, [fatturabili, voucher, fatturePer, voucherPerCodice, pagamentiPer]);
 
   const visibili = voci.filter(x => {
     if (filtroTipo && x.tipo !== filtroTipo) return false;

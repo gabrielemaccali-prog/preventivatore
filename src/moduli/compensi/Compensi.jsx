@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
-import { supabase } from '../../lib/supabaseClient'
+import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import html2pdf from 'html2pdf.js'
@@ -181,6 +181,10 @@ function Compensi({ user }) {
   const [partite, setPartite] = useState([]);
   const [voci, setVoci] = useState([]);
   const [periodi, setPeriodi] = useState([]);
+  // Gli incassi in contanti: soldi che il cliente ha dato in mano a un bubbler sul posto. Non sono
+  // un compenso e non entrano nei calcoli -- si mostrano accanto alla partita perché chi consuntiva
+  // deve sapere quanto quella persona ha già in tasca.
+  const [pagamenti, setPagamenti] = useState([]);
   const [campi, setCampi] = useState([]);
   const [anagrafiche, setAnagrafiche] = useState([]);
   // Il catalogo giochi serve solo a scrivere per esteso di che partita si tratta: il compenso
@@ -224,7 +228,7 @@ function Compensi({ user }) {
     // all'annullamento si e' segnato che gli operatori si pagano lo stesso (vedi generaCompenso).
     // Tutte le colonne, non un elenco: costiAnnullamento puo' non esistere ancora, e chiederla per
     // nome farebbe fallire lo scarico finche' lo script SQL non e' stato eseguito.
-    const [pr, vc, pe, ca, ut, gi] = await Promise.all([
+    const [pr, vc, pe, ca, ut, gi, pag] = await Promise.all([
       supabase.from('prenotazioni')
         .select('*')
         .in('stato', [STATO_PREN.CONFERMATO, STATO_PREN.ANNULLATA]).lte('data', oggiIso()).order('data', { ascending: false }),
@@ -240,6 +244,8 @@ function Compensi({ user }) {
       // Si riprova senza, e tutti i compensi continuano a passare da Elabora rimborsi come prima.
       leggiAnagrafiche(),
       supabase.from('giochi').select('id, nome'),
+      // Paginata: i pagamenti crescono più in fretta delle prenotazioni e Supabase tronca in silenzio.
+      leggiTutte(() => supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data').order('id')),
     ]);
     setCaricamentoPartite(false);
     if (pr.error || vc.error || pe.error || ca.error) { console.error(pr.error || vc.error || pe.error || ca.error); return; }
@@ -252,7 +258,21 @@ function Compensi({ user }) {
     setCampi(ca.data || []);
     setAnagrafiche(ut.data || []);
     setGiochi(gi.data || []);
+    setPagamenti(Array.isArray(pag) ? pag : (pag?.data || []));
   };
+
+  const contantiPerPartita = useMemo(() => {
+    const m = {};
+    pagamenti.filter(pg => pg.contanti && pg.ritirato_da).forEach(pg => {
+      const k = `${pg.riferimento}|${pg.ritirato_da}`;
+      m[k] = (m[k] || 0) + (parseFloat(pg.importo) || 0);
+    });
+    return m;
+  }, [pagamenti]);
+  const contantiDi = useCallback((operatoreId, partitaId) => contantiPerPartita[`${partitaId}|${operatoreId}`] || 0, [contantiPerPartita]);
+  const contantiTotaliDi = useCallback((op) => op.giornate
+    .flatMap(g => g.blocchi.flatMap(b => b.partite))
+    .reduce((s, x) => s + contantiDi(op.id, x.partita.id), 0), [contantiDi]);
 
   // Anche gli indicatori leggono i periodi, quindi devono far scattare lo scarico: senza,
   // chi apre la scheda senza passare dalla gestione vedrebbe zero e crederebbe di non aver pagato.
@@ -844,6 +864,7 @@ function Compensi({ user }) {
             <th style={{ padding: '8px 10px' }}>Pacchetto · Gioco</th>
             <th style={{ padding: '8px 10px' }}>Location</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '58px' }}>Ore</th>
+            <th style={{ padding: '8px 10px', textAlign: 'right', width: '88px' }} title="Incassi che il cliente ha versato in contanti a questo bubbler">Contanti</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '80px' }}>Compenso</th>
             <th style={{ padding: '8px 10px', textAlign: 'right', width: '78px' }}>Rettifica</th>
             <th style={{ padding: '8px 10px', textAlign: 'center', width: '86px' }}>Recensione</th>
@@ -899,6 +920,11 @@ function Compensi({ user }) {
                       <td style={{ padding: '7px 10px', color: '#666' }}>{etichettaPartita(x.partita.pacchettoNome, nomeGiocoPerId[x.partita.giocoId]) || '—'}</td>
                       <td style={{ padding: '7px 10px', color: '#666' }}>{locationDi(x.partita)}</td>
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>{ore(x.oreAttribuite)}</td>
+                      {/* Non entra nei totali del compenso: sono soldi del cliente che stanno in
+                          tasca al bubbler, non qualcosa che gli dobbiamo. */}
+                      <td style={{ padding: '7px 10px', textAlign: 'right', color: contantiDi(op.id, x.partita.id) > 0 ? '#166534' : '#ccc' }}>
+                        {contantiDi(op.id, x.partita.id) > 0 ? `💶 ${euro(contantiDi(op.id, x.partita.id))}` : '—'}
+                      </td>
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>{euro(x.compenso)}</td>
 
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>
@@ -975,6 +1001,7 @@ function Compensi({ user }) {
                     </td>
                     <td style={{ padding: '7px 10px', textAlign: 'right', color: '#ccc' }}>—</td>
                     <td style={{ padding: '7px 10px', textAlign: 'right', color: '#ccc' }}>—</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', color: '#ccc' }}>—</td>
                     <td style={{ padding: '7px 10px', textAlign: 'right' }}>{v.tipo === 'rettifica' ? euro(v.importo) : <span style={{ color: '#ccc' }}>—</span>}</td>
                     <td style={{ padding: '7px 10px', textAlign: 'center', color: '#ccc' }}>—</td>
                     <td style={{ padding: '7px 10px', textAlign: 'right' }}>{v.tipo === 'spesa' ? euro(v.importo) : <span style={{ color: '#ccc' }}>—</span>}</td>
@@ -995,7 +1022,7 @@ function Compensi({ user }) {
                 {righePartite.length === 0 && vociGiornata.length === 0 && (
                   <tr>
                     <td style={{ padding: '7px 10px' }}><strong>{dataBreve(g.data)}</strong></td>
-                    <td colSpan="11" style={{ padding: '7px 10px', color: '#999' }}>Giornata senza partite né voci</td>
+                    <td colSpan="12" style={{ padding: '7px 10px', color: '#999' }}>Giornata senza partite né voci</td>
                   </tr>
                 )}
 
@@ -1007,6 +1034,9 @@ function Compensi({ user }) {
           <tr style={{ borderTop: '2px solid #333', background: '#f5f8fa' }}>
             <td style={{ padding: '10px', fontWeight: 'bold' }} colSpan="6">Totale {op.nome || nomeOperatore(op.id)}</td>
             <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{ore(op.ore)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: '#166534' }}>
+              {contantiTotaliDi(op) > 0 ? euro(contantiTotaliDi(op)) : <span style={{ color: '#ccc' }}>—</span>}
+            </td>
             <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compensoOrario)}</td>
             <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.totaleRettifiche)}</td>
             <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold' }}>{euro(op.totaleRecensioni)}</td>
@@ -1366,6 +1396,12 @@ function Compensi({ user }) {
 
       {currentView === "daconsuntivare" && (
         <>
+          {/* Promemoria di un lavoro aperto: i contanti ritirati dai bubbler si vedono (colonna
+              Contanti e totale in testata) ma non si regolano ancora -- non si scalano dal compenso
+              né si segnano come restituiti. Finché manca, chi consuntiva deve saperlo. */}
+          <div style={{ margin: '12px 0', padding: '10px 14px', borderRadius: '6px', border: '1px solid #dc2626', background: '#fee2e2', color: '#991b1b', fontWeight: 'bold', fontSize: '0.9rem' }}>
+            ⚠️ Manca da fare: gestione contanti
+          </div>
           <p className="descrizione-pagina">
             Tutto quello che resta da consuntivare, operatore per operatore, calcolato dalle partite confermate.
             Spunta le recensioni, aggiungi spese e correzioni, poi consuntiva: da quel momento i valori si congelano
@@ -1435,6 +1471,13 @@ function Compensi({ user }) {
                           {/* Solo il totale: la scomposizione in compenso, recensioni e spese sta
                               nella tabella che si apre qui sotto, e ripeterla in testata
                               raddoppiava le cifre da leggere per arrivare allo stesso numero. */}
+                          {/* Quello che ha gia' in tasca, accanto a quello che gli dobbiamo: sono
+                              due numeri che si guardano insieme quando si decide quanto versargli. */}
+                          {contantiTotaliDi(op) > 0 && (
+                            <span title="Incassi in contanti che ha ritirato dai clienti: non sono un compenso" style={{ color: '#166534' }}>
+                              💶 <strong>{euro(contantiTotaliDi(op))}</strong> in mano
+                            </span>
+                          )}
                           <span><strong>{euro(op.compenso + op.spese)}</strong> da pagare</span>
                           <button
                             type="button"
