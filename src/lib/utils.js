@@ -251,10 +251,36 @@ export const anagraficaFatturazioneAPosto = (p) => senzaFatturaDaEmettere(p) || 
 // porta ancora dietro un "in attesa" che non significa niente — nessuno pagherà mai zero euro.
 // Qui si corregge in lettura, così quelle vecchie non restano col banner rosso e la conferma
 // bloccata finché qualcuno non le risalva.
-export const statoIncassoDi = (p) => {
+// La data di oggi in ISO, per chi non ce l'ha già sottomano.
+const isoDiOggi = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// I contanti di una partita non ancora giocata non sono un incasso: sono soldi che qualcuno dovrà
+// farsi dare sul posto. Diventano "in mano all'operatore" solo a evento concluso.
+export const contantiDaRitirareDi = (p, oggiIso = isoDiOggi()) =>
+  fineEventoDi(p) >= oggiIso ? contantiIncassatiDi(p) : 0;
+
+// Quanto è davvero entrato: pagamenti e voucher, meno i contanti che nessuno ha ancora ritirato.
+// Quelli non sono soldi in cassa né in tasca a un operatore: sono una promessa per il giorno
+// dell'evento, e contarli come incassati fa dire "saldato" a una partita che non ha ancora visto
+// un euro.
+export const incassatoDi = (p, oggiIso = isoDiOggi()) =>
+  (p?.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0)
+  + (parseFloat(p?.voucherValore) || 0)
+  - contantiDaRitirareDi(p, oggiIso);
+
+export const statoIncassoDi = (p, oggiIso = isoDiOggi()) => {
   if (p?.statoPagamento === 'compensazione') return p.statoPagamento;
-  const incassato = (p?.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0) + (parseFloat(p?.voucherValore) || 0);
+  const daRitirare = contantiDaRitirareDi(p, oggiIso);
+  const incassato = (p?.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0)
+    + (parseFloat(p?.voucherValore) || 0) - daRitirare;
   if ((parseFloat(p?.prezzoVendita) || 0) <= 0.01) return incassato > 0 ? 'saldato' : 'omaggio';
+  // Finché i contanti non sono stati ritirati la partita non è saldata, per quanto tutto il resto
+  // sia a posto: dire "saldato" su soldi che nessuno ha ancora in mano è la cosa più sbagliata
+  // che questa casella possa fare.
+  if (daRitirare > 0) return 'da ritirare';
   return p?.statoPagamento;
 };
 
