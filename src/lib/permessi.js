@@ -1,22 +1,35 @@
+// --- FAMIGLIE DEL MENU MODULI ---
+// Il menu laterale raggruppa i moduli per famiglia, in quest'ordine. Una famiglia senza moduli
+// visibili per l'utente non compare: Operatività, per esempio, accoglierà anche le spese.
+export const GRUPPI_MODULI = [
+  { id: 'vendita', label: 'Vendita' },
+  { id: 'operativita', label: 'Operatività' },
+  { id: 'amministrazione', label: 'Amministrazione' },
+  { id: 'altro', label: 'Altro' },
+];
+
 // --- REGISTRO MODULI (metadati per sidebar e tab "Moduli" di Impostazioni) ---
+// L'ordine segue le famiglie del menu, e decide anche su quale modulo si atterra dopo l'accesso:
+// il primo che l'utente può vedere.
 export const MODULI_REGISTRY = [
-  { id: 'preventivatore', label: 'Preventivatore', icon: 'preventivatore' },
-  { id: 'voucher', label: 'Voucher', icon: 'voucher' },
-  { id: 'prenotazioni', label: 'Prenotazioni', icon: 'prenotazioni' },
-  { id: 'disponibilita', label: 'Disponibilità', icon: 'disponibilita' },
-  // Si chiama Cruscotto, ma l'id resta 'costiricavi': e' la chiave con cui i permessi dei ruoli
-  // sono gia' salvati a database, e cambiarla toglierebbe l'accesso a chi ce l'ha senza dire niente.
-  { id: 'costiricavi', label: 'Cruscotto', icon: 'cruscotto' },
+  { id: 'preventivatore', label: 'Preventivatore', icon: 'preventivatore', gruppo: 'vendita' },
+  { id: 'voucher', label: 'Voucher', icon: 'voucher', gruppo: 'vendita' },
+  { id: 'prenotazioni', label: 'Prenotazioni', icon: 'prenotazioni', gruppo: 'vendita' },
+  { id: 'disponibilita', label: 'Disponibilità', icon: 'disponibilita', gruppo: 'operativita' },
   // Quello che e' davvero successo dopo il preventivo: fatture, fornitori, campi e compensi dei
   // bubbler. Qui arriveranno anche i servizi.
-  { id: 'consuntivazione', label: 'Consuntivazione', icon: 'consuntivazione' },
+  { id: 'consuntivazione', label: 'Consuntivazione', icon: 'consuntivazione', gruppo: 'amministrazione' },
+  // Si chiama Cruscotto, ma l'id resta 'costiricavi': e' la chiave con cui i permessi dei ruoli
+  // sono gia' salvati a database, e cambiarla toglierebbe l'accesso a chi ce l'ha senza dire niente.
+  { id: 'costiricavi', label: 'Cruscotto', icon: 'cruscotto', gruppo: 'amministrazione' },
   // La cassa del centro sportivo Albatros: chiusure serali, spese, listino del bar e dei campi.
-  { id: 'albatros', label: 'Albatros', icon: 'albatros' },
+  // È un'altra attività, non una funzione di BFM: per questo sta in Altro.
+  { id: 'albatros', label: 'Albatros', icon: 'albatros', gruppo: 'altro' },
   // Le anagrafiche sono la base da cui leggono listino e prenotazioni, ma non sono lavoro
-  // quotidiano: stanno in fondo perché l'ordine di questo registro decide anche su quale modulo si
-  // atterra dopo l'accesso, e chi entra deve trovarsi al lavoro, non in una pagina di configurazione.
+  // quotidiano: stanno in fondo, così chi entra si trova al lavoro e non in una pagina di
+  // configurazione.
   // Si chiama Anagrafiche, ma l'id resta 'catalogo': è la chiave già salvata nei permessi dei ruoli.
-  { id: 'catalogo', label: 'Anagrafiche', icon: 'anagrafiche' },
+  { id: 'catalogo', label: 'Anagrafiche', icon: 'anagrafiche', gruppo: 'altro' },
 ];
 
 // --- REGISTRO SCHEDE/SOTTOSCHEDE PER MODULO (usato per costruire la matrice permessi in Impostazioni > Ruoli) ---

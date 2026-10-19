@@ -10,7 +10,7 @@ import Disponibilita from './moduli/disponibilita/Disponibilita';
 import Consuntivazione from './moduli/consuntivazione/Consuntivazione';
 import Albatros from './moduli/albatros/Albatros';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
-import { MODULI_REGISTRY, moduloVisibile } from './lib/permessi';
+import { MODULI_REGISTRY, GRUPPI_MODULI, moduloVisibile } from './lib/permessi';
 import { haAccesso, emailDiAccesso, LUNGHEZZA_MINIMA_PASSWORD } from './lib/utils';
 import Icona from './components/Icona';
 
@@ -311,16 +311,25 @@ function App() {
           <button className="sidebar-chiudi" onClick={() => setSidebarAperta(false)}>✕</button>
         </div>
         <nav className="sidebar-nav">
-          {moduliVisibili.map(m => (
-            <button
-              key={m.id}
-              className={`sidebar-voce ${currentModule === m.id ? 'active' : ''}`}
-              onClick={() => cambiaModulo(m.id)}
-            >
-              <span className="sidebar-icona"><Icona nome={m.icon} /></span> {m.label}
-              {moduliConfig[m.id] && <span className="badge-sp">SP</span>}
-            </button>
-          ))}
+          {GRUPPI_MODULI.map(g => {
+            const moduliDelGruppo = moduliVisibili.filter(m => m.gruppo === g.id);
+            if (moduliDelGruppo.length === 0) return null;
+            return (
+              <div key={g.id} className="sidebar-gruppo">
+                <div className="sidebar-gruppo-titolo">{g.label}</div>
+                {moduliDelGruppo.map(m => (
+                  <button
+                    key={m.id}
+                    className={`sidebar-voce ${currentModule === m.id ? 'active' : ''}`}
+                    onClick={() => cambiaModulo(m.id)}
+                  >
+                    <span className="sidebar-icona"><Icona nome={m.icon} /></span> {m.label}
+                    {moduliConfig[m.id] && <span className="badge-sp">SP</span>}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </nav>
         <div className="sidebar-footer">
           {isAdmin && (
