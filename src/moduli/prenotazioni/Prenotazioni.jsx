@@ -5,12 +5,13 @@ import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, 
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi } from '../../lib/campi'
-import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO } from '../../lib/costanti'
+import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO, categoriaAnnullamentoDi } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { formaNome, formaLuogo, formaRagioneSociale, formaEmail, formaCodice, formaTelefono } from '../../lib/maiuscole'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
 import SuggerimentoEmail from '../../components/SuggerimentoEmail'
+import DialogoAnnullamento from '../../components/DialogoAnnullamento'
 
 // Il centro di ricavo non sta piu' qui: viaggia sul gioco, a catalogo. Un pacchetto dice la
 // modalita' di vendita, e la modalita' non ha un centro di ricavo suo.
@@ -374,6 +375,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   const [prenSelezionata, setPrenSelezionata] = useState(null);
   const [prenConferma, setPrenConferma] = useState(null); // prenotazione di cui preparare la mail di conferma da copiare
   const [formCostiAnnullamento, setFormCostiAnnullamento] = useState(null); // { p, scelte: [] } -- quali costi restano su un'annullata
+  const [dialogoAnnullamento, setDialogoAnnullamento] = useState(null); // { p, nuovoStato, spiegazione } -- il perche' di un annullamento
   const [confermaInglese, setConfermaInglese] = useState(false);
   const [confermaCopiata, setConfermaCopiata] = useState(false);
   const [riepilogoData, setRiepilogoData] = useState(() => new Date());
@@ -990,7 +992,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const tornaInGioco = p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA;
     await supabase.from('prenotazioni')
       .update(tornaInGioco
-        ? { stato: nuovoStato, motivoAnnullamento: null, ...(p.costiAnnullamento ? { costiAnnullamento: null } : {}) }
+        ? { stato: nuovoStato, motivoAnnullamento: null, ...(p.categoriaAnnullamento ? { categoriaAnnullamento: null } : {}), ...(p.costiAnnullamento ? { costiAnnullamento: null } : {}) }
         : { stato: nuovoStato })
       .eq('id', p.id);
     fetchTutto();
@@ -1009,18 +1011,26 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // Il motivo non e' un di piu': lo stato dice che la partita non si fa, il motivo dice se il
     // problema era del cliente, del campo o del tempo. Fra due mesi e' l'unica cosa che serve, e
     // se non lo si scrive adesso resta nella testa di chi ha cliccato. Per questo si chiede qui e
-    // senza saltarlo: annullare senza dire perche' non e' un'informazione, e' una riga in meno.
-    const motivo = (window.prompt(`${spiegazione}\n\nPerché viene annullata?`, p.motivoAnnullamento || '') || '').trim();
-    if (!motivo) return;
-    const { error } = await supabase.from('prenotazioni').update({ stato: nuovoStato, motivoAnnullamento: motivo }).eq('id', p.id);
-    if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}`); }
-    setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, stato: nuovoStato, motivoAnnullamento: motivo } : prev);
+    // senza saltarlo: la categoria e' obbligatoria, la nota racconta il caso (vedi DialogoAnnullamento).
+    setDialogoAnnullamento({ p, nuovoStato, spiegazione });
+  };
+  // Su una partita gia' annullata o posticipata si cambia solo il perche': lo stato resta quello, e
+  // i costi da sostenere non si richiedono (si erano gia' chiesti annullandola).
+  const cambiaMotivoAnnullamento = (p) => setDialogoAnnullamento({ p, nuovoStato: p.stato, modifica: true });
+
+  const confermaAnnullamento = async ({ categoria, nota }) => {
+    const { p, nuovoStato, modifica } = dialogoAnnullamento;
+    const modifiche = { stato: nuovoStato, categoriaAnnullamento: categoria, motivoAnnullamento: nota || null };
+    const { error } = await supabase.from('prenotazioni').update(modifiche).eq('id', p.id);
+    if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}\n\nServe lo script sql/categoria_annullamento.sql.`); }
+    setDialogoAnnullamento(null);
+    setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, ...modifiche } : prev);
     fetchTutto();
     // Senza incasso non c'e' ricavo, ma un costo puo' esserci lo stesso: il campo che chiede
     // l'affitto, il rinfresco gia' pronto, gli operatori gia' sul posto. E' raro, e proprio per
     // questo si chiede adesso: dopo nessuno se lo ricorda. Una posticipata no: si giochera', e i
     // costi arriveranno con lei. Se la partita non ha niente che possa costare, non si chiede.
-    if (nuovoStato === STATO_PREN.ANNULLATA && costiPossibiliAnnullamento(p).length > 0) {
+    if (!modifica && nuovoStato === STATO_PREN.ANNULLATA && costiPossibiliAnnullamento(p).length > 0) {
       setFormCostiAnnullamento({ p: { ...p, stato: nuovoStato }, scelte: p.costiAnnullamento || [] });
     }
   };
@@ -1179,7 +1189,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     p.voucherCodice ? `voucher ${p.voucherCodice} (€${(parseFloat(p.voucherValore) || 0).toFixed(2)})` : null,
                     ...(p.pagamenti || []).map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${formattaDataGGMMAAAA(pg.data)}`)
                   ].filter(Boolean).join(', ') || 'nessuno'}</div>
-                  {p.motivoAnnullamento && <div><span style={{ color: '#94a3b8' }}>Motivo </span><em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
+                  {(categoriaAnnullamentoDi(p) || p.motivoAnnullamento) && <div><span style={{ color: '#94a3b8' }}>Motivo </span>{categoriaAnnullamentoDi(p) && <strong style={{ color: '#991b1b' }}>{categoriaAnnullamentoDi(p).etichetta}{p.motivoAnnullamento ? ' · ' : ''}</strong>}<em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
                   {p.stato === STATO_PREN.ANNULLATA && costiPossibiliAnnullamento(p).length > 0 && (
                     <div>
                       <span style={{ color: '#94a3b8' }}>Costi da sostenere </span>
@@ -1201,9 +1211,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                   {(p.stato === STATO_PREN.FORSE || p.stato === STATO_PREN.CONFERMATO) && (
                     <button type="button" className="btn-icon-action danger" title="Annulla la prenotazione" onClick={() => annullaPrenotazione(p)}><Icona nome="annulla" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {(p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA) && (
+                  {(p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA) && (<>
+                    <button type="button" className="btn-icon-action" title={categoriaAnnullamentoDi(p) ? "Cambia il motivo dell'annullamento" : "Scegli la categoria dell'annullamento"} onClick={() => cambiaMotivoAnnullamento(p)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
                     <button type="button" className="btn-icon-action" title="Rimetti in FORSE" onClick={() => cambiaStatoPren(p, STATO_PREN.FORSE)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
-                  )}
+                  </>)}
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => caricaPrenotazione(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
                   {!p.googleCalendarSync && (
                     <button type="button" className="btn-icon-action" title="Aggiungi a Google Calendar" onClick={() => apriGoogleCalendar(p)}><Icona nome="calendario" size={16} style={{ marginRight: 0 }} /></button>
@@ -3067,7 +3078,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     {prenSelezionata.tipoRinfresco && <>🍽️ Rinfresco: {prenSelezionata.tipoRinfresco}{prenSelezionata.numeroPartecipanti ? ` · ${prenSelezionata.numeroPartecipanti} pers` : ''}<br /></>}
                     {prenSelezionata.partecipantiEffettivi ? <>👥 Partecipanti: {prenSelezionata.partecipantiEffettivi}<br /></> : null}
                     {prenSelezionata.etaMedia && <>🎂 Età media: {prenSelezionata.etaMedia}<br /></>}
-                    {prenSelezionata.motivoAnnullamento && <><span style={{ color: '#991b1b' }}>🚫 <em>{prenSelezionata.motivoAnnullamento}</em></span><br /></>}
+                    {(categoriaAnnullamentoDi(prenSelezionata) || prenSelezionata.motivoAnnullamento) && <><span style={{ color: '#991b1b' }}>🚫 {categoriaAnnullamentoDi(prenSelezionata) && <strong>{categoriaAnnullamentoDi(prenSelezionata).etichetta}{prenSelezionata.motivoAnnullamento ? ' · ' : ''}</strong>}<em>{prenSelezionata.motivoAnnullamento}</em></span><br /></>}
                     {prenSelezionata.note && <>📝 <em>{prenSelezionata.note}</em><br /></>}
                     {contantiDaRitirareDi(prenSelezionata, oggiIso) > 0 && (
                       <><span style={{ color: '#b45309', fontWeight: 'bold' }}>💶 DA RITIRARE €{contantiDaRitirareDi(prenSelezionata, oggiIso).toFixed(2)} IN CONTANTI{nomiRitiroContanti(prenSelezionata) ? ' · ' + nomiRitiroContanti(prenSelezionata) : ''}</span><br /></>
@@ -3084,6 +3095,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     <button className="btn-modifica-inline" title="Apri" style={{ padding: '8px 12px' }} onClick={() => { caricaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>📂</button>
                     {prenSelezionata.stato === STATO_PREN.FORSE && <button className="btn-conferma" disabled={senzaIncasso(prenSelezionata) && !puoConfermareSenzaIncasso} title={senzaIncasso(prenSelezionata) ? (puoConfermareSenzaIncasso ? "Conferma senza incasso (da amministratore)" : "Serve almeno un acconto per confermare") : "Conferma (prepara mail al cliente)"} style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.CONFERMATO); setPrenSelezionata(null); }}>✔️</button>}
                     {(prenSelezionata.stato === STATO_PREN.FORSE || prenSelezionata.stato === STATO_PREN.CONFERMATO) && <button className="btn-elimina-prev" title="Annulla la prenotazione" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { annullaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>🚫</button>}
+                    {(prenSelezionata.stato === STATO_PREN.ANNULLATA || prenSelezionata.stato === STATO_PREN.POSTICIPATA) && <button className="btn-modifica-inline" title="Motivo dell'annullamento" style={{ padding: '8px 12px' }} onClick={() => { cambiaMotivoAnnullamento(prenSelezionata); setPrenSelezionata(null); }}>✏️</button>}
                     {(prenSelezionata.stato === STATO_PREN.ANNULLATA || prenSelezionata.stato === STATO_PREN.POSTICIPATA) && <button className="btn-ripristina" title="Rimetti in FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.FORSE); setPrenSelezionata(null); }}>↩️</button>}
                     {prenSelezionata.stato === STATO_PREN.CONFERMATO && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.FORSE); setPrenSelezionata(null); }}>↩️</button>}
                     <button className="btn-modifica-inline" title={prenSelezionata.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '8px 12px' }} onClick={() => apriGoogleCalendar(prenSelezionata)}>📅</button>
@@ -3304,6 +3316,17 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       )}
 
       {/* ANTEPRIMA CONFERMA DA COPIARE (invio manuale via Gmail, con formattazione HTML) */}
+      {dialogoAnnullamento && (
+        <DialogoAnnullamento
+          titolo={`${dialogoAnnullamento.modifica ? 'Motivo dell\'annullamento di' : 'Annulla'} ${dialogoAnnullamento.p.id}${dialogoAnnullamento.p.nominativo ? ` · ${dialogoAnnullamento.p.nominativo}` : ''}`}
+          spiegazione={dialogoAnnullamento.spiegazione}
+          iniziale={{ categoria: dialogoAnnullamento.p.categoriaAnnullamento, nota: dialogoAnnullamento.p.motivoAnnullamento }}
+          etichettaConferma={dialogoAnnullamento.modifica ? 'Salva' : dialogoAnnullamento.nuovoStato === STATO_PREN.POSTICIPATA ? 'Posticipa' : 'Annulla la prenotazione'}
+          onConferma={confermaAnnullamento}
+          onChiudi={() => setDialogoAnnullamento(null)}
+        />
+      )}
+
       {formCostiAnnullamento && (() => {
         const { p, scelte } = formCostiAnnullamento;
         const cambia = (id) => setFormCostiAnnullamento(f => ({ ...f, scelte: f.scelte.includes(id) ? f.scelte.filter(x => x !== id) : [...f.scelte, id] }));

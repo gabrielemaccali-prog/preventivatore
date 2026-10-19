@@ -67,6 +67,43 @@ export const ETICHETTA_STATO_VOUCHER = Object.freeze({
 });
 export const etichettaStatoVoucher = etichettaDa(ETICHETTA_STATO_VOUCHER);
 
+// Perche' una prenotazione o un preventivo si annulla -- colonna "categoriaAnnullamento" di entrambe
+// le tabelle. Il motivo scritto a mano resta come nota (colonna "motivoAnnullamento"): la categoria
+// serve a contare, la nota a ricordare il caso. L'elenco viene dalla lettura dei primi 184
+// annullamenti, ed e' in ordine di frequenza, perche' chi annulla trovi prima le voci piu' comuni.
+//   fuoriStatistiche  non era una richiesta vera: non si conta da nessuna parte
+//   nonPerso          il cliente ha comprato altro da noi: annullato si', perso no
+//   notaObbligatoria  la categoria da sola non dice niente
+export const CATEGORIA_ANNULLAMENTO = Object.freeze({
+  NESSUNA_RISPOSTA: 'nessuna_risposta',
+  PREZZO: 'prezzo',
+  EVENTO_ANNULLATO: 'evento_annullato',
+  RIPENSAMENTO: 'ripensamento',
+  ALTERNATIVA: 'alternativa',
+  PARTECIPANTI: 'partecipanti',
+  NON_DISPONIBILE: 'non_disponibile',
+  ALTRA_FORMULA: 'altra_formula',
+  NON_VALIDA: 'non_valida',
+  ALTRO: 'altro',
+});
+export const CATEGORIE_ANNULLAMENTO = Object.freeze([
+  { id: CATEGORIA_ANNULLAMENTO.NESSUNA_RISPOSTA, etichetta: 'Nessuna risposta', descrizione: 'Il cliente non risponde più a mail e telefonate, oppure è sparito dopo la richiesta.' },
+  { id: CATEGORIA_ANNULLAMENTO.PREZZO, etichetta: 'Prezzo / budget', descrizione: 'Troppo caro o fuori budget, anche quando ha trovato qualcuno che costa meno.' },
+  { id: CATEGORIA_ANNULLAMENTO.EVENTO_ANNULLATO, etichetta: 'Evento annullato dal cliente', descrizione: 'La festa o l\'evento non si fa più, o slitta a data da destinarsi: manca l\'occasione, non la nostra offerta.' },
+  { id: CATEGORIA_ANNULLAMENTO.RIPENSAMENTO, etichetta: 'Ripensamento del cliente', descrizione: 'Non è più interessato o ha cambiato idea, senza dire perché.' },
+  { id: CATEGORIA_ANNULLAMENTO.ALTERNATIVA, etichetta: 'Scelta un\'alternativa', descrizione: 'L\'evento si fa, ma con un\'altra attività o organizzandosi da soli.' },
+  { id: CATEGORIA_ANNULLAMENTO.PARTECIPANTI, etichetta: 'Partecipanti insufficienti', descrizione: 'Non si è raggiunto il numero di giocatori necessario.' },
+  { id: CATEGORIA_ANNULLAMENTO.NON_DISPONIBILE, etichetta: 'Data, orario o centro non disponibili', descrizione: 'Non avevamo la data, l\'orario, il gioco o il centro che il cliente voleva.' },
+  { id: CATEGORIA_ANNULLAMENTO.ALTRA_FORMULA, etichetta: 'Passato a un\'altra nostra formula', descrizione: 'Non ha preso questa offerta ma ha comprato altro da noi, come una partita nei centri o un gioco solo. Non conta come perso.', nonPerso: true },
+  { id: CATEGORIA_ANNULLAMENTO.NON_VALIDA, etichetta: 'Richiesta non valida', descrizione: 'Test, doppione, sola richiesta di informazioni o form compilato per errore. Resta fuori dalle statistiche.', fuoriStatistiche: true },
+  { id: CATEGORIA_ANNULLAMENTO.ALTRO, etichetta: 'Altro', descrizione: 'Nessuna delle precedenti: scrivi il motivo nella nota.', notaObbligatoria: true },
+]);
+const CATEGORIA_PER_ID = Object.fromEntries(CATEGORIE_ANNULLAMENTO.map(c => [c.id, c]));
+// La categoria di una riga annullata, o null per gli annullamenti che non ne hanno ancora una.
+export const categoriaAnnullamentoDi = (p) => CATEGORIA_PER_ID[p?.categoriaAnnullamento] || null;
+export const ETICHETTA_NON_CLASSIFICATO = 'Non classificato';
+export const etichettaCategoriaAnnullamento = (p) => categoriaAnnullamentoDi(p)?.etichetta || ETICHETTA_NON_CLASSIFICATO;
+
 // Preventivi -- colonna preventivi.stato. AZIONE_RICHIESTA non si salva mai: si ricava dalla data
 // di emissione (vedi statoPreventivo nel preventivatore), ma a schermo si comporta come gli altri.
 export const STATO_PREVENTIVO = Object.freeze({

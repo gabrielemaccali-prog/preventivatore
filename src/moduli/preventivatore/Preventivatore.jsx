@@ -2,9 +2,10 @@ import { useState, useEffect, Fragment } from 'react'
 import html2pdf from 'html2pdf.js';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabaseClient';
-import { COSTO_AL_KM, GIORNI_VALIDITA_PREVENTIVO, STATO_PREVENTIVO, statoPreventivoDi, etichettaStatoPreventivo, classeBadgeStato } from '../../lib/costanti';
+import { COSTO_AL_KM, GIORNI_VALIDITA_PREVENTIVO, STATO_PREVENTIVO, statoPreventivoDi, etichettaStatoPreventivo, classeBadgeStato, categoriaAnnullamentoDi, etichettaCategoriaAnnullamento } from '../../lib/costanti';
 import { puoVedere } from '../../lib/permessi';
 import Icona from '../../components/Icona';
+import DialogoAnnullamento from '../../components/DialogoAnnullamento';
 import SuggerimentoEmail from '../../components/SuggerimentoEmail';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
 import { formaNome, formaEmail, formaTelefono } from '../../lib/maiuscole';
@@ -225,6 +226,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
   const [filtroMese, setFiltroMese] = useState(""); // mese dell'evento (aaaa-mm), "" = nessun filtro
   const [filtroSoloBFM, setFiltroSoloBFM] = useState(false); // solo preventivi con almeno un gioco da una sede BFM
   const [rigaEspansaId, setRigaEspansaId] = useState(null); // id preventivo con riga dettaglio espansa (Storico)
+  const [daAnnullare, setDaAnnullare] = useState(null); // il preventivo di cui si sta chiedendo il perche' dell'annullamento
 
   // --- 🔄 CARICAMENTO DATI DA SUPABASE AL LOGIN ---
   useEffect(() => {
@@ -277,6 +279,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
         mostraGiocoOfferta: p.mostraGiocoOfferta,
         giocoOfferta: p.giocoOfferta,
         noteInterne: p.noteInterne,
+        categoriaAnnullamento: p.categoriaAnnullamento,
         motivoAnnullamento: p.motivoAnnullamento
       }));
       setPreventiviSalvati(prevFormattati);
@@ -1111,22 +1114,26 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
   // Come per le prenotazioni: un preventivo annullato non si cancella, resta nello Storico con il
   // suo motivo. Il motivo si chiede sempre, perché "annullato" da solo non dice se il cliente ha
   // scelto un altro, non ha più risposto o ha rinunciato alla festa.
-  const annullaPreventivo = async (p) => {
-    const codice = typeof p.id === 'object' ? p.id.codice : p.id;
-    const risposta = window.prompt(`Il preventivo ${codice} passa ad ANNULLATO ed esce da Gestione (resta nello Storico).\n\nPerché viene annullato?`, p.motivoAnnullamento || '');
-    if (risposta === null) return;
-    const motivo = risposta.trim();
-    if (!motivo) return alert("Serve un motivo per annullare il preventivo.");
-    const { error } = await supabase.from('preventivi').update({ stato: STATO_PREVENTIVO.ANNULLATO, motivoAnnullamento: motivo }).eq('codice', codice);
-    if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}`); }
+  // La categoria si sceglie da un elenco, la nota racconta il caso (vedi DialogoAnnullamento).
+  const codiceDi = (p) => (typeof p.id === 'object' ? p.id.codice : p.id);
+  const annullaPreventivo = (p) => setDaAnnullare(p);
+  const confermaAnnullamentoPreventivo = async ({ categoria, nota }) => {
+    const { error } = await supabase.from('preventivi')
+      .update({ stato: STATO_PREVENTIVO.ANNULLATO, categoriaAnnullamento: categoria, motivoAnnullamento: nota || null })
+      .eq('codice', codiceDi(daAnnullare));
+    if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}\n\nServe lo script sql/categoria_annullamento.sql.`); }
+    setDaAnnullare(null);
     setRigaEspansaId(null);
     fetchData();
   };
 
   // Tornando in gioco il motivo dell'annullamento se ne va con lo stato. Riparte da Registrato:
   // se la validità è passata ricade da sé in "Azione richiesta".
-  const ripristinaPreventivo = async (codice) => {
-    const { error } = await supabase.from('preventivi').update({ stato: STATO_PREVENTIVO.REGISTRATO, motivoAnnullamento: null }).eq('codice', codice);
+  const ripristinaPreventivo = async (p) => {
+    const codice = codiceDi(p);
+    const { error } = await supabase.from('preventivi')
+      .update({ stato: STATO_PREVENTIVO.REGISTRATO, motivoAnnullamento: null, ...(p.categoriaAnnullamento ? { categoriaAnnullamento: null } : {}) })
+      .eq('codice', codice);
     if (error) { console.error(error); return alert(`Errore nel ripristino: ${error.message}`); }
     fetchData();
   };
@@ -1198,6 +1205,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
         CostoVivoTotale: (item.costoVivoTotale || 0).toFixed(2),
         KmAndata: (item.kmAndata || 0).toFixed(1),
         Stato: statoPreventivo(item),
+        CategoriaAnnullamento: item.stato === STATO_PREVENTIVO.ANNULLATO ? etichettaCategoriaAnnullamento(item) : "",
         MotivoAnnullamento: item.motivoAnnullamento || "",
         NoteInterne: item.noteInterne || ""
       };
@@ -2021,7 +2029,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155', minWidth: 0, flex: 1 }}>
                   <div><span style={{ color: '#94a3b8' }}>ID </span><strong>{codice}</strong></div>
-                  {p.motivoAnnullamento && <div><span style={{ color: '#94a3b8' }}>Motivo annullamento </span><em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
+                  {(categoriaAnnullamentoDi(p) || p.motivoAnnullamento) && <div><span style={{ color: '#94a3b8' }}>Motivo annullamento </span>{categoriaAnnullamentoDi(p) && <strong style={{ color: '#991b1b' }}>{categoriaAnnullamentoDi(p).etichetta}{p.motivoAnnullamento ? ' · ' : ''}</strong>}<em style={{ color: '#991b1b' }}>{p.motivoAnnullamento}</em></div>}
                   <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{p.destinazione || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Periodo </span>{p.periodo || '—'}</div>
                   {p.oraInizio && p.oraFine && (
@@ -2090,9 +2098,10 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
                   {(p.stato === STATO_PREVENTIVO.REGISTRATO || p.stato === STATO_PREVENTIVO.CONFERMATO) && (
                     <button type="button" className="btn-icon-action danger" title="Annulla il preventivo" onClick={() => annullaPreventivo(p)}><Icona nome="annulla" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {p.stato === STATO_PREVENTIVO.ANNULLATO && (
-                    <button type="button" className="btn-icon-action" title="Ripristina: torna fra i registrati" onClick={() => ripristinaPreventivo(codice)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
-                  )}
+                  {p.stato === STATO_PREVENTIVO.ANNULLATO && (<>
+                    <button type="button" className="btn-icon-action" title={categoriaAnnullamentoDi(p) ? "Cambia il motivo dell'annullamento" : "Scegli la categoria dell'annullamento"} onClick={() => annullaPreventivo(p)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                    <button type="button" className="btn-icon-action" title="Ripristina: torna fra i registrati" onClick={() => ripristinaPreventivo(p)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                  </>)}
                   {/* La prenotazione la crea il modulo Prenotazioni: qui si va solo a aprirne una nuova
                       con questo preventivo già collegato. Manca a chi il modulo non lo vede. */}
                   {p.stato === STATO_PREVENTIVO.CONFERMATO && onTrasformaInPrenotazione && (
@@ -3018,6 +3027,17 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
             {renderFormPreventivo()}
           </div>
         </div>
+      )}
+
+      {daAnnullare && (
+        <DialogoAnnullamento
+          titolo={`${daAnnullare.stato === STATO_PREVENTIVO.ANNULLATO ? 'Motivo dell\'annullamento di' : 'Annulla'} ${codiceDi(daAnnullare)}${daAnnullare.nomeReferente ? ` · ${daAnnullare.nomeReferente}` : ''}`}
+          spiegazione={daAnnullare.stato === STATO_PREVENTIVO.ANNULLATO ? null : "Il preventivo passa ad Annullato ed esce da Gestione; resta nello Storico e si può ripristinare."}
+          iniziale={{ categoria: daAnnullare.categoriaAnnullamento, nota: daAnnullare.motivoAnnullamento }}
+          etichettaConferma={daAnnullare.stato === STATO_PREVENTIVO.ANNULLATO ? 'Salva' : 'Annulla il preventivo'}
+          onConferma={confermaAnnullamentoPreventivo}
+          onChiudi={() => setDaAnnullare(null)}
+        />
       )}
     </>
   )

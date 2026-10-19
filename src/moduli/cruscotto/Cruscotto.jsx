@@ -6,6 +6,7 @@ import { etichettaPartita, etichettaGiochiBreve, formattaDataGGMMAAAA, estraiDat
 import {
   STATO_PREN, etichettaStatoPren, classeBadgeStato, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO,
   costiAnnullamentoDi, generaCompenso, STATO_PREVENTIVO, statoPreventivoDi, GIORNI_VALIDITA_PREVENTIVO,
+  categoriaAnnullamentoDi, etichettaCategoriaAnnullamento, ETICHETTA_NON_CLASSIFICATO,
 } from '../../lib/costanti'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
@@ -87,8 +88,11 @@ const inizioSettimana = (d) => { const x = new Date(d); const g = x.getDay(); x.
 const dataLocale = (iso) => { const [a, m, g] = String(iso).split('-').map(Number); return new Date(a, (m || 1) - 1, g || 1); };
 
 const ESITO = { VINTO: 'vinto', PERSO: 'perso', APERTO: 'aperto' };
+// null = fuori dal conto: un annullato che non era una richiesta vera, o che e' passato a un'altra
+// nostra formula, non e' ne' vinto ne' perso.
 const esitoDi = (p) => {
   const stato = statoPreventivoDi(p);
+  if (stato === STATO_PREVENTIVO.ANNULLATO && annullatoMaNonPerso(p)) return null;
   if (stato === STATO_PREVENTIVO.CONFERMATO || stato === STATO_PREVENTIVO.PRENOTATO) return ESITO.VINTO;
   if (stato === STATO_PREVENTIVO.ANNULLATO || stato === STATO_PREVENTIVO.AZIONE_RICHIESTA) return ESITO.PERSO;
   return ESITO.APERTO;
@@ -96,28 +100,26 @@ const esitoDi = (p) => {
 
 const formattaEuro = (v) => `€${(+v || 0).toFixed(2)}`;
 
-// Il motivo di un annullamento e' testo libero, e lo stesso motivo arriva scritto in modi diversi:
-// "Meteo", "meteo ", "Meteo.". Per contarli insieme si confronta una chiave senza maiuscole, spazi
-// doppi e punteggiatura in fondo; come nome del gruppo si tiene la forma scritta piu' spesso.
-// Chi non ha motivo (gli annullamenti di prima che lo si chiedesse) fa gruppo a se', in fondo.
-const SENZA_MOTIVO = 'Senza motivo scritto';
-const chiaveMotivo = (testo) => String(testo || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[\s.,;:!]+$/, '');
-const raggruppaMotivi = (righe, valoreDi = () => 0) => {
+// Gli annullamenti contati per categoria (vedi CATEGORIE_ANNULLAMENTO). Chi non ne ha una -- un
+// annullamento fatto prima delle categorie e non ancora classificato -- fa gruppo a se', in fondo,
+// perche' si veda quanto resta da sistemare.
+const raggruppaPerCategoria = (righe, valoreDi = () => 0) => {
   const gruppi = {};
   righe.forEach(r => {
-    const testo = String(r.motivoAnnullamento || '').trim().replace(/\s+/g, ' ');
-    const k = chiaveMotivo(testo);
-    const g = (gruppi[k] = gruppi[k] || { chiave: k, n: 0, valore: 0, forme: {}, righe: [] });
+    const cat = categoriaAnnullamentoDi(r);
+    const k = cat?.id || '';
+    const g = (gruppi[k] = gruppi[k] || { chiave: k, categoria: cat, n: 0, valore: 0, righe: [] });
     g.n++; g.valore += valoreDi(r); g.righe.push(r);
-    if (testo) g.forme[testo] = (g.forme[testo] || 0) + 1;
   });
   return Object.values(gruppi)
-    .map(g => ({
-      ...g,
-      nome: g.chiave ? Object.entries(g.forme).sort((a, b) => b[1] - a[1])[0][0] : SENZA_MOTIVO,
-      varianti: Object.keys(g.forme).length,
-    }))
+    .map(g => ({ ...g, nome: g.categoria?.etichetta || ETICHETTA_NON_CLASSIFICATO, descrizione: g.categoria?.descrizione || 'Annullamenti senza categoria: vanno classificati.' }))
     .sort((a, b) => (a.chiave === '') - (b.chiave === '') || b.n - a.n || b.valore - a.valore);
+};
+// Annullato si', ma non perso: una richiesta che non era vera, o un cliente passato a un'altra
+// nostra formula. Restano nell'elenco ma fuori dal valore perso e dalla conversione.
+const annullatoMaNonPerso = (p) => {
+  const cat = categoriaAnnullamentoDi(p);
+  return !!(cat && (cat.fuoriStatistiche || cat.nonPerso));
 };
 
 // Nella colonna in pila il ricavo non e' una barra: e' l'altezza delle due messe insieme. Il tooltip
@@ -290,7 +292,7 @@ function Cruscotto({ user }) {
       supabase.from('op_voci').select('*'),
       supabase.from('op_periodi').select('*'),
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
-      supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, periodo, mostraComeOpzioni, totaleVendita, costoVivoTotale, destinazione, nomeReferente, motivoAnnullamento'),
+      supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, periodo, mostraComeOpzioni, totaleVendita, costoVivoTotale, destinazione, nomeReferente, categoriaAnnullamento, motivoAnnullamento'),
       supabase.from('fatture').select('riferimento, importo').eq('tipo', 'prenotazione'),
       supabase.from('voucher').select('codice, importo'),
       supabase.from('cons_periodi').select('controparte, controparte_id, righe'),
@@ -932,6 +934,7 @@ function Cruscotto({ user }) {
       : null;
     const nelPeriodo = preventivi.filter(p => {
       if (senzaOpzioni && p.mostraComeOpzioni) return false;
+      if (esitoDi(p) === null) return false;
       const data = dataPrevDi(p);
       if (!data) return false;
       if (annoPrevSel && data.slice(0, 4) !== annoPrevSel) return false;
@@ -1010,7 +1013,7 @@ function Cruscotto({ user }) {
       periodi: conRapporto(annoPrevSel ? perMese : Object.values(perAnno).sort((a, b) => a.periodo.localeCompare(b.periodo))),
       giochi: gruppi('gioco'),
       sedi: gruppi('sede'),
-      motivi: raggruppaMotivi(annullati),
+      motivi: raggruppaPerCategoria(annullati),
       scadutiSenzaRisposta,
       annullati: annullati.length,
     };
@@ -1026,8 +1029,11 @@ function Cruscotto({ user }) {
 
   // ====================== ANNULLATI (perche' le cose non si fanno) ======================
   // Due sottoschede, una per le partite e una per le offerte, con la stessa domanda: quanto si
-  // perde, e perche'. Il motivo oggi e' testo libero, quindi i gruppi sono le frasi scritte (vedi
-  // raggruppaMotivi): servono anche a capire quali categorie fisse avrebbe senso chiedere.
+  // perde, e perche'. Il perche' e' la categoria scelta annullando (CATEGORIE_ANNULLAMENTO); la
+  // nota scritta a mano accompagna la riga nell'elenco.
+  //
+  // Le richieste non valide restano nell'elenco ma fuori dalle percentuali, e con quelle passate a
+  // un'altra nostra formula fuori dal valore perso: annullate si', perse no.
   //
   // La data che conta e' quella della partita per le prenotazioni, quella di emissione per i
   // preventivi: il giorno dell'annullamento non e' scritto da nessuna parte.
@@ -1039,7 +1045,7 @@ function Cruscotto({ user }) {
   const [meseAnn, setMeseAnn] = useState("");
   const meseAnnSel = annoAnn ? meseAnn : "";
   const [statoAnn, setStatoAnn] = useState(""); // '' | ANNULLATA | POSTICIPATA, solo per le prenotazioni
-  const [motivoAnn, setMotivoAnn] = useState(null); // chiave del motivo scelto, null = tutti
+  const [motivoAnn, setMotivoAnn] = useState(null); // categoria scelta ('' = non classificati), null = tutte
 
   const dataAnnullatoDi = useCallback((p) => String((annullatiPren ? p.data : p.dataEmissione) || '').slice(0, 10), [annullatiPren]);
   const anniAnnullati = useMemo(() => {
@@ -1056,39 +1062,44 @@ function Cruscotto({ user }) {
       return true;
     });
     const perData = (a, b) => dataAnnullatoDi(b).localeCompare(dataAnnullatoDi(a));
+    const fuori = (p) => !!categoriaAnnullamentoDi(p)?.fuoriStatistiche;
+    const valore = annullatiPren ? nettoRicavo : (p) => parseFloat(p.totaleVendita) || 0;
+    const annullati = annullatiPren
+      ? nelPeriodo.filter(p => statoAnn ? p.stato === statoAnn : (p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA))
+      : nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO);
+    const motivi = raggruppaPerCategoria(annullati, valore);
+    const scelto = motivoAnn == null ? null : motivi.find(m => m.chiave === motivoAnn);
+    const comune = {
+      // Il totale su cui si calcolano le percentuali: le richieste non valide non c'erano davvero.
+      totale: nelPeriodo.filter(p => !fuori(p)).length,
+      annullati, motivi,
+      nonPersi: annullati.filter(annullatoMaNonPerso),
+      daClassificare: annullati.filter(p => !categoriaAnnullamentoDi(p)).length,
+      righe: (scelto ? scelto.righe : annullati).slice().sort(perData),
+    };
 
     if (annullatiPren) {
-      const annullate = nelPeriodo.filter(p => p.stato === STATO_PREN.ANNULLATA);
-      const posticipate = nelPeriodo.filter(p => p.stato === STATO_PREN.POSTICIPATA);
-      const inVista = statoAnn === STATO_PREN.ANNULLATA ? annullate : statoAnn === STATO_PREN.POSTICIPATA ? posticipate : [...annullate, ...posticipate];
-      const motivi = raggruppaMotivi(inVista, nettoRicavo);
-      const scelto = motivi.find(m => m.chiave === motivoAnn);
+      const annullate = annullati.filter(p => p.stato === STATO_PREN.ANNULLATA);
+      const posticipate = annullati.filter(p => p.stato === STATO_PREN.POSTICIPATA);
       return {
-        totale: nelPeriodo.length,
-        annullate, posticipate, motivi,
+        ...comune,
+        annullate: annullate.filter(p => !fuori(p)), posticipate: posticipate.filter(p => !fuori(p)),
         // La posticipata non e' un ricavo perso: l'acconto c'e' e la partita si rifara'. Persa e'
         // l'annullata, ed e' quella che si somma.
-        ricavoPerso: annullate.reduce((s, p) => s + nettoRicavo(p), 0),
+        ricavoPerso: annullate.filter(p => !annullatoMaNonPerso(p)).reduce((s, p) => s + nettoRicavo(p), 0),
         daRiprogrammare: posticipate.reduce((s, p) => s + nettoRicavo(p), 0),
         conCosti: annullate.filter(p => costiAnnullamentoDi(p).size > 0),
-        senzaMotivo: inVista.filter(p => !chiaveMotivo(p.motivoAnnullamento)).length,
-        righe: (scelto ? scelto.righe : inVista).slice().sort(perData),
       };
     }
 
-    const valore = (p) => parseFloat(p.totaleVendita) || 0;
-    const annullati = nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO);
-    const motivi = raggruppaMotivi(annullati, valore);
-    const scelto = motivi.find(m => m.chiave === motivoAnn);
+    const persi = annullati.filter(p => !annullatoMaNonPerso(p));
     return {
-      totale: nelPeriodo.length,
-      annullati, motivi,
-      valorePerso: annullati.reduce((s, p) => s + valore(p), 0),
-      // Gli scaduti senza risposta sono persi anche loro, ma un motivo non ce l'hanno ancora: chi li
-      // annulla glielo da'. Si contano per dire quanti potrebbero ancora arrivare in questa lista.
+      ...comune,
+      persi,
+      valorePerso: persi.reduce((s, p) => s + valore(p), 0),
+      // Gli scaduti senza risposta sono persi anche loro, ma una categoria non ce l'hanno ancora: chi
+      // li annulla gliela da'. Si contano per dire quanti potrebbero ancora arrivare in questa lista.
       azioneRichiesta: nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.AZIONE_RICHIESTA).length,
-      senzaMotivo: annullati.filter(p => !chiaveMotivo(p.motivoAnnullamento)).length,
-      righe: (scelto ? scelto.righe : annullati).slice().sort(perData),
     };
   }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi, annoAnn, meseAnnSel, statoAnn, motivoAnn]);
 
@@ -1097,18 +1108,18 @@ function Cruscotto({ user }) {
     const righe = annullatiPren
       ? statAnnullati.righe.map(p => ({
         Codice: p.id, 'Data evento': p.data, Nominativo: p.nominativo || '', Partita: etichettaDi(p),
-        Stato: etichettaStatoPren(p.stato), Motivo: p.motivoAnnullamento || '',
+        Stato: etichettaStatoPren(p.stato), Categoria: etichettaCategoriaAnnullamento(p), Nota: p.motivoAnnullamento || '',
         'Costi da sostenere': [...costiAnnullamentoDi(p)].map(c => ETICHETTA_COSTO_ANNULLAMENTO[c] || c).join(', '),
         'Ricavo netto': +nettoRicavo(p).toFixed(2),
       }))
       : statAnnullati.righe.map(p => ({
         Codice: p.codice, Emissione: String(p.dataEmissione || '').slice(0, 10), Evento: estraiDateDaPeriodo(p.periodo).inizio || '',
-        Referente: p.nomeReferente || '', Destinazione: p.destinazione || '', Motivo: p.motivoAnnullamento || '',
+        Referente: p.nomeReferente || '', Destinazione: p.destinazione || '', Categoria: etichettaCategoriaAnnullamento(p), Nota: p.motivoAnnullamento || '',
         Valore: +(parseFloat(p.totaleVendita) || 0).toFixed(2),
       }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(righe), 'Elenco');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(statAnnullati.motivi.map(m => ({ Motivo: m.nome, Quanti: m.n, Valore: +m.valore.toFixed(2) }))), 'Motivi');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(statAnnullati.motivi.map(m => ({ Categoria: m.nome, Quanti: m.n, Valore: +m.valore.toFixed(2) }))), 'Categorie');
     XLSX.writeFile(wb, `Cruscotto_${annullatiPren ? 'Prenotazioni' : 'Preventivi'}_annullati${annoAnn ? `_${annoAnn}` : ''}.xlsx`);
   };
 
@@ -1723,7 +1734,7 @@ function Cruscotto({ user }) {
               Quanto si offre e quanto si porta a casa. Un preventivo è <strong>vinto</strong> quando il cliente lo conferma (o è già diventato una
               prenotazione), <strong>perso</strong> quando viene annullato o scade senza risposta oltre i {GIORNI_VALIDITA_PREVENTIVO} giorni di validità,
               <strong> aperto</strong> finché quella validità dura. La conversione si calcola solo su quelli con una risposta, vinti su vinti più persi:
-              gli aperti non sono ancora né l'uno né l'altro.
+              gli aperti non sono ancora né l'uno né l'altro. Fuori dal conto restano gli annullati come richiesta non valida o passati a un'altra nostra formula.
             </p>
 
             <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
@@ -1849,7 +1860,7 @@ function Cruscotto({ user }) {
             <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '16px' }}>
               <h3 style={{ margin: '0 0 10px 0', fontSize: '1rem' }}>Perché si perdono</h3>
               <p style={{ margin: '0 0 12px 0', fontSize: '0.82rem', color: '#64748b' }}>
-                {statPreventivi.annullati} annullati con un motivo scritto, {statPreventivi.scadutiSenzaRisposta} scaduti senza risposta del cliente.
+                {statPreventivi.annullati} annullati, divisi per categoria; {statPreventivi.scadutiSenzaRisposta} scaduti senza risposta del cliente, ancora da annullare.
               </p>
               {statPreventivi.motivi.length === 0
                 ? <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: 0 }}>Nessun preventivo annullato nel periodo.</p>
@@ -1885,6 +1896,12 @@ function Cruscotto({ user }) {
         const massimo = Math.max(1, ...s.motivi.map(m => m.n));
         const sceltoNome = s.motivi.find(m => m.chiave === motivoAnn)?.nome;
         const cella = { padding: '8px 10px', verticalAlign: 'top' };
+        const motivoInCella = (p) => (
+          <>
+            <strong style={{ color: categoriaAnnullamentoDi(p) ? '#991b1b' : '#a16207' }}>{etichettaCategoriaAnnullamento(p)}</strong>
+            {p.motivoAnnullamento && <div style={{ color: '#64748b', fontStyle: 'italic', fontSize: '0.8rem' }}>{p.motivoAnnullamento}</div>}
+          </>
+        );
         const intestazioni = annullatiPren
           ? ['Data', 'Codice', 'Nominativo', 'Partita', 'Stato', 'Motivo', 'Costi da sostenere', 'Ricavo']
           : ['Emissione', 'Codice', 'Evento', 'Referente', 'Destinazione', 'Motivo', 'Valore'];
@@ -1905,9 +1922,9 @@ function Cruscotto({ user }) {
               </div>
               <p className="descrizione-pagina">
                 {annullatiPren
-                  ? <>Una partita senza incasso si <strong>annulla</strong> e il suo ricavo è perso; con un acconto si <strong>posticipa</strong> e resta da riprogrammare. Il motivo si scrive a mano: qui i motivi uguali sono contati insieme anche se scritti con maiuscole o punteggiatura diverse.</>
-                  : <>I preventivi chiusi dal cliente o da noi, con il motivo scritto annullandoli. Quelli scaduti senza risposta non sono qui finché qualcuno non li annulla. I motivi uguali sono contati insieme anche se scritti con maiuscole o punteggiatura diverse.</>}
-                {' '}Clicca un motivo per vedere solo le sue righe.
+                  ? <>Una partita senza incasso si <strong>annulla</strong> e il suo ricavo è perso; con un acconto si <strong>posticipa</strong> e resta da riprogrammare. Il perché è la categoria scelta annullando; la nota scritta a mano è nell'elenco in fondo.</>
+                  : <>I preventivi chiusi dal cliente o da noi, con la categoria scelta annullandoli. Quelli scaduti senza risposta non sono qui finché qualcuno non li annulla.</>}
+                {' '}Le richieste non valide restano fuori dalle percentuali; con quelle passate a un'altra nostra formula, anche dal valore perso. Clicca una categoria per vedere solo le sue righe.
               </p>
 
               <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
@@ -1941,25 +1958,27 @@ function Cruscotto({ user }) {
                 {annullatiPren ? (<>
                   {riquadro('Annullate', s.annullate.length, `${percentuale(quota(s.annullate.length))} delle ${s.totale} partite del periodo`, '#b91c1c')}
                   {riquadro('Posticipate', s.posticipate.length, `${percentuale(quota(s.posticipate.length))} delle partite, ${formattaEuro(s.daRiprogrammare)} da riprogrammare`, '#a16207')}
-                  {riquadro('Ricavo perso', formattaEuro(s.ricavoPerso), 'quello delle annullate', '#b91c1c')}
+                  {riquadro('Ricavo perso', formattaEuro(s.ricavoPerso), 'quello delle annullate davvero perse', '#b91c1c')}
                   {riquadro('Con costi da sostenere', s.conCosti.length, 'annullate ma con campo, rinfresco o operatori da pagare')}
-                  {riquadro('Motivi diversi', s.motivi.filter(m => m.chiave).length, s.senzaMotivo > 0 ? `${s.senzaMotivo} senza motivo scritto` : 'tutte con un motivo scritto')}
+                  {riquadro('Non perse', s.nonPersi.length, 'richieste non valide o passate a un\'altra nostra formula')}
+                  {s.daClassificare > 0 && riquadro('Da classificare', s.daClassificare, 'annullamenti senza categoria', '#a16207')}
                 </>) : (<>
-                  {riquadro('Annullati', s.annullati.length, `${percentuale(quota(s.annullati.length))} dei ${s.totale} preventivi emessi`, '#b91c1c')}
-                  {riquadro('Valore annullato', formattaEuro(s.valorePerso), s.annullati.length > 0 ? `${formattaEuro(s.valorePerso / s.annullati.length)} in media` : 'nessun annullato', '#b91c1c')}
+                  {riquadro('Persi', s.persi.length, `${percentuale(quota(s.persi.length))} dei ${s.totale} preventivi emessi`, '#b91c1c')}
+                  {riquadro('Valore perso', formattaEuro(s.valorePerso), s.persi.length > 0 ? `${formattaEuro(s.valorePerso / s.persi.length)} in media` : 'nessun preventivo perso', '#b91c1c')}
+                  {riquadro('Non persi', s.nonPersi.length, 'richieste non valide o passate a un\'altra nostra formula')}
                   {riquadro('Scaduti senza risposta', s.azioneRichiesta, 'ancora da sentire o da annullare', '#a16207')}
-                  {riquadro('Motivi diversi', s.motivi.filter(m => m.chiave).length, s.senzaMotivo > 0 ? `${s.senzaMotivo} senza motivo scritto` : 'tutti con un motivo scritto')}
+                  {s.daClassificare > 0 && riquadro('Da classificare', s.daClassificare, 'annullati senza categoria', '#a16207')}
                 </>)}
               </div>
 
               <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '16px' }}>
-                <h3 style={{ margin: '0 0 10px 0', fontSize: '1rem' }}>Motivi</h3>
+                <h3 style={{ margin: '0 0 10px 0', fontSize: '1rem' }}>Perché</h3>
                 {s.motivi.length === 0
                   ? <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: 0 }}>Niente di annullato nel periodo.</p>
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.72rem', color: '#94a3b8', textTransform: 'uppercase', padding: '0 8px 4px' }}>
-                        <div style={{ flex: 1 }}>Motivo</div>
+                        <div style={{ flex: 1 }}>Categoria</div>
                         <div style={{ width: '160px' }} />
                         <div style={{ width: '40px', textAlign: 'right' }}>Quanti</div>
                         <div style={{ width: '44px', textAlign: 'right' }}>%</div>
@@ -1971,10 +1990,14 @@ function Cruscotto({ user }) {
                         const totaleMotivi = s.motivi.reduce((t, x) => t + x.n, 0);
                         return (
                           <div key={m.chiave || '_'} onClick={() => setMotivoAnn(attivo ? null : m.chiave)}
-                            title={m.varianti > 1 ? `Scritto in ${m.varianti} modi diversi: ${Object.keys(m.forme).join(' · ')}` : m.nome}
                             style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem', padding: '6px 8px', borderRadius: '6px', cursor: 'pointer', background: attivo ? '#fef2f2' : 'transparent', outline: attivo ? '1px solid #fecaca' : 'none' }}>
-                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: m.chiave ? '#0f172a' : '#94a3b8', fontStyle: m.chiave ? 'normal' : 'italic' }}>
-                              {m.nome}{m.varianti > 1 && <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}> ({m.varianti} varianti)</span>}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ color: m.chiave ? '#0f172a' : '#a16207', fontWeight: 600 }}>
+                                {m.nome}
+                                {m.categoria?.fuoriStatistiche && <span style={{ marginLeft: '6px', fontSize: '0.7rem', fontWeight: 'normal', color: '#64748b', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0 5px' }}>fuori statistiche</span>}
+                                {m.categoria?.nonPerso && <span style={{ marginLeft: '6px', fontSize: '0.7rem', fontWeight: 'normal', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: '4px', padding: '0 5px' }}>non perso</span>}
+                              </div>
+                              <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>{m.descrizione}</div>
                             </div>
                             <div style={{ width: '160px', display: 'flex' }}>
                               <div style={{ width: `${(nAnn / massimo) * 160}px`, height: '10px', background: COLORE_COSTO, borderRadius: nAnn === m.n ? '5px' : '5px 0 0 5px' }} />
@@ -2024,7 +2047,7 @@ function Cruscotto({ user }) {
                             <td style={cella}><strong>{p.nominativo}</strong></td>
                             <td style={cella}>{etichettaDi(p)}</td>
                             <td style={cella}><span className={`badge-stato badge-mini ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
-                            <td style={{ ...cella, color: p.motivoAnnullamento ? '#991b1b' : '#94a3b8', fontStyle: 'italic' }}>{p.motivoAnnullamento || SENZA_MOTIVO}</td>
+                            <td style={cella}>{motivoInCella(p)}</td>
                             <td style={{ ...cella, color: '#64748b' }}>{[...costiAnnullamentoDi(p)].map(c => ETICHETTA_COSTO_ANNULLAMENTO[c] || c).join(', ') || '—'}</td>
                             <td style={{ ...cella, textAlign: 'right' }}>{formattaEuro(nettoRicavo(p))}</td>
                           </tr>
@@ -2036,7 +2059,7 @@ function Cruscotto({ user }) {
                             <td style={{ ...cella, whiteSpace: 'nowrap' }}>{estraiDateDaPeriodo(p.periodo).inizio ? formattaDataGGMMAAAA(estraiDateDaPeriodo(p.periodo).inizio) : '—'}</td>
                             <td style={cella}><strong>{p.nomeReferente || '—'}</strong></td>
                             <td style={cella}>{p.destinazione || '—'}</td>
-                            <td style={{ ...cella, color: p.motivoAnnullamento ? '#991b1b' : '#94a3b8', fontStyle: 'italic' }}>{p.motivoAnnullamento || SENZA_MOTIVO}</td>
+                            <td style={cella}>{motivoInCella(p)}</td>
                             <td style={{ ...cella, textAlign: 'right' }}>{formattaEuro(parseFloat(p.totaleVendita) || 0)}</td>
                           </tr>
                         ))}
