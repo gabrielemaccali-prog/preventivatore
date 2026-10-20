@@ -1182,3 +1182,10 @@ input.valore-proposto {
 .mondo-albatros .sidebar-footer p { color: #a7f3d0; }
 .mondo-albatros .main-header { border-top: 4px solid #16a34a; }
 @media (max-width: 720px) { .marchio-testata { font-size: 1.1rem; padding-right: 8px; } }
+
+/* Campi di Albatros: la regola generale "input[type=text|date…]" (padding 12px, margin-top 5px)
+   vince su .albatros-campo e, nei campi alti 40px, lasciava al testo 14px: sul telefono, con la
+   scritta a 16px, il testo spariva. input.albatros-campo ha la stessa forza e sta dopo, quindi vince.
+   La scritta a 16px evita anche che iPhone ingrandisca la pagina quando si tocca un campo. */
+input.albatros-campo, select.albatros-campo { padding: 0 10px; margin: 0; font-size: 16px; line-height: normal; }
+input.albatros-campo.albatros-importo-grande { font-size: 1.25rem; }
