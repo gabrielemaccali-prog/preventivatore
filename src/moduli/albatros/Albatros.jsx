@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
-import Icona from '../../components/Icona'
 import Giornata from './Giornata'
 import StoricoChiusure from './StoricoChiusure'
 import Spese from './Spese'
@@ -10,27 +9,20 @@ import Configuratore from './Configuratore'
 import Cashflow from './Cashflow'
 import Incassi from './Incassi'
 import { giornataDiLavoro } from './calcolo'
+import { SCHEDE_ALBATROS } from './schede'
 
 // ============================================================
 // Albatros: la cassa del centro sportivo (due campi da calcetto e un bar).
 // Nella Giornata si toccano le voci del listino e a fine serata si chiude la cassa; Chiusure è
 // l'elenco delle giornate. Il listino nasce dalle voci scritte; le spese stanno a parte.
 // L'amministratore corregge e riapre; i ragazzi aggiungono.
+// Albatros è un mondo a sé: le sue schede sono le voci del menu laterale, e la scheda aperta la
+// sceglie App.jsx (scheda / onScheda).
 // ============================================================
 
-const SCHEDE = [
-  // La Giornata tiene l'id 'chiusure': è la chiave con cui i permessi dei ruoli sono già salvati.
-  { id: 'chiusure', label: 'Giornata', icona: 'chiusure' },
-  { id: 'storico', label: 'Chiusure', icona: 'storico' },
-  { id: 'spese', label: 'Spese', icona: 'spese' },
-  { id: 'incassi', label: 'Incassi', icona: 'indicatori' },
-  { id: 'listino', label: 'Listino', icona: 'listino' },
-  { id: 'configuratore', label: 'Configuratore', icona: 'configuratore' },
-  { id: 'cashflow', label: 'Cashflow', icona: 'cashflow' },
-];
 
-function Albatros({ user }) {
-  const [scheda, setScheda] = useState('chiusure');
+function Albatros({ user, scheda, onScheda }) {
+  const setScheda = onScheda;
   // La giornata aperta nella scheda Giornata: la sceglie anche l'elenco delle chiusure.
   const [giorno, setGiorno] = useState(giornataDiLavoro);
   const [listino, setListino] = useState([]);
@@ -65,7 +57,7 @@ function Albatros({ user }) {
     });
   }, []);
 
-  const schedeVisibili = SCHEDE.filter(s => puoVedere(user, 'albatros', s.id));
+  const schedeVisibili = SCHEDE_ALBATROS.filter(s => puoVedere(user, 'albatros', s.id));
   if (schedeVisibili.length === 0) return null;
   const attiva = (schedeVisibili.find(s => s.id === scheda) || schedeVisibili[0]).id;
   const puoCorreggere = !!user.isAdmin;
@@ -73,12 +65,6 @@ function Albatros({ user }) {
 
   return (
     <>
-      <nav className="modulo-subnav no-print subnav-segmented">
-        {schedeVisibili.map(s => (
-          <button key={s.id} className={`nav-btn ${attiva === s.id ? 'active' : ''}`} onClick={() => setScheda(s.id)}><Icona nome={s.icona} />{s.label}</button>
-        ))}
-      </nav>
-
       {schemaMancante && (
         <p className="albatros-avviso">
           Le tabelle di Albatros non esistono ancora: esegui <strong>sql/albatros.sql</strong> nell'SQL Editor di Supabase. ({schemaMancante})

@@ -23,14 +23,23 @@ export const MODULI_REGISTRY = [
   // sono gia' salvati a database, e cambiarla toglierebbe l'accesso a chi ce l'ha senza dire niente.
   { id: 'costiricavi', label: 'Cruscotto', icon: 'cruscotto', gruppo: 'amministrazione' },
   // La cassa del centro sportivo Albatros: chiusure serali, spese, listino del bar e dei campi.
-  // È un'altra attività, non una funzione di BFM: per questo sta in Altro.
-  { id: 'albatros', label: 'Albatros', icon: 'albatros', gruppo: 'altro' },
+  // È un'altra attività, non una funzione di BFM: vive nel suo mondo (vedi MONDI).
+  { id: 'albatros', label: 'Albatros', icon: 'albatros', gruppo: 'altro', mondo: 'albatros' },
   // Le anagrafiche sono la base da cui leggono listino e prenotazioni, ma non sono lavoro
   // quotidiano: stanno in fondo, così chi entra si trova al lavoro e non in una pagina di
   // configurazione.
   // Si chiama Anagrafiche, ma l'id resta 'catalogo': è la chiave già salvata nei permessi dei ruoli.
   { id: 'catalogo', label: 'Anagrafiche', icon: 'anagrafiche', gruppo: 'altro' },
 ];
+
+// --- MONDI ---
+// BFM e Albatros sono due attività distinte: ognuna ha il suo menu e il suo aspetto, e chi le vede
+// entrambe passa dall'una all'altra col selettore in cima al menu. Un modulo senza "mondo" è di BFM.
+export const MONDI = [
+  { id: 'bfm', label: 'BFM' },
+  { id: 'albatros', label: 'Albatros' },
+];
+export const mondoDi = (moduloId) => MODULI_REGISTRY.find(m => m.id === moduloId)?.mondo || 'bfm';
 
 // --- REGISTRO SCHEDE/SOTTOSCHEDE PER MODULO (usato per costruire la matrice permessi in Impostazioni > Ruoli) ---
 export const SCHEDE_REGISTRY = {

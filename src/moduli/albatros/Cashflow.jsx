@@ -5,7 +5,8 @@ import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   quadratura, euro, r2, num, nomeCategoria, giornataDiLavoro, etichettaEnte,
-  CAUSALI_PAGAMENTO, METODI_PAGAMENTO, etichettaCausale, etichettaMetodo, posizioneEnte, contantiAlbatros,
+  CAUSALI_PAGAMENTO, METODI_PAGAMENTO, etichettaCausale, etichettaMetodo, posizioneEnte, contantiAlbatros, contoAlbatros,
+  spesaDaPagare,
 } from './calcolo'
 
 // ============================================================
@@ -44,7 +45,8 @@ function movimentiDi(ente, chiusure, spese, pagamenti) {
   }
   pagamenti.filter(p => p.pagante === ente).forEach(p => righe.push({ data: p.data, importo: -r2(num(p.importo)), descrizione: `Pagamento a ${etichettaEnte(p.beneficiario)}: ${descriviPagamento(p)}`, tipo: 'pagamento', pagamento: p }));
   pagamenti.filter(p => p.beneficiario === ente).forEach(p => righe.push({ data: p.data, importo: r2(num(p.importo)), descrizione: `Da ${etichettaEnte(p.pagante)}: ${descriviPagamento(p)}`, tipo: 'ricevuto', pagamento: p }));
-  spese.filter(s => s.ente === ente).forEach(s => righe.push({ data: s.data, importo: -r2(num(s.importo)), descrizione: s.descrizione, tipo: 'spesa', spesa: s }));
+  // Le spese ancora da pagare non sono uscite: si contano a parte (vedi la cifra "Da pagare").
+  spese.filter(s => s.ente === ente && !spesaDaPagare(s)).forEach(s => righe.push({ data: s.data, importo: -r2(num(s.importo)), descrizione: ente === 'albatros' ? `${s.descrizione} · ${s.metodo === 'carta' ? 'carta' : 'contanti'}` : s.descrizione, tipo: 'spesa', spesa: s }));
   return righe.sort((a, b) => b.data.localeCompare(a.data) || a.importo - b.importo);
 }
 const sommaTipo = (mov, tipo) => r2(mov.filter(m => m.tipo === tipo).reduce((t, m) => t + m.importo, 0));
@@ -81,6 +83,7 @@ function Cashflow({ user, categorie, puoCorreggere }) {
   const daAttribuire = spese.filter(s => !s.ente);
   const ultimaConFondo = [...chiusure].filter(c => c.chiusa_il && c.fondo_lasciato != null).sort((a, b) => b.data.localeCompare(a.data))[0];
   const cassa = contantiAlbatros(chiusure, spese, pagamenti);
+  const conto = contoAlbatros(chiusure, spese, pagamenti);
   const posizione = attiva.ente === 'albatros' ? null : posizioneEnte(attiva.ente, spese, pagamenti);
   const beneficiari = BENEFICIARI[attiva.ente] || [];
   // La posizione di chi riceve il pagamento in corso: serve a proporre il rimborso.
@@ -142,7 +145,13 @@ function Cashflow({ user, categorie, puoCorreggere }) {
         <div className="albatros-cifre">
           {attiva.ente === 'albatros' ? (
             <>
-              <div className="albatros-cifra-saldo"><span>Saldo attuale</span><strong>{euro(mov.reduce((t, m) => t + m.importo, 0))}</strong><small>entrate − uscite</small></div>
+              <div className="albatros-cifra-saldo"><span>Saldo attuale</span><strong>{euro(mov.reduce((t, m) => t + m.importo, 0))}</strong><small>contanti in mano + conto</small></div>
+              <div><span>Contanti in mano</span><strong>{euro(cassa.inMano)}</strong><small>ritirati − spese e pagamenti in contanti</small></div>
+              <div><span>Conto (carta e POS)</span><strong>{euro(conto.saldo)}</strong><small>POS − spese con carta − pagamenti non in contanti</small></div>
+              {spese.some(spesaDaPagare) && (
+                <div><span>Da pagare</span><strong style={{ color: '#b45309' }}>{euro(spese.filter(spesaDaPagare).reduce((t, s) => t + num(s.importo), 0))}</strong>
+                  <small>{spese.filter(spesaDaPagare).length} spese non ancora pagate, fuori dal saldo</small></div>
+              )}
               <div><span>Incassi POS</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo(mov, 'pos'))}</strong><small>entrate</small></div>
               <div><span>Contanti ritirati</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo(mov, 'contanti'))}</strong><small>entrate, dalle chiusure</small></div>
               <div><span>Spese pagate</span><strong style={{ color: '#b91c1c' }}>{euro(-sommaTipo(mov, 'spesa'))}</strong><small>uscite</small></div>

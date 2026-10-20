@@ -3,9 +3,10 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
-  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, posizioneEnte, contantiAlbatros,
+  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare,
 } from './calcolo.js';
 
+const r2t = (n) => Math.round(n * 100) / 100;
 const esiti = [];
 const verifica = (caso, atteso, ottenuto) => {
   const ok = typeof atteso === 'number' ? Math.abs(ottenuto - atteso) < 0.005 : atteso === ottenuto;
@@ -85,6 +86,14 @@ const chiuseCF = [{ chiusa_il: 'x', pos: 100, contanti: 500 }, { chiusa_il: null
 verifica('contanti in mano: ritirati - spese Albatros - pagati in contanti', 0, contantiAlbatros(chiuseCF, speseEnti, pagati).inMano);
 verifica('contanti: le giornate aperte non contano', 500, contantiAlbatros(chiuseCF, speseEnti, pagati).ritirati);
 verifica('contanti: i pagamenti di BFM non toccano la cassa di Albatros', 400, contantiAlbatros(chiuseCF, speseEnti, pagati).pagatiInContanti);
+const speseMetodo = [{ ente: 'albatros', importo: 100, metodo: 'contanti' }, { ente: 'albatros', importo: 40, metodo: 'carta' }, { ente: 'albatros', importo: 10 }];
+verifica('spese: solo quelle in contanti (o senza metodo) toccano i contanti', 110, contantiAlbatros(chiuseCF, speseMetodo, []).speseAlbatros);
+verifica('conto: POS - spese con carta - pagamenti non in contanti', -940, contoAlbatros(chiuseCF, speseMetodo, pagati).saldo);
+const conDaPagare = [...speseMetodo, { ente: 'albatros', importo: 500, metodo: 'da_pagare' }];
+verifica('da pagare: non tocca i contanti', 110, contantiAlbatros(chiuseCF, conDaPagare, []).speseAlbatros);
+verifica('da pagare: non tocca il conto', 40, contoAlbatros(chiuseCF, conDaPagare, []).speseCarta);
+verifica('da pagare: riconosciuta', true, spesaDaPagare(conDaPagare[3]));
+verifica('contanti + conto = saldo', r2t(500 + 100 - 150 - 1400), r2t(contantiAlbatros(chiuseCF, speseMetodo, pagati).inMano + contoAlbatros(chiuseCF, speseMetodo, pagati).saldo));
 
 // ---------- chiusura di ieri fatta oggi ----------
 verifica('le 14 di oggi, ieri non chiusa: avvisa', true, forseChiusuraDiIeri('2026-10-18', '2026-10-18', 14, false));

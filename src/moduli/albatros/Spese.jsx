@@ -4,14 +4,15 @@ import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   nomeCategoria, idCategoriaScelta, ENTI, etichettaEnte, num, r2, euro, giornataDiLavoro, periodoIniziale, intervalloPeriodo,
-  dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, categorieDi, spesaDettagliabile,
+  dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, categorieDi, spesaDettagliabile, METODI_SPESA, spesaDaPagare, etichettaMetodoSpesa,
 } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 import SceltaCategoria from './SceltaCategoria'
 
 // ============================================================
 // Le uscite del centro, registrate solo qui: non entrano nella chiusura della serata. Ogni spesa
-// la paga uno dei tre enti (Albatros, BFM, Lama); se non si sa ancora resta "da attribuire" e
+// la paga uno dei tre enti (Albatros, BFM, Lama), e se la paga Albatros si dice se in contanti o con
+// carta (cambia quale saldo scende nel Cashflow), oppure che è ancora da pagare; se non si sa ancora resta "da attribuire" e
 // l'elenco la segnala. Attribuirla è riempire un campo vuoto: lo può fare chiunque.
 // I ragazzi possono solo aggiungere; modificare ed eliminare spetta all'amministratore.
 // Nuova spesa e modifica si fanno nello stesso overlay.
@@ -23,7 +24,7 @@ import SceltaCategoria from './SceltaCategoria'
 
 const leggiImporto = (v) => { const n = Number(String(v ?? '').trim().replace(',', '.')); return Number.isFinite(n) ? r2(n) : NaN; };
 const VOCE_VUOTA = { descrizione: '', importo: '', categoria: null };
-const SPESA_VUOTA = () => ({ id: null, data: giornataDiLavoro(), importo: '', descrizione: '', categoria: null, ente: '' });
+const SPESA_VUOTA = () => ({ id: null, data: giornataDiLavoro(), importo: '', descrizione: '', categoria: null, ente: '', metodo: 'contanti' });
 
 function Spese({ user, categorie, utenti, puoCorreggere }) {
   const [spese, setSpese] = useState([]);
@@ -62,9 +63,10 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   // filtroEnte: '' = tutte, 'nessuno' = da attribuire, altrimenti l'id dell'ente.
   const importo = (s) => (filtroCategoria ? importoInCategoria(s, vociPer[s.id], filtroCategoria === 'nessuna' ? null : Number(filtroCategoria)) : r2(num(s.importo)));
   const visibili = spese
-    .filter(s => !filtroEnte || (filtroEnte === 'nessuno' ? !s.ente : s.ente === filtroEnte))
+    .filter(s => !filtroEnte || (filtroEnte === 'nessuno' ? !s.ente : filtroEnte === 'dapagare' ? spesaDaPagare(s) : s.ente === filtroEnte))
     .filter(s => importo(s) > 0);
   const daAttribuire = spese.filter(s => !s.ente);
+  const daPagare = spese.filter(spesaDaPagare);
   const totale = (elenco) => r2(elenco.reduce((t, s) => t + importo(s), 0));
 
   const salva = async () => {
@@ -75,7 +77,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
     if (!importo || importo <= 0) return alert('Importo non valido.');
     const giaDettagliato = modulo.id ? dettaglioSpesa({ importo }, vociPer[modulo.id]).dettagliato : 0;
     if (importo < giaDettagliato) return alert(`Il dettaglio di questa spesa arriva già a ${euro(giaDettagliato)}: il totale non può essere più basso.`);
-    const record = { data: modulo.data, importo, descrizione, categoria_id: idCategoriaScelta(modulo.categoria, categorie, 'spesa'), ente: modulo.ente || null };
+    const record = { data: modulo.data, importo, descrizione, categoria_id: idCategoriaScelta(modulo.categoria, categorie, 'spesa'), ente: modulo.ente || null, metodo: modulo.ente === 'albatros' ? (modulo.metodo || 'contanti') : null };
     setInCorso(true);
     try {
       const { error } = modulo.id
@@ -97,9 +99,18 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
     carica();
   };
 
+  // Segnare pagata una spesa da pagare è come attribuirla: si riempie quello che mancava.
+  const segnaPagata = async (s, metodo) => {
+    if (!metodo) return;
+    const { error } = await supabase.from('albatros_spese').update({ metodo }).eq('id', s.id);
+    if (error) return alert(`Errore: ${error.message}`);
+    carica();
+  };
+
   const attribuisci = async (s, ente) => {
     if (!ente) return;
-    const { error } = await supabase.from('albatros_spese').update({ ente }).eq('id', s.id);
+    // Attribuita ad Albatros, è in contanti finché l'amministratore non dice altrimenti.
+    const { error } = await supabase.from('albatros_spese').update({ ente, metodo: ente === 'albatros' ? (s.metodo || 'contanti') : s.metodo }).eq('id', s.id);
     if (error) return alert(`Errore: ${error.message}`);
     carica();
   };
@@ -135,7 +146,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   };
 
   const modifica = (s) => {
-    setModulo({ id: s.id, data: s.data, importo: String(r2(s.importo)).replace('.', ','), descrizione: s.descrizione, categoria: String(s.categoria_id ?? ''), ente: s.ente || '' });
+    setModulo({ id: s.id, data: s.data, importo: String(r2(s.importo)).replace('.', ','), descrizione: s.descrizione, categoria: String(s.categoria_id ?? ''), ente: s.ente || '', metodo: s.metodo || 'contanti' });
   };
 
   return (
@@ -160,6 +171,10 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
           <button type="button" className={`albatros-chip albatros-chip-avviso ${filtroEnte === 'nessuno' ? 'attivo' : ''}`} style={{ alignSelf: 'flex-end' }}
             disabled={filtroEnte !== 'nessuno' && daAttribuire.length === 0} onClick={() => setFiltroEnte(filtroEnte === 'nessuno' ? '' : 'nessuno')}>
             Da attribuire ({daAttribuire.length})
+          </button>
+          <button type="button" className={`albatros-chip albatros-chip-avviso ${filtroEnte === 'dapagare' ? 'attivo' : ''}`} style={{ alignSelf: 'flex-end' }}
+            disabled={filtroEnte !== 'dapagare' && daPagare.length === 0} onClick={() => setFiltroEnte(filtroEnte === 'dapagare' ? '' : 'dapagare')}>
+            Da pagare ({daPagare.length})
           </button>
           <button type="button" className="btn-accent-inline albatros-bottone" style={{ alignSelf: 'flex-end' }} onClick={() => setModulo(SPESA_VUOTA())}>+ Nuova spesa</button>
           <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: '0.88rem' }}>
@@ -196,7 +211,13 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                     </td>
                     <td>{nomeCategoria(categorie, s.categoria_id)}</td>
                     <td onClick={(e) => e.stopPropagation()}>
-                      {s.ente ? etichettaEnte(s.ente) : (
+                      {s.ente ? <>{etichettaEnte(s.ente)}{s.ente === 'albatros' && (spesaDaPagare(s)
+                        ? <> <select value="" onChange={(e) => segnaPagata(s, e.target.value)} className="albatros-badge-select" title="Quando è pagata, scegli con cosa">
+                            <option value="">Da pagare</option>
+                            <option value="contanti">Pagata in contanti</option>
+                            <option value="carta">Pagata con carta</option>
+                          </select></>
+                        : <span className="albatros-tenue"> · {etichettaMetodoSpesa(s)}</span>)}</> : (
                         <select value="" onChange={(e) => attribuisci(s, e.target.value)} className="albatros-badge-select" title="Scegli chi l'ha pagata">
                           <option value="">Da attribuire</option>
                           {ENTI.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
@@ -277,6 +298,13 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                   {ENTI.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
                 </select>
               </label>
+              {modulo.ente === 'albatros' && (
+                <label className="albatros-etichetta">Pagata con
+                  <select value={modulo.metodo} onChange={(e) => setModulo({ ...modulo, metodo: e.target.value })} className="albatros-campo">
+                    {METODI_SPESA.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  </select>
+                </label>
+              )}
             </div>
             {!puoCorreggere && <p className="albatros-nota">Una spesa aggiunta non si può più cambiare né togliere: in caso di errore avvisa l'amministratore.</p>}
             <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>

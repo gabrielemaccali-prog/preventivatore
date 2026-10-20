@@ -10,7 +10,8 @@ import Disponibilita from './moduli/disponibilita/Disponibilita';
 import Consuntivazione from './moduli/consuntivazione/Consuntivazione';
 import Albatros from './moduli/albatros/Albatros';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
-import { MODULI_REGISTRY, GRUPPI_MODULI, moduloVisibile } from './lib/permessi';
+import { MODULI_REGISTRY, GRUPPI_MODULI, MONDI, moduloVisibile, mondoDi, puoVedere } from './lib/permessi';
+import { SCHEDE_ALBATROS } from './moduli/albatros/schede';
 import { haAccesso, emailDiAccesso, LUNGHEZZA_MINIMA_PASSWORD } from './lib/utils';
 import Icona from './components/Icona';
 
@@ -63,6 +64,12 @@ function App() {
   // modulo Prenotazioni appena montato, e poi si azzera.
   const [preventivoDaTrasformare, setPreventivoDaTrasformare] = useState(null);
   const [sidebarAperta, setSidebarAperta] = useState(false);
+  // --- MONDI: BFM e Albatros ---
+  // Nel mondo Albatros le voci del menu sono le schede di Albatros: quella aperta la tiene qui,
+  // insieme all'ultimo modulo di BFM, a cui si torna cambiando mondo. La scheda e il mondo si
+  // ricordano nel browser (comodità per chi usa sempre lo stesso: se non si può, si riparte da capo).
+  const [schedaAlbatros, setSchedaAlbatros] = useState(() => { try { return localStorage.getItem('albatros_scheda') || 'chiusure'; } catch { return 'chiusure'; } });
+  const [ultimoModuloBfm, setUltimoModuloBfm] = useState(null);
 
   // --- CONFIGURAZIONE MODULI (flag sperimentale, badge SP in sidebar) ---
   const [moduliConfig, setModuliConfig] = useState({});
@@ -122,7 +129,12 @@ function App() {
     const nuovoUser = datiSessione(u, await fetchRuolo(u.ruolo_id, u.ruolo));
     const moduloAncoraVisibile = modulo === 'impostazioni' ? nuovoUser.isAdmin : !!modulo && moduloVisibile(nuovoUser, modulo);
     setUser(nuovoUser);
-    setCurrentModule(moduloAncoraVisibile ? modulo : primoModuloVisibile(nuovoUser));
+    // Senza un modulo da riaprire, chi l'ultima volta stava in Albatros ci rientra.
+    let ultimoMondo = null;
+    try { ultimoMondo = localStorage.getItem('bfm_mondo'); } catch { /* niente da ricordare */ }
+    const atterraggio = ultimoMondo === 'albatros' && moduloVisibile(nuovoUser, 'albatros') ? 'albatros' : primoModuloVisibile(nuovoUser);
+    setCurrentModule(moduloAncoraVisibile ? modulo : atterraggio);
+
     fetchModuliConfig();
   }, [fetchRuolo, fetchModuliConfig]);
 
@@ -246,6 +258,25 @@ function App() {
     setSidebarAperta(false);
   };
 
+  const scegliSchedaAlbatros = (id) => {
+    setSchedaAlbatros(id);
+    try { localStorage.setItem('albatros_scheda', id); } catch { /* resta per questa sessione */ }
+    setSidebarAperta(false);
+  };
+
+  // Cambiando mondo si torna dove si era: in Albatros alla sua scheda, in BFM all'ultimo modulo.
+  const cambiaMondo = (mondo) => {
+    try { localStorage.setItem('bfm_mondo', mondo); } catch { /* resta per questa sessione */ }
+    if (mondo === 'albatros') {
+      if (mondoDi(currentModule) === 'bfm') setUltimoModuloBfm(currentModule);
+      setCurrentModule('albatros');
+      return;
+    }
+    const visibile = (id) => id === 'impostazioni' ? user.isAdmin : moduloVisibile(user, id);
+    const primoBfm = MODULI_REGISTRY.find(m => mondoDi(m.id) === 'bfm' && moduloVisibile(user, m.id))?.id || 'impostazioni';
+    setCurrentModule(ultimoModuloBfm && visibile(ultimoModuloBfm) ? ultimoModuloBfm : primoBfm);
+  };
+
   // Ripristino in corso: schermata vuota per un istante, invece del lampo della pagina di accesso
   if (ripristinoInCorso) return null;
 
@@ -297,22 +328,47 @@ function App() {
   const moduliVisibili = MODULI_REGISTRY.filter(m => moduloVisibile(user, m.id));
   const isAdmin = user.isAdmin;
   const IMPOSTAZIONI_VOCE = { id: 'impostazioni', label: 'Impostazioni', icon: 'impostazioni' };
+  // Il mondo in cui si è: Albatros quando è aperto il suo modulo, BFM per tutto il resto.
+  const mondo = currentModule === 'impostazioni' ? 'bfm' : mondoDi(currentModule);
+  const inAlbatros = mondo === 'albatros';
+  const mondiVisibili = MONDI.filter(w => (w.id === 'bfm'
+    ? isAdmin || moduliVisibili.some(m => mondoDi(m.id) === 'bfm')
+    : moduliVisibili.some(m => mondoDi(m.id) === w.id)));
+  const schedeAlbatros = SCHEDE_ALBATROS.filter(s => puoVedere(user, 'albatros', s.id));
+  const schedaAlbatrosAttiva = schedeAlbatros.find(s => s.id === schedaAlbatros) || schedeAlbatros[0];
   const moduloCorrente = currentModule === 'impostazioni'
     ? IMPOSTAZIONI_VOCE
-    : MODULI_REGISTRY.find(m => m.id === currentModule);
+    : inAlbatros
+      ? schedaAlbatrosAttiva && { label: schedaAlbatrosAttiva.label, icon: schedaAlbatrosAttiva.icona }
+      : MODULI_REGISTRY.find(m => m.id === currentModule);
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${inAlbatros ? 'mondo-albatros' : ''}`}>
       {/* --- SIDEBAR LATERALE (MENU MODULI) --- */}
       {sidebarAperta && <div className="sidebar-backdrop no-print" onClick={() => setSidebarAperta(false)}></div>}
       <aside className={`sidebar-moduli no-print ${sidebarAperta ? 'aperta' : ''}`}>
         <div className="sidebar-header">
-          <img src="/logo.png" alt="Logo" style={{ maxWidth: '110px', height: 'auto' }} />
+          {inAlbatros
+            ? <span className="marchio-albatros"><Icona nome="albatros" size={26} />Albatros</span>
+            : <img src="/logo.png" alt="Logo" style={{ maxWidth: '110px', height: 'auto' }} />}
           <button className="sidebar-chiudi" onClick={() => setSidebarAperta(false)}>✕</button>
         </div>
+        {mondiVisibili.length > 1 && (
+          <div className="selettore-mondo" role="tablist" aria-label="Mondo">
+            {mondiVisibili.map(w => (
+              <button key={w.id} type="button" role="tab" aria-selected={mondo === w.id}
+                className={mondo === w.id ? 'attivo' : ''} onClick={() => mondo !== w.id && cambiaMondo(w.id)}>{w.label}</button>
+            ))}
+          </div>
+        )}
         <nav className="sidebar-nav">
-          {GRUPPI_MODULI.map(g => {
-            const moduliDelGruppo = moduliVisibili.filter(m => m.gruppo === g.id);
+          {inAlbatros && schedeAlbatros.map(s => (
+            <button key={s.id} className={`sidebar-voce ${schedaAlbatrosAttiva?.id === s.id ? 'active' : ''}`} onClick={() => scegliSchedaAlbatros(s.id)}>
+              <span className="sidebar-icona"><Icona nome={s.icona} /></span> {s.label}
+            </button>
+          ))}
+          {!inAlbatros && GRUPPI_MODULI.map(g => {
+            const moduliDelGruppo = moduliVisibili.filter(m => m.gruppo === g.id && mondoDi(m.id) === 'bfm');
             if (moduliDelGruppo.length === 0) return null;
             return (
               <div key={g.id} className="sidebar-gruppo">
@@ -349,7 +405,9 @@ function App() {
       <header className="main-header no-print">
         <div className="header-brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button className="btn-hamburger" onClick={() => setSidebarAperta(true)} aria-label="Apri menu moduli">☰</button>
-          <img src="/logo.png" alt="Logo" style={{ height: '45px', width: 'auto', objectFit: 'contain' }} />
+          {inAlbatros
+            ? <span className="marchio-albatros marchio-testata"><Icona nome="albatros" size={24} />Albatros</span>
+            : <img src="/logo.png" alt="Logo" style={{ height: '45px', width: 'auto', objectFit: 'contain' }} />}
           <h1>{moduloCorrente && <Icona nome={moduloCorrente.icon} size={20} />} {moduloCorrente?.label}</h1>
         </div>
       </header>
@@ -382,7 +440,7 @@ function App() {
 
       {currentModule === "consuntivazione" && <Consuntivazione user={user} />}
 
-      {currentModule === "albatros" && <Albatros user={user} />}
+      {currentModule === "albatros" && <Albatros user={user} scheda={schedaAlbatrosAttiva?.id} onScheda={scegliSchedaAlbatros} />}
 
       {currentModule === "impostazioni" && isAdmin && (
         <Impostazioni

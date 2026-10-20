@@ -23,6 +23,10 @@ create table if not exists albatros_spese_righe (
 );
 create index if not exists albatros_spese_righe_spesa_idx on albatros_spese_righe (spesa_id);
 
-alter table albatros_spese_righe disable row level security;
+-- Chiusa a chi non è entrato, come tutte le tabelle (vedi sql/accesso_supabase_auth.sql).
+alter table albatros_spese_righe enable row level security;
+drop policy if exists app_accesso on albatros_spese_righe;
+create policy app_accesso on albatros_spese_righe for all to authenticated
+  using ((select riservato.puo_operare())) with check ((select riservato.puo_operare()));
 
 commit;

@@ -58,7 +58,11 @@ begin
   end if;
 end $$;
 
-alter table albatros_categorie disable row level security;
+-- Chiusa a chi non è entrato, come tutte le tabelle (vedi sql/accesso_supabase_auth.sql).
+alter table albatros_categorie enable row level security;
+drop policy if exists app_accesso on albatros_categorie;
+create policy app_accesso on albatros_categorie for all to authenticated
+  using ((select riservato.puo_operare())) with check ((select riservato.puo_operare()));
 
 commit;
 

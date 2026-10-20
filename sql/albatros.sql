@@ -93,6 +93,7 @@ create table if not exists albatros_spese (
   descrizione text not null check (btrim(descrizione) <> ''),
   categoria_id bigint references albatros_categorie(id) on delete restrict,
   ente text,
+  metodo text,                               -- spese di Albatros: contanti | carta | da_pagare
   creato_il timestamptz not null default now(),
   creato_da bigint references utenti(id) on update cascade on delete set null
 );
@@ -111,13 +112,36 @@ create table if not exists albatros_spese_righe (
 );
 create index if not exists albatros_spese_righe_spesa_idx on albatros_spese_righe (spesa_id);
 
--- Come le altre tabelle dell'app: la chiave anon deve poterle leggere e scrivere.
-alter table albatros_categorie disable row level security;
-alter table albatros_listino disable row level security;
-alter table albatros_chiusure disable row level security;
-alter table albatros_righe disable row level security;
-alter table albatros_spese disable row level security;
-alter table albatros_spese_righe disable row level security;
+-- Chiusa a chi non è entrato, come tutte le tabelle (vedi sql/accesso_supabase_auth.sql).
+alter table albatros_categorie enable row level security;
+drop policy if exists app_accesso on albatros_categorie;
+create policy app_accesso on albatros_categorie for all to authenticated
+  using ((select riservato.puo_operare())) with check ((select riservato.puo_operare()));
+-- Chiusa a chi non è entrato, come tutte le tabelle (vedi sql/accesso_supabase_auth.sql).
+alter table albatros_listino enable row level security;
+drop policy if exists app_accesso on albatros_listino;
+create policy app_accesso on albatros_listino for all to authenticated
+  using ((select riservato.puo_operare())) with check ((select riservato.puo_operare()));
+-- Chiusa a chi non è entrato, come tutte le tabelle (vedi sql/accesso_supabase_auth.sql).
+alter table albatros_chiusure enable row level security;
+drop policy if exists app_accesso on albatros_chiusure;
+create policy app_accesso on albatros_chiusure for all to authenticated
+  using ((select riservato.puo_operare())) with check ((select riservato.puo_operare()));
+-- Chiusa a chi non è entrato, come tutte le tabelle (vedi sql/accesso_supabase_auth.sql).
+alter table albatros_righe enable row level security;
+drop policy if exists app_accesso on albatros_righe;
+create policy app_accesso on albatros_righe for all to authenticated
+  using ((select riservato.puo_operare())) with check ((select riservato.puo_operare()));
+-- Chiusa a chi non è entrato, come tutte le tabelle (vedi sql/accesso_supabase_auth.sql).
+alter table albatros_spese enable row level security;
+drop policy if exists app_accesso on albatros_spese;
+create policy app_accesso on albatros_spese for all to authenticated
+  using ((select riservato.puo_operare())) with check ((select riservato.puo_operare()));
+-- Chiusa a chi non è entrato, come tutte le tabelle (vedi sql/accesso_supabase_auth.sql).
+alter table albatros_spese_righe enable row level security;
+drop policy if exists app_accesso on albatros_spese_righe;
+create policy app_accesso on albatros_spese_righe for all to authenticated
+  using ((select riservato.puo_operare())) with check ((select riservato.puo_operare()));
 
 commit;
 

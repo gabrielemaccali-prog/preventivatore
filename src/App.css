@@ -1161,3 +1161,24 @@ input.valore-proposto {
 .albatros-barra-incasso > div { height: 100%; border-radius: 0 4px 4px 0; }
 .albatros-incassi-voce td { background: #f8fafc; font-size: 0.82rem; padding-left: 36px !important; cursor: default; }
 .albatros-incassi tfoot td { padding: 8px 10px; border-top: 2px solid #e2e8f0; }
+
+/* --- MONDI: BFM e Albatros ---
+   Il selettore in cima al menu compare solo a chi vede entrambi. Il mondo Albatros ha il menu
+   verde campo e il suo marchio al posto del logo BFM. */
+.selettore-mondo { display: flex; gap: 4px; margin: 12px 15px 0; padding: 4px; background: rgba(255,255,255,0.08); border-radius: 10px; }
+.selettore-mondo button { flex: 1; padding: 8px 10px; background: transparent; color: #cbd5e1; border: none; border-radius: 7px; font-size: 0.9rem; font-weight: 700; cursor: pointer; }
+.selettore-mondo button:hover:not(.attivo) { background: rgba(255,255,255,0.08); color: #fff; }
+.selettore-mondo button.attivo { background: #fff; color: #0f172a; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+.marchio-albatros { display: inline-flex; align-items: center; gap: 8px; font-size: 1.35rem; font-weight: 800; color: #14532d; letter-spacing: -0.01em; }
+.marchio-albatros svg { color: #16a34a; margin-right: 0 !important; }
+.marchio-testata { padding-right: 14px; border-right: 1px solid #e2e8f0; }
+.mondo-albatros .sidebar-moduli { background: #052e16; }
+.mondo-albatros .sidebar-header { border-bottom-color: #14532d; }
+.mondo-albatros .sidebar-footer { border-top-color: #14532d; }
+.mondo-albatros .sidebar-voce { color: #d1fae5; }
+.mondo-albatros .sidebar-voce:hover { background: rgba(255,255,255,0.08); }
+.mondo-albatros .sidebar-voce.active { background: rgba(74,222,128,0.16); }
+.mondo-albatros .sidebar-voce.active::before { background: #4ade80; }
+.mondo-albatros .sidebar-footer p { color: #a7f3d0; }
+.mondo-albatros .main-header { border-top: 4px solid #16a34a; }
+@media (max-width: 720px) { .marchio-testata { font-size: 1.1rem; padding-right: 8px; } }

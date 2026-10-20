@@ -30,6 +30,10 @@ create table if not exists albatros_pagamenti (
 );
 create index if not exists albatros_pagamenti_beneficiario_idx on albatros_pagamenti (beneficiario, data);
 
-alter table albatros_pagamenti disable row level security;
+-- Chiusa a chi non è entrato, come tutte le tabelle (vedi sql/accesso_supabase_auth.sql).
+alter table albatros_pagamenti enable row level security;
+drop policy if exists app_accesso on albatros_pagamenti;
+create policy app_accesso on albatros_pagamenti for all to authenticated
+  using ((select riservato.puo_operare())) with check ((select riservato.puo_operare()));
 
 commit;
