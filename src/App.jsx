@@ -46,8 +46,9 @@ const datiSessione = (u, ruolo) => ({
 function App() {
   // --- AUTENTICAZIONE ---
   const [user, setUser] = useState(null);
-  const [loginUser, setLoginUser] = useState("");
-  const [loginPass, setLoginPass] = useState("");
+  // Vero mentre la richiesta di accesso è in viaggio: un secondo invio (Invio e clic insieme, o la
+  // compilazione automatica del browser che invia da sé) non parte finché il primo non ha risposto.
+  const [accessoInCorso, setAccessoInCorso] = useState(false);
   // Utente riconosciuto ma non ancora dentro: l'amministratore gli ha chiesto di cambiare la
   // password, e finché non lo fa la sessione non nasce. Tenerlo fuori da `user` significa che
   // nessun modulo lo vede e che un F5 lo riporta all'accesso, senza stati a metà da governare.
@@ -158,7 +159,6 @@ function App() {
     sessionStorage.removeItem(CHIAVE_SESSIONE);
     setUser(null);
     setUtenteDaAggiornare(null);
-    setLoginPass("");
     setNuovaPassword("");
     setConfermaPassword("");
     setCurrentModule("preventivatore");
@@ -199,29 +199,39 @@ function App() {
     if (user) sessionStorage.setItem(CHIAVE_SESSIONE, JSON.stringify({ modulo: currentModule }));
   }, [user, currentModule]);
 
+  // Email e password si leggono dal modulo al momento dell'invio, non da uno stato tenuto a ogni
+  // tasto: i campi compilati in automatico dal browser non avvisano React finché non si tocca la
+  // pagina, e il primo invio partiva vuoto — "credenziali errate", e al secondo si entrava.
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (accessoInCorso) return;
+    const modulo = new FormData(e.currentTarget);
+    const credenziale = String(modulo.get('email') || '').trim();
+    const password = String(modulo.get('password') || '');
+    if (!credenziale || !password) return alert("Scrivi email e password.");
+
+    setAccessoInCorso(true);
     try {
       // Si entra con l'email. Chi non ne ha una (un account di servizio) scrive il suo username,
       // che emailDiAccesso trasforma nell'indirizzo con cui la sua credenziale è registrata.
-      const { data, error } = await supabase.auth.signInWithPassword({ email: emailDiAccesso(loginUser), password: loginPass });
+      const { data, error } = await supabase.auth.signInWithPassword({ email: emailDiAccesso(credenziale), password });
       if (error) {
-        if (error.status === 400) return alert("Credenziali errate o utente non trovato!");
+        if (error.code === 'invalid_credentials') return alert("Credenziali errate o utente non trovato!");
         if (error.status === 429) return alert("Troppi tentativi di accesso: riprova tra qualche minuto.");
         throw error;
       }
-      setLoginPass("");
       if (!(await apriSessione(data.user.id))) alert("Questo account non ha accesso all'applicazione.");
     } catch (err) {
       alert("Errore di connessione al database. Controlla la console.");
       console.error(err);
+    } finally {
+      setAccessoInCorso(false);
     }
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     azzeraSessione();
-    setLoginUser("");
   };
 
   // Tornare all'accesso dalla scelta della password chiude la sessione appena aperta.
@@ -249,7 +259,6 @@ function App() {
     setUtenteDaAggiornare(null);
     setNuovaPassword("");
     setConfermaPassword("");
-    setLoginUser("");
     await entra(aggiornato);
   };
 
@@ -316,9 +325,9 @@ function App() {
           <img src="/logo.png" alt="Logo Azienda" style={{ maxWidth: '140px', display: 'block', margin: '0 auto 15px auto' }} />
           <h2>Accesso Gestionale</h2>
           <form onSubmit={handleLogin}>
-            <input type="text" placeholder="Email" autoComplete="username" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} />
-            <input type="password" placeholder="Password" autoComplete="current-password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} />
-            <button type="submit">Accedi</button>
+            <input type="text" name="email" placeholder="Email" autoComplete="username" />
+            <input type="password" name="password" placeholder="Password" autoComplete="current-password" />
+            <button type="submit" disabled={accessoInCorso}>{accessoInCorso ? 'Accesso…' : 'Accedi'}</button>
           </form>
         </div>
       </div>
