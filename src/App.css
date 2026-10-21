@@ -1054,7 +1054,11 @@ input.valore-proposto {
 .albatros-titolo { margin: 0 0 10px 0; font-size: 0.78rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; }
 .albatros-etichetta { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; font-weight: 600; color: #334155; min-width: 0; }
 .albatros-campo { width: 100%; height: 40px; box-sizing: border-box; padding: 6px 10px; margin: 0; font-size: 0.95rem; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
-.albatros-campo:disabled { background: #f1f5f9; color: #475569; }
+/* Col telefono in modalità scura le tendine native prendono il testo bianco, ma qui lo sfondo è
+   bianco: la voce scelta spariva. Testo scuro e schema chiaro espliciti, anche per le opzioni. */
+.albatros-campo { color: #1e293b; -webkit-text-fill-color: #1e293b; color-scheme: light; }
+.albatros-badge-select { -webkit-text-fill-color: #9a3412; color-scheme: light; }
+.albatros-campo:disabled { background: #f1f5f9; color: #475569; -webkit-text-fill-color: #475569; }
 .albatros-importo { text-align: right; font-variant-numeric: tabular-nums; }
 .albatros-bottone { height: 40px; padding: 0 16px; font-size: 0.88rem; white-space: nowrap; }
 .albatros-griglia-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
