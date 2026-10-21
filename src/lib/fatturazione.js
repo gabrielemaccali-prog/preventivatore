@@ -6,8 +6,8 @@
 // come si abbina una fattura alla prenotazione o al voucher a cui si riferisce.
 // Niente React e niente Supabase: funzioni pure, così l'abbinamento si può provare da solo.
 // ============================================================
-import { siglaProvincia } from './utils';
-import { STATO_ITALIA } from './costanti';
+import { siglaProvincia } from './utils.js';
+import { STATO_ITALIA } from './costanti.js';
 
 // Sotto il centesimo due importi sono uguali: i lordi arrivano da conti con l'IVA e 1610,40 può
 // valere 1610,3999999.
@@ -162,10 +162,40 @@ const giorniFra = (a, b) => Math.abs((Date.parse(b) - Date.parse(a)) / 86400000)
 // la proposta c'è ma va confermata. Le fatture già registrate (stesso numero e data) si saltano,
 // così l'export si può ricaricare senza doppioni.
 //
+// Una fattura può coprire più partite dello stesso cliente (due feste, una fattura sola). Quando
+// nessun candidato da solo ha l'importo giusto, si cerca fra i suoi una combinazione -- da 2 a
+// MAX_PARTI -- la cui somma di quanto resta da fatturare fa esattamente l'importo della fattura, e
+// la si propone ripartita: a ogni partita il suo resto. Le parti di una proposta stanno in
+// "ripartizione" ([{ tipo, riferimento, nome, dataRiferimento, daFatturare, importo }]); una
+// fattura su una partita sola ha una ripartizione di un elemento, con tutto l'importo.
+//
 // Le prenotazioni e i voucher già fatturati per intero l'import non li tocca proprio: una fattura
 // che finirebbe su di loro si conta a parte e si ignora. Se una fattura era stata scritta a mano con
 // un numero diverso da quello di Fatture in Cloud, sarebbe la stessa contata due volte.
-export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture = [], valoreVoucher = () => 0 } = {}) => {
+const MAX_PARTI = 4;
+// Oltre questi candidati le combinazioni diventano troppe da provare, e una ripartizione scelta
+// fra decine di partite non sarebbe comunque una proposta di cui fidarsi: si tengono i più vicini.
+const MAX_CANDIDATI_RIPARTIZIONE = 12;
+
+// Le combinazioni di 2..max elementi della lista la cui somma di valore() fa totale.
+const combinazioniCheFanno = (lista, valore, totale, max) => {
+  const trovate = [];
+  const prova = (da, scelti, somma) => {
+    if (scelti.length >= 2 && Math.abs(somma - totale) < 0.02) trovate.push(scelti);
+    if (scelti.length === max) return;
+    for (let i = da; i < lista.length; i++) {
+      const v = valore(lista[i]);
+      if (somma + v > totale + 0.02) continue; // i resti sono positivi: oltre il totale non si torna
+      prova(i + 1, [...scelti, lista[i]], somma + v);
+    }
+  };
+  prova(0, [], 0);
+  return trovate;
+};
+
+// `inContanti(id)` è quanto di una prenotazione è stato incassato in contanti: non si fattura, e
+// senza toglierlo l'import si aspetterebbe un importo diverso da quello che mostra la tabella.
+export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture = [], valoreVoucher = () => 0, inContanti = () => 0 } = {}) => {
   const giaRegistrate = new Set(fatture.map(f => `${f.numero}|${f.data}`));
   const fatturatoPer = {};
   fatture.forEach(f => { const k = `${f.tipo}|${f.riferimento}`; fatturatoPer[k] = (fatturatoPer[k] || 0) + (parseFloat(f.importo) || 0); });
@@ -187,7 +217,7 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
     ...prenotazioni.map(p => ({
       tipo: 'prenotazione', riferimento: String(p.id), nome: p.nominativo || '', data: String(p.data || ''),
       chiavi: chiaviPren(p), nomi: nomiPren(p),
-      dovuto: daFatturarePrenotazione(p, p.voucherCodice ? valoreVoucher(p.voucherCodice) : 0),
+      dovuto: daFatturarePrenotazione(p, p.voucherCodice ? valoreVoucher(p.voucherCodice) : 0, inContanti(String(p.id))),
     })),
     ...voucher.map(v => ({
       tipo: 'voucher', riferimento: String(v.codice), nome: v.nominativo || '', data: String(v.dataEmissione || '').slice(0, 10),
@@ -215,7 +245,31 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
     if (/VOUCHER/i.test(f.centro) && pool.some(c => c.tipo === 'voucher')) pool = pool.filter(c => c.tipo === 'voucher');
     // L'importo atteso e' quanto resta da fatturare.
     const stessoImporto = pool.filter(c => Math.abs(atteso(c) - f.importo) < 0.02);
-    const piuVicino = (lista) => lista.slice().sort((a, b) => giorniFra(a.data, f.data) - giorniFra(b.data, f.data))[0];
+    const distanza = (c) => giorniFra(c.data, f.data);
+    const piuVicino = (lista) => lista.slice().sort((a, b) => distanza(a) - distanza(b))[0];
+    const parte = (c, importo) => ({ tipo: c.tipo, riferimento: c.riferimento, nome: c.nome, dataRiferimento: c.data, daFatturare: atteso(c), importo });
+    const segna = (c, importo) => { const k = `${c.tipo}|${c.riferimento}`; fatturatoPer[k] = (fatturatoPer[k] || 0) + importo; };
+
+    // Nessuno da solo ha l'importo: forse la fattura copre più partite.
+    if (stessoImporto.length === 0 && pool.length >= 2) {
+      const vicini = pool.slice().sort((a, b) => distanza(a) - distanza(b)).slice(0, MAX_CANDIDATI_RIPARTIZIONE);
+      const combinazioni = combinazioniCheFanno(vicini, atteso, f.importo, MAX_PARTI);
+      if (combinazioni.length > 0) {
+        // Fra più combinazioni possibili la più raccolta attorno alla data della fattura.
+        const lontananza = (comb) => Math.max(...comb.map(distanza));
+        const scelta = combinazioni.slice().sort((a, b) => lontananza(a) - lontananza(b) || a.length - b.length)[0]
+          .slice().sort((a, b) => String(a.data).localeCompare(String(b.data)));
+        const tuttePerChiave = scelta.every(c => c.perChiave);
+        const motivi = [tuttePerChiave ? 'CF/P.IVA' : 'solo nome', `ripartita su ${scelta.length} partite`];
+        if (combinazioni.length > 1) motivi.push(`${combinazioni.length} ripartizioni possibili`);
+        const certa = tuttePerChiave && combinazioni.length === 1;
+        const ripartizione = scelta.map(c => parte(c, Math.round(atteso(c) * 100) / 100));
+        if (certa) scelta.forEach(c => segna(c, atteso(c)));
+        proposte.push({ fattura: f, ripartizione, certa, motivi });
+        continue;
+      }
+    }
+
     const scelto = piuVicino(stessoImporto.length ? stessoImporto : pool);
 
     const motivi = [scelto.perChiave ? 'CF/P.IVA' : 'solo nome'];
@@ -223,14 +277,9 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
     if (!importoOk) motivi.push(`importo diverso: fattura €${f.importo.toFixed(2)}, da fatturare €${atteso(scelto).toFixed(2)}`);
     if (pool.length > 1) motivi.push(`${pool.length} candidati`);
     const certa = scelto.perChiave && importoOk && stessoImporto.length === 1;
-    if (certa) {
-      const k = `${scelto.tipo}|${scelto.riferimento}`;
-      fatturatoPer[k] = (fatturatoPer[k] || 0) + f.importo;
-    }
-    proposte.push({
-      fattura: f, tipo: scelto.tipo, riferimento: scelto.riferimento, nome: scelto.nome, dataRiferimento: scelto.data,
-      daFatturare: atteso(scelto), certa, motivi,
-    });
+    const ripartizione = [parte(scelto, f.importo)];
+    if (certa) segna(scelto, f.importo);
+    proposte.push({ fattura: f, ripartizione, certa, motivi });
   }
   return { proposte, senzaAbbinamento, giaPresenti, suGiaFatturate };
 };

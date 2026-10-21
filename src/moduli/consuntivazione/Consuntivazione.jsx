@@ -109,14 +109,16 @@ function Consuntivazione({ user }) {
   // Una partita commissionata da un fornitore o da un campo no: non si fattura, si compensa nella
   // sua scheda di consuntivazione.
   const fatturabili = useMemo(() => prenotazioni.filter(p => p.stato === STATO_PREN.CONFERMATO && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
+  // Quanto di una prenotazione è stato incassato in contanti: non si fattura. Lo usano la tabella e
+  // l'import, che devono dire lo stesso "da fatturare".
+  const inContantiDi = useMemo(() => (id) => (pagamentiPer[`prenotazione|${id}`] || [])
+    .filter(pg => pg.contanti)
+    .reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0), [pagamentiPer]);
   const voci = useMemo(() => {
     const valore = (codice) => parseFloat(voucherPerCodice[String(codice)]?.importo) || 0;
     const daPrenotazioni = fatturabili.map(p => {
       const lista = fatturePer[`prenotazione|${p.id}`] || [];
-      const inContanti = (pagamentiPer[`prenotazione|${p.id}`] || [])
-        .filter(pg => pg.contanti)
-        .reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0);
-      const dovuto = daFatturarePrenotazione(p, p.voucherCodice ? valore(p.voucherCodice) : 0, inContanti);
+      const dovuto = daFatturarePrenotazione(p, p.voucherCodice ? valore(p.voucherCodice) : 0, inContantiDi(p.id));
       const fatturato = sommaImporti(lista);
       return {
         tipo: 'prenotazione', codice: String(p.id), data: p.data, fine: fineEventoDi(p), intestatario: intestatarioPren(p),
@@ -137,7 +139,7 @@ function Consuntivazione({ user }) {
       };
     });
     return [...daPrenotazioni, ...daVoucher].sort((a, b) => String(b.data).localeCompare(String(a.data)));
-  }, [fatturabili, voucher, fatturePer, voucherPerCodice, pagamentiPer]);
+  }, [fatturabili, voucher, fatturePer, voucherPerCodice, inContantiDi]);
 
   const visibili = voci.filter(x => {
     if (filtroTipo && x.tipo !== filtroTipo) return false;
@@ -198,6 +200,7 @@ function Consuntivazione({ user }) {
         voucher: voucher.filter(v => !v.pregresso),
         fatture,
         valoreVoucher,
+        inContanti: inContantiDi,
       });
       setProposta({ nomeFile: file.name, lette: lette.length, ...esito, scelte: esito.proposte.map(pr => pr.certa) });
     } catch (err) {
@@ -208,7 +211,9 @@ function Consuntivazione({ user }) {
   const confermaImport = async () => {
     const righe = proposta.proposte
       .filter((_, i) => proposta.scelte[i])
-      .map(pr => ({ tipo: pr.tipo, riferimento: pr.riferimento, data: pr.fattura.data, numero: pr.fattura.numero, importo: pr.fattura.importo, origine: 'import' }));
+      // Una fattura ripartita su più partite diventa una riga per partita, ognuna con la sua quota.
+      .flatMap(pr => pr.ripartizione.map(r => ({ tipo: r.tipo, riferimento: r.riferimento, data: pr.fattura.data, numero: pr.fattura.numero, importo: r.importo, origine: 'import' })));
+    const quante = proposta.scelte.filter(Boolean).length;
     if (righe.length === 0) return alert('Nessuna fattura selezionata.');
     setInCorso(true);
     const { error } = await supabase.from('fatture').upsert(righe, { onConflict: 'tipo,riferimento,numero,data', ignoreDuplicates: true });
@@ -216,7 +221,7 @@ function Consuntivazione({ user }) {
     if (error) return alert(`Errore nell'import: ${error.message}`);
     setProposta(null);
     await fetchTutto();
-    alert(`${righe.length} ${righe.length === 1 ? 'fattura importata' : 'fatture importate'}.`);
+    alert(`${quante} ${quante === 1 ? 'fattura importata' : 'fatture importate'}.`);
   };
 
   const esportaClienti = () => {
@@ -473,7 +478,14 @@ function Consuntivazione({ user }) {
                         <td style={{ ...cella, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(pr.fattura.data)}</td>
                         <td style={cella}>{pr.fattura.cliente}</td>
                         <td style={destra}>{euro(pr.fattura.importo)}</td>
-                        <td style={cella}>{pr.riferimento} · {pr.nome} <span style={{ color: '#94a3b8' }}>({formattaDataGGMMAAAA(pr.dataRiferimento)}, da fatturare {euro(pr.daFatturare)})</span></td>
+                        <td style={cella}>
+                          {pr.ripartizione.map(r => (
+                            <div key={`${r.tipo}|${r.riferimento}`}>
+                              {r.riferimento} · {r.nome} <span style={{ color: '#94a3b8' }}>({formattaDataGGMMAAAA(r.dataRiferimento)}, da fatturare {euro(r.daFatturare)})</span>
+                              {pr.ripartizione.length > 1 && <strong> → {euro(r.importo)}</strong>}
+                            </div>
+                          ))}
+                        </td>
                         <td style={{ ...cella, color: pr.certa ? '#15803d' : '#b45309' }}>{pr.motivi.join(' · ')}</td>
                       </tr>
                     ))}
