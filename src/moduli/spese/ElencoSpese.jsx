@@ -187,7 +187,7 @@ function ElencoSpese(props) {
       {esito && <p className="albatros-nota" style={{ color: '#166534', margin: 0 }}>{esito}</p>}
 
       <div className="albatros-card">
-        <div className="albatros-testata">
+        <div className="albatros-testata filtri-telefono">
           <label className="albatros-etichetta" style={{ flex: '0 1 170px' }}>Mese
             <input type="month" value={mese} onChange={(e) => setMese(e.target.value)} className="albatros-campo" />
           </label>
@@ -208,7 +208,7 @@ function ElencoSpese(props) {
               <option value="nessuna">Generali senza categoria</option>
             </select>
           </label>
-          <label className="albatros-etichetta" style={{ flex: '1 1 180px' }}>Cerca
+          <label className="albatros-etichetta filtro-largo" style={{ flex: '1 1 180px' }}>Cerca
             <input type="search" value={cerca} placeholder="Descrizione, beneficiario…" onChange={(e) => setCerca(e.target.value)} className="albatros-campo" />
           </label>
         </div>
@@ -226,7 +226,7 @@ function ElencoSpese(props) {
         {visibili.length === 0 && <p className="albatros-vuoto" style={{ marginTop: '12px' }}>Nessuna spesa.</p>}
         {visibili.length > 0 && (
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
-            <table className="albatros-tabella">
+            <table className="albatros-tabella tabella-schede">
               <thead>
                 <tr><th>Data</th><th>Cosa</th><th>Origine</th><th>Classificazione</th><th className="num">Importo</th><th></th></tr>
               </thead>
@@ -238,8 +238,8 @@ function ElencoSpese(props) {
                   const mancaOra = cosaManca(mostrata, categorie);
                   return (
                     <tr key={s.id} onClick={() => !riga && apri(s)} className={inModifica ? 'selezionata' : ''} style={{ cursor: riga ? 'default' : 'pointer' }}>
-                      <td style={{ ...CELLA, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(s.data)}</td>
-                      <td style={{ ...CELLA, minWidth: inModifica ? '220px' : undefined, maxWidth: '340px' }}>
+                      <td className="sk-sx" style={{ ...CELLA, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(s.data)}</td>
+                      <td className="sk-testo" style={{ ...CELLA, minWidth: inModifica ? '220px' : undefined, maxWidth: '340px' }}>
                         {inModifica ? (
                           <input type="text" className="table-input" value={riga.descrizione} autoFocus onClick={(e) => e.stopPropagation()}
                             onChange={(e) => setRiga({ ...riga, descrizione: e.target.value })}
@@ -256,7 +256,7 @@ function ElencoSpese(props) {
                         {/* Il bubbler (o il campo, il fornitore) si vede già nella classificazione: qui solo un beneficiario scritto a mano. */}
                         {s.beneficiario && !s.controparte_id && <div className="albatros-tenue" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap', marginTop: '2px' }}>{s.beneficiario}</div>}
                       </td>
-                      <td style={{ ...CELLA, fontSize: '0.8rem' }} onClick={(e) => inModifica && e.stopPropagation()}>
+                      <td data-etichetta="Classificazione" style={{ ...CELLA, fontSize: '0.8rem' }} onClick={(e) => inModifica && e.stopPropagation()}>
                         <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                           {inModifica
                             ? <Classificazione compatta valore={riga} onChange={(v) => setRiga({ ...riga, ...v })}
@@ -266,11 +266,11 @@ function ElencoSpese(props) {
                           {!mancaOra && daRiconciliare(mostrata) && <span className="albatros-badge mini aperta" title="Andrà abbinata al suo consuntivo">Da riconciliare</span>}
                         </div>
                       </td>
-                      <td className="num" style={CELLA} title={oneri > 0 ? `${euro(s.importo)} di spesa + ${euro(oneri)} di oneri bancari` : undefined}>
+                      <td className="num sk-dx" style={CELLA} title={oneri > 0 ? `${euro(s.importo)} di spesa + ${euro(oneri)} di oneri bancari` : undefined}>
                         {oneri > 0 && <span className="albatros-tenue">{euro(oneri)} + </span>}
                         <strong>{euro(s.importo)}</strong>
                       </td>
-                      <td style={{ ...CELLA, whiteSpace: 'nowrap', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                      <td className="sk-azioni" style={{ ...CELLA, whiteSpace: 'nowrap', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                         {inModifica ? (
                           <>
                             <button type="button" className="btn-accent-inline" disabled={inCorso} onClick={salvaRiga} style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.78rem', padding: '3px 8px', marginRight: '4px' }}><Icona nome="salva" size={13} style={{ marginRight: '4px' }} />Salva</button>

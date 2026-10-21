@@ -1189,3 +1189,34 @@ input.valore-proposto {
    La scritta a 16px evita anche che iPhone ingrandisca la pagina quando si tocca un campo. */
 input.albatros-campo, select.albatros-campo { padding: 0 10px; margin: 0; font-size: 16px; line-height: normal; }
 input.albatros-campo.albatros-importo-grande { font-size: 1.25rem; }
+
+/* ============================================================
+   Tabelle a schede sul telefono: Spese di BFM e spese di Albatros.
+   Sotto i 720px ogni riga di una .tabella-schede diventa una scheda, con le celle una sotto l'altra
+   e, sopra ognuna, la sua etichetta (data-etichetta). In cima alla scheda stanno affiancate la cella
+   sk-sx (di solito la data) e la sk-dx (l'importo); sk-mezzo affianca celle brevi; sk-testo lascia
+   andare a capo un testo che in tabella è troncato.
+   ============================================================ */
+@media (max-width: 720px) {
+  .tabella-schede thead { display: none; }
+  .tabella-schede, .tabella-schede tbody, .tabella-schede td { display: block; width: auto; }
+  .tabella-schede tbody tr { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; background: #fff; }
+  .tabella-schede tbody tr.selezionata { background: #e0f2fe; }
+  .tabella-schede td { order: 2; flex: 1 1 100%; border: none !important; padding: 3px 0 !important; max-width: none !important; min-width: 0 !important; white-space: normal !important; text-align: left !important; }
+  .tabella-schede td.sk-sx { order: 0; flex: 1 1 auto; color: #64748b; font-size: 0.8rem; }
+  .tabella-schede td.sk-dx { order: 1; flex: 0 0 auto; text-align: right !important; font-size: 0.95rem; }
+  .tabella-schede td.sk-mezzo { flex: 1 1 28%; }
+  .tabella-schede td.sk-azioni { text-align: right !important; }
+  .tabella-schede td[data-etichetta]::before { content: attr(data-etichetta); display: block; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: #94a3b8; }
+  .tabella-schede .sk-testo, .tabella-schede .sk-testo * { white-space: normal !important; overflow: visible !important; }
+  .tabella-schede select.table-input { max-width: none !important; flex: 1 1 140px; }
+  /* La riga di dettaglio di una spesa di Albatros prosegue la scheda sopra. */
+  .tabella-schede tbody tr.albatros-dettaglio-riga { margin-top: -12px; border-top: none; border-radius: 0 0 10px 10px; }
+  .tabella-schede tbody tr.albatros-dettaglio-riga > td { padding: 6px 0 !important; background: transparent; }
+  /* Filtri sopra le tabelle: due per riga, la ricerca e i pulsanti per intero. */
+  .filtri-telefono > label { flex: 1 1 calc(50% - 7px) !important; }
+  .filtri-telefono > label.filtro-largo, .filtri-telefono > button { flex: 1 1 100% !important; }
+  .filtri-telefono > div { margin-left: 0 !important; text-align: left !important; flex-basis: 100%; }
+  /* Gli overlay di modifica, su una colonna. */
+  .albatros-griglia-2 { grid-template-columns: 1fr; }
+}

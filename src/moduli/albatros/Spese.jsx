@@ -176,7 +176,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   return (
     <div className="albatros-pagina no-print">
       <div className="albatros-card">
-        <div className="albatros-testata">
+        <div className="albatros-testata filtri-telefono">
           <FiltroPeriodo periodo={periodo} onChange={setPeriodo} />
           <label className="albatros-etichetta" style={{ flex: '0 1 160px' }}>Pagata da
             <select value={filtroEnte} onChange={(e) => setFiltroEnte(e.target.value)} className="albatros-campo">
@@ -212,7 +212,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
         {visibili.length === 0 && <p className="albatros-vuoto">Nessuna spesa.</p>}
         {visibili.length > 0 && (
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
-            <table className="albatros-tabella">
+            <table className="albatros-tabella tabella-schede">
               <thead>
                 <tr><th>Data</th><th>Cosa</th><th>Categoria</th><th>Pagata da</th><th className="num">Importo</th><th>Scritta da</th>{puoCorreggere && <th></th>}</tr>
               </thead>
@@ -227,15 +227,15 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                   return (
                   <Fragment key={s.id}>
                   <tr onClick={() => apribile && apriDettaglio(s)} className={aperta ? 'selezionata' : ''} title={apribile ? 'Apri il dettaglio' : undefined} style={{ cursor: apribile ? 'pointer' : 'default' }}>
-                    <td style={{ whiteSpace: 'nowrap' }}><span className={`riga-espandibile-chevron ${aperta ? 'aperta' : ''}`}>{apribile ? '▸' : ''}</span>{formattaDataGGMMAAAA(s.data)}</td>
-                    <td>
+                    <td className="sk-sx" style={{ whiteSpace: 'nowrap' }}><span className={`riga-espandibile-chevron ${aperta ? 'aperta' : ''}`}>{apribile ? '▸' : ''}</span>{formattaDataGGMMAAAA(s.data)}</td>
+                    <td className="sk-testo">
                       {s.descrizione}
                       {s.spesa_bfm_id && <span className="albatros-badge mini" style={{ marginLeft: '6px', background: '#e0f2fe', color: '#075985' }} title="Arriva dal modulo Spese di BFM (conto corrente): data, importo e descrizione si cambiano lì">Dal conto BFM</span>}
                       {dettagliabile && voci.length === 0 && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }} title="Scontrino da dettagliare: tocca la riga e aggiungi le voci">Da dettagliare</span>}
                       {voci.length > 0 && <span className={`albatros-badge mini ${det.nonDettagliato > 0 ? 'da-specificare' : 'chiusa'}`} style={{ marginLeft: '6px' }}>{det.nonDettagliato > 0 && dettagliabile ? 'Da dettagliare · ' : ''}{voci.length} {voci.length === 1 ? 'voce' : 'voci'} · {Math.round(det.quota * 100)}%</span>}
                     </td>
-                    <td>{nomeCategoria(categorie, s.categoria_id)}</td>
-                    <td onClick={(e) => e.stopPropagation()}>
+                    <td className="sk-mezzo" data-etichetta="Categoria">{nomeCategoria(categorie, s.categoria_id)}</td>
+                    <td className="sk-mezzo" data-etichetta="Pagata da" onClick={(e) => e.stopPropagation()}>
                       {s.ente ? <>{etichettaEnte(s.ente)}{s.ente === 'albatros' && (spesaDaPagare(s)
                         ? <> <select value="" onChange={(e) => segnaPagata(s, e.target.value)} className="albatros-badge-select" title="Quando è pagata, scegli con cosa">
                             <option value="">Da pagare</option>
@@ -249,13 +249,13 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                         </select>
                       )}
                     </td>
-                    <td className="num">
+                    <td className="num sk-dx">
                       <strong>{euro(importo(s))}</strong>
                       {importo(s) !== r2(num(s.importo)) && <div className="albatros-tenue" style={{ fontSize: '0.75rem' }}>su {euro(s.importo)}</div>}
                     </td>
-                    <td className="albatros-tenue" style={{ whiteSpace: 'nowrap' }}>{utenti[s.creato_da] || '—'}</td>
+                    <td className="albatros-tenue sk-mezzo" data-etichetta="Scritta da" style={{ whiteSpace: 'nowrap' }}>{utenti[s.creato_da] || '—'}</td>
                     {puoCorreggere && (
-                      <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                      <td className="sk-azioni" style={{ whiteSpace: 'nowrap', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                         <button type="button" className="btn-icon-action" title="Modifica" onClick={() => modifica(s)} style={{ marginRight: '4px' }}><Icona nome="modifica" size={14} style={{ marginRight: 0 }} /></button>
                         {!s.spesa_bfm_id && <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => elimina(s)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
                       </td>

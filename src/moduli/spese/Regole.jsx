@@ -144,21 +144,21 @@ function Regole(props) {
         {ordinate.length === 0 && <p className="albatros-vuoto" style={{ marginTop: '12px' }}>Nessuna regola.</p>}
         {ordinate.length > 0 && (
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
-            <table className="albatros-tabella">
+            <table className="albatros-tabella tabella-schede">
               <thead><tr><th></th><th>Regola</th><th>Quando</th><th>Allora</th><th className="num">Movimenti</th><th className="num" title="Transazioni che la regola prende, con la spesa ancora da completare">Da associare</th><th>Attiva</th><th></th></tr></thead>
               <tbody>
                 {ordinate.map((r, i) => (
                   <tr key={r.id} onClick={() => setModulo({ ...REGOLA_VUOTA, ...r, tipo_contiene: r.tipo_contiene || '', testo_contiene: r.testo_contiene || '', descrizione: r.descrizione || '' })} style={{ opacity: r.attiva ? 1 : 0.5 }}>
-                    <td style={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+                    <td className="sk-sx" style={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                       <button type="button" className="btn-icon-action" title="Su" disabled={inCorso || i === 0} onClick={() => sposta(i, -1)}>▲</button>
                       <button type="button" className="btn-icon-action" title="Giù" disabled={inCorso || i === ordinate.length - 1} onClick={() => sposta(i, 1)}>▼</button>
                     </td>
-                    <td>
+                    <td className="sk-testo">
                       <strong>{r.nome}</strong>{r.segno === 'entrata' && <div className="albatros-tenue" style={{ fontSize: '0.75rem' }}>sulle entrate</div>}
                     </td>
-                    <td style={{ fontSize: '0.82rem' }}>{descriviCondizioni(r)}</td>
-                    <td style={{ fontSize: '0.82rem' }}>{descriviClassificazione(r)}{r.descrizione && <div className="albatros-tenue">come "{r.descrizione}"</div>}</td>
-                    <td className="num" style={{ whiteSpace: 'nowrap' }}
+                    <td data-etichetta="Quando" style={{ fontSize: '0.82rem' }}>{descriviCondizioni(r)}</td>
+                    <td data-etichetta="Allora" style={{ fontSize: '0.82rem' }}>{descriviClassificazione(r)}{r.descrizione && <div className="albatros-tenue">come "{r.descrizione}"</div>}</td>
+                    <td className="num sk-mezzo" data-etichetta="Movimenti" style={{ whiteSpace: 'nowrap' }}
                       title="Movimenti che la regola prende così come le regole sono ordinate adesso; sotto, quanti ne riconosce da sola e chi le prende gli altri">
                       {usi[r.id] || 0}
                       {(() => {
@@ -174,14 +174,14 @@ function Regole(props) {
                         );
                       })()}
                     </td>
-                    <td className="num" style={{ fontWeight: daAssociare?.[r.id] ? 700 : 400, color: daAssociare?.[r.id] ? '#9a3412' : '#94a3b8' }}
+                    <td className="num sk-mezzo" data-etichetta="Da associare" style={{ fontWeight: daAssociare?.[r.id] ? 700 : 400, color: daAssociare?.[r.id] ? '#9a3412' : '#94a3b8' }}
                       title="Transazioni che la regola prende, con la spesa ancora da completare: la bandierina le completa">
                       {r.azione !== 'spesa' || !daAssociare || daAssociare[r.id] == null ? '—' : daAssociare[r.id]}
                     </td>
-                    <td onClick={(e) => e.stopPropagation()}>
+                    <td className="sk-mezzo" data-etichetta="Attiva" onClick={(e) => e.stopPropagation()}>
                       <label className="albatros-interruttore"><input type="checkbox" checked={!!r.attiva} disabled={inCorso} onChange={() => accendi(r)} /><span></span></label>
                     </td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+                    <td className="sk-dx" style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                       {r.azione === 'spesa' && <button type="button" className="btn-icon-action" title="Applica questa regola alle spese ancora da completare" style={{ marginRight: '4px' }} disabled={inCorso} onClick={() => applica(r)}><Icona nome="applica" size={14} style={{ marginRight: 0 }} /></button>}
                       <button type="button" className="btn-icon-action" title="Duplica" style={{ marginRight: '4px' }} disabled={inCorso} onClick={() => duplica(r)}><Icona nome="duplica" size={14} style={{ marginRight: 0 }} /></button>
                       <button type="button" className="btn-icon-action danger" title="Elimina" disabled={inCorso} onClick={() => elimina(r)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>
