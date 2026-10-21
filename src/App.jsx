@@ -9,6 +9,7 @@ import Cruscotto from './moduli/cruscotto/Cruscotto';
 import Disponibilita from './moduli/disponibilita/Disponibilita';
 import Consuntivazione from './moduli/consuntivazione/Consuntivazione';
 import Albatros from './moduli/albatros/Albatros';
+import Spese from './moduli/spese/Spese';
 import Impostazioni from './moduli/impostazioni/Impostazioni';
 import { MODULI_REGISTRY, GRUPPI_MODULI, MONDI, moduloVisibile, mondoDi, puoVedere } from './lib/permessi';
 import { SCHEDE_ALBATROS } from './moduli/albatros/schede';
@@ -134,7 +135,6 @@ function App() {
     try { ultimoMondo = localStorage.getItem('bfm_mondo'); } catch { /* niente da ricordare */ }
     const atterraggio = ultimoMondo === 'albatros' && moduloVisibile(nuovoUser, 'albatros') ? 'albatros' : primoModuloVisibile(nuovoUser);
     setCurrentModule(moduloAncoraVisibile ? modulo : atterraggio);
-
     fetchModuliConfig();
   }, [fetchRuolo, fetchModuliConfig]);
 
@@ -437,6 +437,8 @@ function App() {
       {currentModule === "costiricavi" && <Cruscotto user={user} />}
 
       {currentModule === "disponibilita" && <Disponibilita user={user} />}
+
+      {currentModule === "spese" && <Spese user={user} />}
 
       {currentModule === "consuntivazione" && <Consuntivazione user={user} />}
 

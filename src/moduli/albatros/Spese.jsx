@@ -70,6 +70,25 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   const totale = (elenco) => r2(elenco.reduce((t, s) => t + importo(s), 0));
 
   const salva = async () => {
+    // Una spesa arrivata dal modulo Spese di BFM: qui si sceglie solo la categoria di Albatros, e la
+    // scelta torna anche sulla spesa di BFM, che altrimenti al prossimo allineamento la rimetterebbe com'era.
+    if (modulo.spesaBfm) {
+      const categoria_id = idCategoriaScelta(modulo.categoria, categorie, 'spesa');
+      setInCorso(true);
+      try {
+        const [a, b] = await Promise.all([
+          supabase.from('albatros_spese').update({ categoria_id }).eq('id', modulo.id),
+          supabase.from('spese').update({ albatros_categoria_id: categoria_id }).eq('id', modulo.spesaBfm),
+        ]);
+        const error = a.error || b.error;
+        if (error) return alert(`Errore nel salvataggio: ${error.message}`);
+        setModulo(null);
+        await carica();
+      } finally {
+        setInCorso(false);
+      }
+      return;
+    }
     const importo = leggiImporto(modulo.importo);
     const descrizione = modulo.descrizione.trim();
     if (!modulo.data) return alert('Scegli la data.');
@@ -92,6 +111,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   };
 
   const elimina = async (s) => {
+    if (s.spesa_bfm_id) return alert('Questa spesa arriva dal modulo Spese di BFM: si toglie da lì, cambiandola da Albatros a BFM o eliminandola.');
     if (!window.confirm(`Eliminare la spesa "${s.descrizione}" di ${euro(s.importo)}?`)) return;
     const { error } = await supabase.from('albatros_spese').delete().eq('id', s.id);
     if (error) return alert(`Errore: ${error.message}`);
@@ -146,7 +166,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   };
 
   const modifica = (s) => {
-    setModulo({ id: s.id, data: s.data, importo: String(r2(s.importo)).replace('.', ','), descrizione: s.descrizione, categoria: String(s.categoria_id ?? ''), ente: s.ente || '', metodo: s.metodo || 'contanti' });
+    setModulo({ id: s.id, data: s.data, importo: String(r2(s.importo)).replace('.', ','), descrizione: s.descrizione, categoria: String(s.categoria_id ?? ''), ente: s.ente || '', metodo: s.metodo || 'contanti', spesaBfm: s.spesa_bfm_id ?? null });
   };
 
   return (
@@ -206,6 +226,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                     <td style={{ whiteSpace: 'nowrap' }}><span className={`riga-espandibile-chevron ${aperta ? 'aperta' : ''}`}>{apribile ? '▸' : ''}</span>{formattaDataGGMMAAAA(s.data)}</td>
                     <td>
                       {s.descrizione}
+                      {s.spesa_bfm_id && <span className="albatros-badge mini" style={{ marginLeft: '6px', background: '#e0f2fe', color: '#075985' }} title="Arriva dal modulo Spese di BFM (conto corrente): data, importo e descrizione si cambiano lì">Dal conto BFM</span>}
                       {dettagliabile && voci.length === 0 && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }} title="Scontrino da dettagliare: tocca la riga e aggiungi le voci">Da dettagliare</span>}
                       {voci.length > 0 && <span className={`albatros-badge mini ${det.nonDettagliato > 0 ? 'da-specificare' : 'chiusa'}`} style={{ marginLeft: '6px' }}>{det.nonDettagliato > 0 && dettagliabile ? 'Da dettagliare · ' : ''}{voci.length} {voci.length === 1 ? 'voce' : 'voci'} · {Math.round(det.quota * 100)}%</span>}
                     </td>
@@ -232,7 +253,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                     {puoCorreggere && (
                       <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                         <button type="button" className="btn-icon-action" title="Modifica" onClick={() => modifica(s)} style={{ marginRight: '4px' }}><Icona nome="modifica" size={14} style={{ marginRight: 0 }} /></button>
-                        <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => elimina(s)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>
+                        {!s.spesa_bfm_id && <button type="button" className="btn-icon-action danger" title="Elimina" onClick={() => elimina(s)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
                       </td>
                     )}
                   </tr>
@@ -281,19 +302,19 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
             <h3 style={{ margin: '0 0 12px 0', fontSize: '1.1rem', color: '#0f172a' }}>{modulo.id ? 'Modifica spesa' : 'Nuova spesa'}</h3>
             <div className="albatros-griglia-2">
               <label className="albatros-etichetta">Data
-                <input type="date" value={modulo.data} onChange={(e) => setModulo({ ...modulo, data: e.target.value })} className="albatros-campo" />
+                <input type="date" value={modulo.data} disabled={!!modulo.spesaBfm} onChange={(e) => setModulo({ ...modulo, data: e.target.value })} className="albatros-campo" />
               </label>
               <label className="albatros-etichetta">Importo €
-                <input type="text" inputMode="decimal" value={modulo.importo} placeholder="0,00" onChange={(e) => setModulo({ ...modulo, importo: e.target.value })} className="albatros-campo albatros-importo" />
+                <input type="text" inputMode="decimal" value={modulo.importo} placeholder="0,00" disabled={!!modulo.spesaBfm} onChange={(e) => setModulo({ ...modulo, importo: e.target.value })} className="albatros-campo albatros-importo" />
               </label>
               <label className="albatros-etichetta" style={{ gridColumn: '1 / -1' }}>Cosa
-                <input type="text" value={modulo.descrizione} autoFocus placeholder="Es. spesa Esselunga, lampadina campo 2" onChange={(e) => setModulo({ ...modulo, descrizione: e.target.value })} className="albatros-campo" />
+                <input type="text" value={modulo.descrizione} autoFocus={!modulo.spesaBfm} disabled={!!modulo.spesaBfm} placeholder="Es. spesa Esselunga, lampadina campo 2" onChange={(e) => setModulo({ ...modulo, descrizione: e.target.value })} className="albatros-campo" />
               </label>
               <label className="albatros-etichetta">Categoria
                 <SceltaCategoria categorie={categorie} tipo="spesa" valore={modulo.categoria} onChange={(v) => setModulo({ ...modulo, categoria: v })} />
               </label>
               <label className="albatros-etichetta">Pagata da
-                <select value={modulo.ente} onChange={(e) => setModulo({ ...modulo, ente: e.target.value })} className="albatros-campo">
+                <select value={modulo.ente} disabled={!!modulo.spesaBfm} onChange={(e) => setModulo({ ...modulo, ente: e.target.value })} className="albatros-campo">
                   <option value="">Da attribuire</option>
                   {ENTI.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
                 </select>
@@ -306,6 +327,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                 </label>
               )}
             </div>
+            {modulo.spesaBfm && <p className="albatros-nota">Arriva dal modulo Spese di BFM: è un'uscita del conto corrente, oneri bancari compresi. Qui scegli la categoria di Albatros; data, importo e descrizione si cambiano nel modulo Spese.</p>}
             {!puoCorreggere && <p className="albatros-nota">Una spesa aggiunta non si può più cambiare né togliere: in caso di errore avvisa l'amministratore.</p>}
             <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button type="button" className="btn-outline-annulla albatros-bottone" onClick={() => setModulo(null)}>Annulla</button>

@@ -16,6 +16,8 @@ export const MODULI_REGISTRY = [
   { id: 'voucher', label: 'Voucher', icon: 'voucher', gruppo: 'vendita' },
   { id: 'prenotazioni', label: 'Prenotazioni', icon: 'prenotazioni', gruppo: 'vendita' },
   { id: 'disponibilita', label: 'Disponibilità', icon: 'disponibilita', gruppo: 'operativita' },
+  // Le spese di BFM, scritte a mano o nate dall'estratto conto della banca.
+  { id: 'spese', label: 'Spese', icon: 'spese', gruppo: 'operativita' },
   // Quello che e' davvero successo dopo il preventivo: fatture, fornitori, campi e compensi dei
   // bubbler. Qui arriveranno anche i servizi.
   { id: 'consuntivazione', label: 'Consuntivazione', icon: 'consuntivazione', gruppo: 'amministrazione' },
@@ -61,6 +63,14 @@ export const SCHEDE_REGISTRY = {
           { id: 'cashflow_lama', label: 'Lama' },
         ],
       },
+    ],
+  },
+  spese: {
+    schede: [
+      { id: 'spese', label: 'Spese' },
+      { id: 'banca', label: 'Banca' },
+      { id: 'regole', label: 'Regole' },
+      { id: 'configuratore', label: 'Configuratore' },
     ],
   },
   consuntivazione: {
