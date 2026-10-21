@@ -64,12 +64,13 @@ function Disponibilita({ user }) {
   // vuota senza dire perché: almeno in console la causa deve esserci.
   const segnalaCaricamenti = (...risultati) => risultati.forEach(r => { if (r.error) console.error('Disponibilità — caricamento fallito:', r.error); });
 
-  // Anagrafiche: non dipendono dal mese, si leggono una volta sola. Dei bubbler qui serve solo
-  // come si chiamano: l'anagrafica completa si gestisce in Anagrafiche > Bubbler.
+  // Anagrafiche: non dipendono dal mese, si leggono una volta sola. Dei bubbler qui serve come si
+  // chiamano e se sono attivi: l'anagrafica completa si gestisce in Anagrafiche > Bubbler. Si legge
+  // '*' e non la colonna attivo per nome, così la pagina funziona anche prima di sql/bubbler_attivo.sql.
   const fetchStatico = async () => {
     const [fasceRes, bubblersRes, campiRes] = await Promise.all([
       supabase.from('disp_fasce').select('*').order('ordine'),
-      supabase.from('utenti').select('id, username, nome, cognome, nome_breve').eq('bubbler', true).order('cognome'),
+      supabase.from('utenti').select('*').eq('bubbler', true).order('cognome'),
       supabase.from('pren_campi').select('id, nome, citta, provincia').order('nome'),
     ]);
     segnalaCaricamenti(fasceRes, bubblersRes, campiRes);
@@ -436,7 +437,10 @@ function Disponibilita({ user }) {
   const [filtroBubbler, setFiltroBubbler] = useState("");
   // Campo ('c:id') o provincia ('p:nome') su cui aprire il calendario del bubbler filtrato.
   const [sceltaModificaAltrui, setSceltaModificaAltrui] = useState("");
-  const bubblersOrdinati = [...bubblers].sort((a, b) => (a.nome_breve || a.cognome || a.username).localeCompare(b.nome_breve || b.cognome || b.username));
+  // Solo gli attivi: un bubbler disattivo non lavora, quindi non si filtra, non si modifica e non
+  // si aspetta la sua conferma. Il nome resta risolvibile (nomeBubbler legge tutti) per le righe
+  // che ha già registrato.
+  const bubblersOrdinati = bubblers.filter(b => b.attivo !== false).sort((a, b) => (a.nome_breve || a.cognome || a.username).localeCompare(b.nome_breve || b.cognome || b.username));
 
   const campiFiltroDisponibili = filtroProvincia ? campi.filter(c => (c.provincia || 'Senza provincia') === filtroProvincia) : campi;
   // I bubbler che lavorano nel luogo filtrato: sono le voci selezionabili nel filtro per operatore

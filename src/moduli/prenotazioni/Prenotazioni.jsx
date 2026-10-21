@@ -390,7 +390,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const [p, o, c, t, pr, pv, vc, dc, df, pag, gi, li, se, ex] = await Promise.all([
       supabase.from('pren_pacchetti').select('*').order('nome'),
       // Operatori = bubbler configurati in Disponibilità (utenti con flag bubbler), non più una tabella a parte.
-      supabase.from('utenti').select('id, username, nome, cognome, nome_breve, telefono, email').eq('bubbler', true).order('nome_breve'),
+      supabase.from('utenti').select('*').eq('bubbler', true).order('nome_breve'),
       supabase.from('pren_campi').select('*').order('nome'),
       supabase.from('pren_campi_tariffe').select('*'),
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
@@ -416,7 +416,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     if (li.data) setListino(li.data);
     if (se.data) setSedi(se.data);
     if (ex.data) setExtras(ex.data);
-    if (o.data) setOperatori(o.data.map(b => ({ id: b.id, nome: b.nome_breve || [b.nome, b.cognome].filter(Boolean).join(' ') || b.username, email: b.email, telefono: b.telefono })));
+    // Tutti i bubbler, anche i disattivi: servono a riconoscere chi è già assegnato a una partita. Si
+    // legge '*' e non la colonna attivo per nome, così la pagina funziona anche prima di sql/bubbler_attivo.sql.
+    if (o.data) setOperatori(o.data.map(b => ({ id: b.id, nome: b.nome_breve || [b.nome, b.cognome].filter(Boolean).join(' ') || b.username, email: b.email, telefono: b.telefono, attivo: b.attivo !== false })));
     if (c.data) setCampi(c.data);
     if (t.data) setTariffe(t.data);
     // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher): vengono agganciati
@@ -2097,7 +2099,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                   const conDisp = operatori.map(o => ({ ...o, disp: disponibilitaOperatore(o.id, formPren.data, formPren.oraInizio, oraFineEffettiva, locationDaCampi ? formPren.campoId : null) }));
                   const scelti = conDisp.filter(o => formPren.operatoriIds.includes(o.id));
                   const ordine = (d) => d === true ? 0 : d === false ? 2 : 1;
-                  const liberi = conDisp.filter(o => !formPren.operatoriIds.includes(o.id)).sort((a, b) => ordine(a.disp) - ordine(b.disp));
+                  // Un bubbler disattivo non si propone: resta solo fra gli scelti, se lo era già.
+                  const liberi = conDisp.filter(o => o.attivo && !formPren.operatoriIds.includes(o.id)).sort((a, b) => ordine(a.disp) - ordine(b.disp));
                   return <>
                     {scelti.map(o => (
                       <span key={o.id} className={`chip-operatore sel ${o.disp === false ? 'non-disponibile' : ''}`} title={o.disp === true ? 'Disponibile' : o.disp === false ? 'Non disponibile' : 'Disponibilità da verificare'}>
@@ -2113,7 +2116,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     )}
                   </>;
                 })()}
-                {operatori.length === 0 && <span style={{ color: '#999', fontSize: '0.85rem' }}>Nessun bubbler configurato: attivali in Disponibilità &gt; Configuratore.</span>}
+                {!operatori.some(o => o.attivo) && <span style={{ color: '#999', fontSize: '0.85rem' }}>Nessun bubbler attivo: si attivano in Anagrafiche &gt; Bubbler.</span>}
               </div>
               )}
             </div>

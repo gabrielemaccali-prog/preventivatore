@@ -28,10 +28,11 @@ function Bubbler() {
   // SQL non ancora eseguito. Quello che manca si annota, così il configuratore sa cosa non
   // può mostrare e il salvataggio sa cosa non deve scrivere.
   const GRADINI_BUBBLER = [
-    { colonne: `${COLONNE_BUBBLER}, senza_ritenuta, rimborso_intestato_a, iban`, mancanti: [] },
-    { colonne: `${COLONNE_BUBBLER}, senza_ritenuta, rimborso_intestato_a`, mancanti: ['iban'] },
-    { colonne: `${COLONNE_BUBBLER}, senza_ritenuta`, mancanti: ['iban', 'rimborso_intestato_a'] },
-    { colonne: COLONNE_BUBBLER, mancanti: ['iban', 'rimborso_intestato_a', 'senza_ritenuta'] },
+    { colonne: `${COLONNE_BUBBLER}, senza_ritenuta, rimborso_intestato_a, iban, attivo`, mancanti: [] },
+    { colonne: `${COLONNE_BUBBLER}, senza_ritenuta, rimborso_intestato_a, iban`, mancanti: ['attivo'] },
+    { colonne: `${COLONNE_BUBBLER}, senza_ritenuta, rimborso_intestato_a`, mancanti: ['attivo', 'iban'] },
+    { colonne: `${COLONNE_BUBBLER}, senza_ritenuta`, mancanti: ['attivo', 'iban', 'rimborso_intestato_a'] },
+    { colonne: COLONNE_BUBBLER, mancanti: ['attivo', 'iban', 'rimborso_intestato_a', 'senza_ritenuta'] },
   ];
   const leggiBubblers = async () => {
     let ultimo;
@@ -44,10 +45,31 @@ function Bubbler() {
     return ultimo;
   };
 
+  // Gli utenti senza flag Bubbler. Prima che esistesse "disattivo", spegnere il flag era il modo di
+  // togliere qualcuno dalle prenotazioni: così però spariva anche dalle Spese e dagli andamenti.
+  // Da qui si riprendono come bubbler disattivi.
+  const [altriUtenti, setAltriUtenti] = useState([]);
+  const [mostraAltri, setMostraAltri] = useState(false);
+
   const fetchTutto = async () => {
-    const res = await leggiBubblers();
+    const [res, altri] = await Promise.all([
+      leggiBubblers(),
+      supabase.from('utenti').select('id, username, nome, cognome, email').or('bubbler.is.null,bubbler.eq.false').order('cognome'),
+    ]);
     if (res.error) console.error('Bubbler — caricamento fallito:', res.error);
     if (res.data) setBubblers(res.data);
+    if (altri.data) setAltriUtenti(altri.data);
+  };
+
+  const rendiBubbler = async (u) => {
+    const nome = [u.nome, u.cognome].filter(Boolean).join(' ') || u.username;
+    const disattivo = haColonna('attivo');
+    if (!window.confirm(disattivo
+      ? `Rendere ${nome} un bubbler disattivo?\n\nComparirà in Spese e negli andamenti, non in Prenotazioni.`
+      : `Rendere ${nome} un bubbler?\n\nSenza sql/bubbler_attivo.sql non si può creare disattivo: comparirà anche in Prenotazioni.`)) return;
+    const { error } = await supabase.from('utenti').update({ bubbler: true, ...(disattivo ? { attivo: false } : {}) }).eq('id', u.id);
+    if (error) return segnalaErrore('Errore salvataggio bubbler', error);
+    fetchTutto();
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchTutto(); }, []);
@@ -73,11 +95,17 @@ function Bubbler() {
   // glieli dà un amministratore in Impostazioni > Utenti. Così chi gestisce i bubbler non ha
   // bisogno di vedere ruoli e accessi.
   //
-  // L'email si scrive solo alla creazione: è la credenziale con cui la persona entrerà, e dopo non
-  // si cambia più da nessuna parte dell'applicazione (se va corretta si interviene sul database).
-  // `salvaInlineBubbler` manda a database solo le chiavi di BUBBLER_VUOTO, quindi non può toccarla.
-  const BUBBLER_VUOTO = { nome: '', cognome: '', nome_breve: '', telefono: '', indirizzo: '', cap: '', citta: '', provincia: '', codice_fiscale: '', iban: '', senza_ritenuta: false, rimborso_intestato_a: null };
-  const OBBLIGATORI_BUBBLER = { nome: 'nome', cognome: 'cognome', telefono: 'telefono', indirizzo: 'indirizzo', cap: 'CAP', citta: 'comune', provincia: 'provincia', codice_fiscale: 'codice fiscale' };
+  // L'email si scrive una volta sola: è la credenziale con cui la persona entrerà, e dopo la cambia
+  // solo un amministratore (il database lo impone). Chi nasce disattivo può non averla ancora: gliela
+  // si dà dalla modifica, finché è vuota. `pulisciBubbler` scrive solo le chiavi di BUBBLER_VUOTO,
+  // e l'email non c'è: `salvaInlineBubbler` la aggiunge a parte, e solo se prima mancava.
+  const BUBBLER_VUOTO = { nome: '', cognome: '', nome_breve: '', telefono: '', indirizzo: '', cap: '', citta: '', provincia: '', codice_fiscale: '', iban: '', senza_ritenuta: false, rimborso_intestato_a: null, attivo: true };
+  const OBBLIGATORI_BUBBLER = { nome: 'nome', cognome: 'cognome', email: 'email', telefono: 'telefono', indirizzo: 'indirizzo', cap: 'CAP', citta: 'comune', provincia: 'provincia', codice_fiscale: 'codice fiscale' };
+  // Un bubbler disattivo non lavora: non si propone in Prenotazioni e non si aspettano le sue
+  // disponibilità. Per riconoscerlo bastano nome e cognome; il resto serve ai compensi, e si
+  // chiede quando lo si attiva.
+  const SOLO_DA_ATTIVO = ['email', 'telefono', 'indirizzo', 'cap', 'citta', 'provincia', 'codice_fiscale'];
+  const attivoDi = (b) => b.attivo !== false;
   // Residenza e codice fiscale esistono per una ragione sola: finire in testa al documento di
   // rimborso. Chi non ne riceve uno — perché è senza ritenuta, o perché il suo compenso finisce
   // sulla ricevuta di un altro — per quei campi resta facoltativo, e pretenderli vorrebbe dire
@@ -86,7 +114,8 @@ function Bubbler() {
   const servePerDocumento = (d) => !d.senza_ritenuta && !d.rimborso_intestato_a;
   // L'IBAN resta facoltativo: non è un dato che si ha sempre sottomano quando si registra un
   // bubbler, e pretenderlo vorrebbe dire non poterlo registrare affatto. Si aggiunge quando serve.
-  const serveCampo = (d, k) => servePerDocumento(d) || !SOLO_PER_DOCUMENTO.includes(k);
+  const serveCampo = (d, k) => (attivoDi(d) || !SOLO_DA_ATTIVO.includes(k))
+    && (servePerDocumento(d) || !SOLO_PER_DOCUMENTO.includes(k));
   const campiMancantiBubbler = (d) => Object.entries(OBBLIGATORI_BUBBLER)
     .filter(([k]) => serveCampo(d, k))
     .filter(([k]) => !(d[k] || '').trim())
@@ -105,7 +134,7 @@ function Bubbler() {
   // I campi non testuali dell'anagrafica stanno fuori dalla normalizzazione a null, e si scrivono
   // solo se il database ha la colonna: altrimenti fallirebbe tutto il salvataggio, anagrafica
   // compresa, per un campo che intanto non si può nemmeno impostare.
-  const NON_TESTUALI = ['senza_ritenuta', 'rimborso_intestato_a'];
+  const NON_TESTUALI = ['senza_ritenuta', 'rimborso_intestato_a', 'attivo'];
   // Una colonna che il database non ha non si mostra né si scrive: resterebbe sempre vuota e non
   // si potrebbe nemmeno impostare.
   const haColonna = (c) => !colonneMancanti.includes(c);
@@ -115,7 +144,9 @@ function Bubbler() {
     ...(haColonna('iban') ? { iban: normalizzaIBAN(d.iban) || null } : {}),
     ...(haColonna('senza_ritenuta') ? { senza_ritenuta: !!d.senza_ritenuta } : {}),
     ...(haColonna('rimborso_intestato_a') ? { rimborso_intestato_a: d.rimborso_intestato_a || null } : {}),
+    ...(haColonna('attivo') ? { attivo: attivoDi(d) } : {}),
   });
+  const emailValida = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   const mostraRimborso = haColonna('senza_ritenuta');
 
@@ -139,27 +170,61 @@ function Bubbler() {
     : (b.senza_ritenuta ? 'Senza ritenuta' : 'Ricevuta propria');
 
   const [datiBubblerInline, setDatiBubblerInline] = useState(BUBBLER_VUOTO);
-  const iniziaInlineBubbler = (b) => {
+  const iniziaInlineBubbler = (b, extra = {}) => {
     setIdBubblerInline(b.id);
-    setDatiBubblerInline({
+    setDatiBubblerInline(Object.assign({
       ...Object.fromEntries(Object.keys(BUBBLER_VUOTO).map(k => [k, b[k] || ''])),
       senza_ritenuta: !!b.senza_ritenuta,
       rimborso_intestato_a: b.rimborso_intestato_a || null,
-    });
+      attivo: attivoDi(b),
+      email: b.email || '',
+    }, extra));
   };
   const salvaInlineBubbler = async () => {
-    const mancanti = campiMancantiBubbler(datiBubblerInline);
-    if (mancanti.length) return alert(`Compila: ${mancanti.join(', ')}.`);
-    if (!cfValido(datiBubblerInline)) return alert('Il codice fiscale non è valido.');
-    if (!ibanValido(datiBubblerInline)) return alert("L'IBAN non è valido: ricontrolla di averlo copiato per intero.");
-    const { error } = await supabase.from('utenti').update(pulisciBubbler(datiBubblerInline)).eq('id', idBubblerInline);
-    if (error) { return segnalaErrore('Errore salvataggio bubbler', error); }
+    const d = datiBubblerInline;
+    const mancanti = campiMancantiBubbler(d);
+    if (mancanti.length) {
+      return alert(attivoDi(d)
+        ? `Per un bubbler attivo servono anche: ${mancanti.join(', ')}.\n\nSe non li hai ancora, salvalo disattivo.`
+        : `Compila: ${mancanti.join(', ')}.`);
+    }
+    if (!cfValido(d)) return alert('Il codice fiscale non è valido.');
+    if (!ibanValido(d)) return alert("L'IBAN non è valido: ricontrolla di averlo copiato per intero.");
+    const originale = bubblers.find(x => x.id === idBubblerInline) || {};
+    const emailNuova = !originale.email ? (d.email || '').trim().toLowerCase() : '';
+    if (emailNuova && !emailValida(emailNuova)) return alert("L'email non è valida.");
+    if (emailNuova && !window.confirm(`Dare a ${[d.nome, d.cognome].filter(Boolean).join(' ')} l'email ${emailNuova}?\n\nDopo la potrà cambiare solo un amministratore.`)) return;
+    const { error } = await supabase.from('utenti')
+      .update({ ...pulisciBubbler(d), ...(emailNuova ? { email: emailNuova } : {}) })
+      .eq('id', idBubblerInline);
+    if (error) {
+      if (error.code === '23505') return alert(`Esiste già un utente con l'email ${emailNuova}.`);
+      return segnalaErrore('Errore salvataggio bubbler', error);
+    }
     setIdBubblerInline(null); fetchTutto();
+  };
+
+  // Spegnerlo è immediato; accenderlo vuol dire mandarlo a lavorare, e allora i dati per pagarlo
+  // devono esserci. Se mancano si apre la scheda, già impostata su attivo, a chiederli.
+  const alternaAttivo = async (b) => {
+    if (!attivoDi(b)) {
+      const mancanti = campiMancantiBubbler({ ...b, attivo: true });
+      if (mancanti.length) {
+        alert(`Per attivare ${nomeBubbler(b.id)} mancano: ${mancanti.join(', ')}.\n\nCompletali nella scheda che si apre e salva.`);
+        return iniziaInlineBubbler(b, { attivo: true });
+      }
+    }
+    const { error } = await supabase.from('utenti').update({ attivo: !attivoDi(b) }).eq('id', b.id);
+    if (error) return segnalaErrore('Errore salvataggio bubbler', error);
+    fetchTutto();
   };
 
   // Le colonne dell'elenco: le due facoltative dipendono da cosa il database ha davvero, e la
   // riga che si apre in modifica deve coprirle tutte.
-  const colonneElencoBubbler = 5 + (mostraRimborso ? 1 : 0);
+  const colonneElencoBubbler = 5 + (mostraRimborso ? 1 : 0) + (haColonna('attivo') ? 1 : 0);
+  // Gli attivi prima: sono quelli con cui si lavora. Il sort è stabile, quindi dentro ciascun
+  // gruppo resta l'ordine per cognome della lettura.
+  const bubblersInElenco = [...bubblers].sort((a, b) => Number(attivoDi(b)) - Number(attivoDi(a)));
 
   // La scheda che si apre sotto la riga in modifica. È una funzione, non un componente: definirne
   // uno qui dentro lo farebbe rimontare a ogni battuta, perdendo il focus mentre si scrive.
@@ -186,13 +251,24 @@ function Bubbler() {
           {campo('cognome', 'Cognome')}
           {campo('nome_breve', 'Nome breve')}
           {campo('telefono', 'Telefono')}
-          <label style={{ display: 'grid', gap: '4px' }}>
-            <span style={stileEtichetta}>Email</span>
-            <span
-              title="L'email non si modifica: se va corretta si interviene sul database"
-              style={{ height: '32px', display: 'flex', alignItems: 'center', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis' }}
-            >{b.email || '—'}</span>
-          </label>
+          {b.email ? (
+            <label style={{ display: 'grid', gap: '4px' }}>
+              <span style={stileEtichetta}>Email</span>
+              <span
+                title="L'email non si modifica: se va corretta la cambia un amministratore"
+                style={{ height: '32px', display: 'flex', alignItems: 'center', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis' }}
+              >{b.email}</span>
+            </label>
+          ) : campo('email', 'Email')}
+          {haColonna('attivo') && (
+            <label style={{ display: 'grid', gap: '4px' }}>
+              <span style={stileEtichetta}>Stato</span>
+              <span style={{ height: '32px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
+                <input type="checkbox" checked={attivoDi(datiBubblerInline)} onChange={(e) => setDatiBubblerInline(d => ({ ...d, attivo: e.target.checked }))} />
+                Attivo
+              </span>
+            </label>
+          )}
         </div>
 
         {titolo('Residenza')}
@@ -243,20 +319,26 @@ function Bubbler() {
   const creaBubbler = async (e) => {
     e.preventDefault();
     const email = (nuovoBubbler.email || '').trim().toLowerCase();
-    const mancanti = [...(email ? [] : ['email']), ...campiMancantiBubbler(nuovoBubbler)];
-    if (mancanti.length) return alert(`Compila: ${mancanti.join(', ')}.`);
+    const mancanti = campiMancantiBubbler(nuovoBubbler);
+    if (mancanti.length) {
+      return alert(attivoDi(nuovoBubbler)
+        ? `Per un bubbler attivo servono: ${mancanti.join(', ')}.\n\nSe non li hai ancora, togli la spunta "Attivo": bastano nome e cognome.`
+        : `Compila: ${mancanti.join(', ')}.`);
+    }
     if (!cfValido(nuovoBubbler)) return alert('Il codice fiscale non è valido.');
     if (!ibanValido(nuovoBubbler)) return alert("L'IBAN non è valido: ricontrolla di averlo copiato per intero.");
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return alert("L'email non è valida.");
-    if (!window.confirm(`Creare il bubbler con email ${email}?\n\nL'email non si potrà più modificare.`)) return;
+    if (email && !emailValida(email)) return alert("L'email non è valida.");
+    if (email && !window.confirm(`Creare il bubbler con email ${email}?\n\nDopo la potrà cambiare solo un amministratore.`)) return;
+    // L'username è la vecchia credenziale di ripiego: per chi nasce oggi coincide con l'email, e
+    // chi non ce l'ha ancora prende nome e cognome, come i bubbler di una volta.
+    const username = email || [nuovoBubbler.nome, nuovoBubbler.cognome].map(s => (s || '').trim()).filter(Boolean).join(' ');
     const { error } = await supabase.from('utenti').insert([{
       ...pulisciBubbler(nuovoBubbler),
-      // L'username è la vecchia credenziale di ripiego: per chi nasce oggi coincide con l'email.
-      username: email, email, bubbler: true,
+      username, email: email || null, bubbler: true,
       ruolo_id: null, ruolo: null,
     }]);
     if (error) {
-      if (error.code === '23505') return alert(`Esiste già un utente con l'email ${email}.`);
+      if (error.code === '23505') return alert(email ? `Esiste già un utente con l'email ${email}.` : `Esiste già un utente che si chiama ${username}.`);
       if (error.code === '23502') return segnalaErrore('Schema del database non ancora aggiornato: esegui sql/bubbler_senza_accesso.sql', error);
       return segnalaErrore('Errore creazione bubbler', error);
     }
@@ -269,10 +351,20 @@ function Bubbler() {
         <h2 style={{ margin: 0 }}>Bubbler</h2>
         <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={() => setNuovoBubbler({ ...BUBBLER_VUOTO, email: '' })}><Icona nome="nuovo" size={16} style={{ marginRight: '6px' }} />Nuovo</button>
       </div>
-      <p className="descrizione-pagina">Anagrafica dei bubbler. Questo elenco è la fonte degli operatori selezionabili in Prenotazioni; residenza e codice fiscale finiscono in testa al documento di rimborso, in Consuntivazione &gt; Bubbler, e non si chiedono a chi è senza ritenuta, che quel documento non lo riceve. L'IBAN è il conto su cui arriva il bonifico: è facoltativo, ma se c'è deve essere corretto. Un bubbler creato qui non può ancora entrare nell'applicazione: l'accesso lo abilita un amministratore in Impostazioni &gt; Utenti. L'email, una volta salvata, non si modifica più.</p>
+      <p className="descrizione-pagina">Anagrafica dei bubbler. Quelli attivi sono gli operatori selezionabili in Prenotazioni; un bubbler disattivo non si propone più, ma resta sulle partite e sui compensi che ha già. Per crearlo disattivo bastano nome e cognome: il resto si chiede quando lo si attiva. Residenza e codice fiscale finiscono in testa al documento di rimborso, in Consuntivazione &gt; Bubbler, e non si chiedono a chi è senza ritenuta, che quel documento non lo riceve. L'IBAN è il conto su cui arriva il bonifico: è facoltativo, ma se c'è deve essere corretto. Un bubbler creato qui non può ancora entrare nell'applicazione: l'accesso lo abilita un amministratore in Impostazioni &gt; Utenti. L'email, una volta salvata, non si modifica più.</p>
 
       {/* Senza la colonna la spunta non si può né leggere né salvare, ma il resto
           dell'anagrafica funziona: meglio dirlo qui che lasciarla sparita senza spiegazioni. */}
+      {colonneMancanti.includes('attivo') && (
+        <div style={{ margin: '10px 0 14px 0', padding: '12px 16px', background: '#fff8e1', border: '1px solid #f0d999', borderLeft: '4px solid #f0a000', borderRadius: '4px' }}>
+          <strong style={{ display: 'block', marginBottom: '3px' }}>Schema del database non ancora aggiornato</strong>
+          <span style={{ fontSize: '0.85rem', color: '#555' }}>
+            Esegui <code>sql/bubbler_attivo.sql</code> nell&apos;SQL Editor di Supabase: finché manca la
+            colonna, i bubbler non si possono disattivare e tutti chiedono i dati completi.
+          </span>
+        </div>
+      )}
+
       {colonneMancanti.includes('iban') && (
         <div style={{ margin: '10px 0 14px 0', padding: '12px 16px', background: '#fff8e1', border: '1px solid #f0d999', borderLeft: '4px solid #f0a000', borderRadius: '4px' }}>
           <strong style={{ display: 'block', marginBottom: '3px' }}>Schema del database non ancora aggiornato</strong>
@@ -283,7 +375,7 @@ function Bubbler() {
         </div>
       )}
 
-      {colonneMancanti.some(c => c !== 'iban') && (
+      {colonneMancanti.some(c => c !== 'iban' && c !== 'attivo') && (
         <div style={{ margin: '10px 0 14px 0', padding: '12px 16px', background: '#fff8e1', border: '1px solid #f0d999', borderLeft: '4px solid #f0a000', borderRadius: '4px' }}>
           <strong style={{ display: 'block', marginBottom: '3px' }}>Schema del database non ancora aggiornato</strong>
           <span style={{ fontSize: '0.85rem', color: '#555' }}>
@@ -308,42 +400,57 @@ function Bubbler() {
               <button type="button" className="modal-form-close" onClick={() => setNuovoBubbler(null)} aria-label="Chiudi">✕</button>
               <h3 style={{ margin: '0 0 15px 0', fontSize: '1.1rem', color: '#0288d1' }}>Nuovo bubbler</h3>
               <form onSubmit={creaBubbler} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {haColonna('attivo') && (
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '0.85rem' }}>
+                    <input type="checkbox" checked={attivoDi(nuovoBubbler)} onChange={(e) => setNuovoBubbler({ ...nuovoBubbler, attivo: e.target.checked })} style={{ marginTop: '3px' }} />
+                    <span>
+                      <strong>Attivo</strong>
+                      <span style={{ display: 'block', color: '#64748b', fontSize: '0.78rem' }}>
+                        {attivoDi(nuovoBubbler)
+                          ? 'Si propone come operatore in Prenotazioni: servono i dati per pagarlo.'
+                          : 'Non si propone in Prenotazioni: bastano nome e cognome, il resto si chiede quando lo attivi.'}
+                      </span>
+                    </span>
+                  </label>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                   {campo('nome', 'Nome *', { autoFocus: true })}
                   {campo('cognome', 'Cognome *')}
                 </div>
-                {campo('email', 'Email * (non modificabile dopo)', { type: 'email' })}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                  {campo('telefono', 'Telefono *', { type: 'tel' })}
                   {campo('nome_breve', 'Nome breve')}
+                  {campo('telefono', etichettaBubbler(nuovoBubbler, 'telefono', 'Telefono'), { type: 'tel' })}
                 </div>
-                <RicercaIndirizzo placeholder="Cerca la residenza..." onSelect={(a) => setNuovoBubbler(d => ({ ...d, ...a }))} />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: '10px' }}>
-                  {campo('indirizzo', etichettaBubbler(nuovoBubbler, 'indirizzo', 'Via e civico'))}
-                  {campo('cap', etichettaBubbler(nuovoBubbler, 'cap', 'CAP'))}
-                  {campo('citta', etichettaBubbler(nuovoBubbler, 'citta', 'Comune'))}
-                  {campo('provincia', etichettaBubbler(nuovoBubbler, 'provincia', 'Prov.'))}
-                </div>
-                <input type="text" placeholder={etichettaBubbler(nuovoBubbler, 'codice_fiscale', 'Codice fiscale')} value={nuovoBubbler.codice_fiscale} onChange={(e) => setNuovoBubbler({ ...nuovoBubbler, codice_fiscale: e.target.value.toUpperCase() })} style={{ ...stileInput, textTransform: 'uppercase' }} />
-                {haColonna('iban') && (
-                  <input type="text" placeholder="IBAN" value={nuovoBubbler.iban} onChange={(e) => setNuovoBubbler({ ...nuovoBubbler, iban: e.target.value.toUpperCase() })} style={{ ...stileInput, textTransform: 'uppercase' }} />
-                )}
-                {mostraRimborso && (
-                  <label style={{ display: 'block', fontSize: '0.85rem' }}>
-                    Rimborso
-                    <select
-                      value={modalitaDi(nuovoBubbler)}
-                      onChange={(e) => setNuovoBubbler(applicaModalita(nuovoBubbler, e.target.value))}
-                      style={{ ...stileInput, marginTop: '4px' }}
-                    >
-                      <option value="">Ricevuta propria</option>
-                      <option value="senza">Senza ritenuta — si chiude in un passaggio solo</option>
-                      {haColonna('rimborso_intestato_a') && intestatariPossibili(null).map(x => (
-                        <option key={x.id} value={`a:${x.id}`}>Intestato a {nomeBubbler(x.id)}</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
+                {campo('email', `${etichettaBubbler(nuovoBubbler, 'email', 'Email')} (la cambia poi solo un amministratore)`, { type: 'email' })}
+                {attivoDi(nuovoBubbler) && (<>
+                  <RicercaIndirizzo placeholder="Cerca la residenza..." onSelect={(a) => setNuovoBubbler(d => ({ ...d, ...a }))} />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: '10px' }}>
+                    {campo('indirizzo', etichettaBubbler(nuovoBubbler, 'indirizzo', 'Via e civico'))}
+                    {campo('cap', etichettaBubbler(nuovoBubbler, 'cap', 'CAP'))}
+                    {campo('citta', etichettaBubbler(nuovoBubbler, 'citta', 'Comune'))}
+                    {campo('provincia', etichettaBubbler(nuovoBubbler, 'provincia', 'Prov.'))}
+                  </div>
+                  <input type="text" placeholder={etichettaBubbler(nuovoBubbler, 'codice_fiscale', 'Codice fiscale')} value={nuovoBubbler.codice_fiscale} onChange={(e) => setNuovoBubbler({ ...nuovoBubbler, codice_fiscale: e.target.value.toUpperCase() })} style={{ ...stileInput, textTransform: 'uppercase' }} />
+                  {haColonna('iban') && (
+                    <input type="text" placeholder="IBAN" value={nuovoBubbler.iban} onChange={(e) => setNuovoBubbler({ ...nuovoBubbler, iban: e.target.value.toUpperCase() })} style={{ ...stileInput, textTransform: 'uppercase' }} />
+                  )}
+                  {mostraRimborso && (
+                    <label style={{ display: 'block', fontSize: '0.85rem' }}>
+                      Rimborso
+                      <select
+                        value={modalitaDi(nuovoBubbler)}
+                        onChange={(e) => setNuovoBubbler(applicaModalita(nuovoBubbler, e.target.value))}
+                        style={{ ...stileInput, marginTop: '4px' }}
+                      >
+                        <option value="">Ricevuta propria</option>
+                        <option value="senza">Senza ritenuta — si chiude in un passaggio solo</option>
+                        {haColonna('rimborso_intestato_a') && intestatariPossibili(null).map(x => (
+                          <option key={x.id} value={`a:${x.id}`}>Intestato a {nomeBubbler(x.id)}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </>)}
                 <button type="submit" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '9px 18px', background: '#0288d1', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}><Icona nome="salva" size={16} style={{ marginRight: '6px' }} />Crea bubbler</button>
               </form>
             </div>
@@ -357,6 +464,7 @@ function Bubbler() {
         <table style={{ width: '100%', minWidth: '720px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
           <thead>
             <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+              {haColonna('attivo') && <th style={{ padding: '10px 12px', textAlign: 'center', width: '70px' }} title="Un bubbler disattivo non si propone come operatore in Prenotazioni">Attivo</th>}
               <th style={{ padding: '10px 12px' }}>Bubbler</th>
               <th style={{ padding: '10px 12px' }}>Contatti</th>
               <th style={{ padding: '10px 12px' }}>Residenza</th>
@@ -366,11 +474,19 @@ function Bubbler() {
             </tr>
           </thead>
           <tbody>
-            {bubblers.map(b => {
+            {bubblersInElenco.map(b => {
               const inModifica = idBubblerInline === b.id;
               return (
                 <Fragment key={b.id}>
-                  <tr style={{ borderBottom: inModifica ? 'none' : '1px solid #eee', background: inModifica ? '#f8fafc' : 'transparent' }}>
+                  <tr style={{ borderBottom: inModifica ? 'none' : '1px solid #eee', background: inModifica ? '#f8fafc' : 'transparent', opacity: attivoDi(b) || inModifica ? 1 : 0.55 }}>
+                    {haColonna('attivo') && (
+                      <td style={{ padding: '10px 12px', textAlign: 'center', verticalAlign: 'middle' }}>
+                        <input
+                          type="checkbox" checked={attivoDi(b)} onChange={() => alternaAttivo(b)}
+                          title={attivoDi(b) ? 'Attivo: si propone in Prenotazioni' : 'Disattivo: non si propone in Prenotazioni'}
+                        />
+                      </td>
+                    )}
                     <td style={{ padding: '10px 12px', verticalAlign: 'middle' }}>
                       <strong>{[b.nome, b.cognome].filter(Boolean).join(' ') || b.username}</strong>
                       {b.nome_breve && <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{b.nome_breve}</div>}
@@ -420,6 +536,41 @@ function Bubbler() {
           </tbody>
         </table>
       </div>
+
+      {altriUtenti.length > 0 && (
+        <div style={{ marginTop: '24px' }}>
+          <button type="button" className="btn-outline-annulla" onClick={() => setMostraAltri(m => !m)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', padding: '6px 12px', borderRadius: '4px' }}>
+            {mostraAltri ? '▼' : '▶'} Utenti senza flag Bubbler ({altriUtenti.length})
+          </button>
+          {mostraAltri && (
+            <>
+              <p className="descrizione-pagina" style={{ marginTop: '10px' }}>
+                Chi qui ha lavorato da bubbler va ripreso come bubbler disattivo: così compare nella tendina
+                &quot;Compenso bubbler&quot; delle Spese e negli andamenti, ma non in Prenotazioni.
+              </p>
+              <div className="admin-table-box" style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', maxHeight: 'none', overflowY: 'visible', overflowX: 'auto' }}>
+                <table style={{ width: '100%', minWidth: '520px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                  <tbody>
+                    {altriUtenti.map(u => (
+                      <tr key={u.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '8px 12px' }}><strong>{[u.nome, u.cognome].filter(Boolean).join(' ') || u.username}</strong></td>
+                        <td style={{ padding: '8px 12px', color: '#64748b' }}>{u.email || '—'}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                          <button type="button" className="btn-accent-inline" onClick={() => rendiBubbler(u)}
+                            style={{ fontSize: '0.8rem', padding: '4px 10px' }}>
+                            {haColonna('attivo') ? 'Rendi bubbler disattivo' : 'Rendi bubbler'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
