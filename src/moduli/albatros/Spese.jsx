@@ -24,6 +24,9 @@ import SceltaCategoria from './SceltaCategoria'
 
 const leggiImporto = (v) => { const n = Number(String(v ?? '').trim().replace(',', '.')); return Number.isFinite(n) ? r2(n) : NaN; };
 const VOCE_VUOTA = { descrizione: '', importo: '', categoria: null };
+// BFM non si sceglie qui: le spese che BFM sostiene per Albatros si scrivono nel modulo Spese di
+// BFM e arrivano da sole (spesa_bfm_id), scriverle anche qui le conterebbe due volte.
+const ENTI_SCEGLIBILI = ENTI.filter(e => e.id !== 'bfm');
 const SPESA_VUOTA = () => ({ id: null, data: giornataDiLavoro(), importo: '', descrizione: '', categoria: null, ente: '', metodo: 'contanti' });
 
 function Spese({ user, categorie, utenti, puoCorreggere }) {
@@ -94,6 +97,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
     if (!modulo.data) return alert('Scegli la data.');
     if (!descrizione) return alert('Scrivi cosa è stato pagato.');
     if (!importo || importo <= 0) return alert('Importo non valido.');
+    if (!modulo.id && modulo.ente === 'bfm') return alert('Le spese pagate da BFM si registrano nel modulo Spese di BFM: da lì arrivano anche qui.');
     const giaDettagliato = modulo.id ? dettaglioSpesa({ importo }, vociPer[modulo.id]).dettagliato : 0;
     if (importo < giaDettagliato) return alert(`Il dettaglio di questa spesa arriva già a ${euro(giaDettagliato)}: il totale non può essere più basso.`);
     const record = { data: modulo.data, importo, descrizione, categoria_id: idCategoriaScelta(modulo.categoria, categorie, 'spesa'), ente: modulo.ente || null, metodo: modulo.ente === 'albatros' ? (modulo.metodo || 'contanti') : null };
@@ -241,7 +245,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                         : <span className="albatros-tenue"> · {etichettaMetodoSpesa(s)}</span>)}</> : (
                         <select value="" onChange={(e) => attribuisci(s, e.target.value)} className="albatros-badge-select" title="Scegli chi l'ha pagata">
                           <option value="">Da attribuire</option>
-                          {ENTI.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
+                          {ENTI_SCEGLIBILI.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
                         </select>
                       )}
                     </td>
@@ -316,7 +320,8 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
               <label className="albatros-etichetta">Pagata da
                 <select value={modulo.ente} disabled={!!modulo.spesaBfm} onChange={(e) => setModulo({ ...modulo, ente: e.target.value })} className="albatros-campo">
                   <option value="">Da attribuire</option>
-                  {ENTI.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
+                  {/* BFM resta solo per mostrare una spesa che è già sua. */}
+                  {ENTI.filter(e => e.id !== 'bfm' || modulo.ente === 'bfm').map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
                 </select>
               </label>
               {modulo.ente === 'albatros' && (
@@ -328,6 +333,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
               )}
             </div>
             {modulo.spesaBfm && <p className="albatros-nota">Arriva dal modulo Spese di BFM: è un'uscita del conto corrente, oneri bancari compresi. Qui scegli la categoria di Albatros; data, importo e descrizione si cambiano nel modulo Spese.</p>}
+            {!modulo.id && <p className="albatros-nota">Le spese pagate da BFM non si scrivono qui: si registrano nel modulo Spese di BFM e arrivano da sole.</p>}
             {!puoCorreggere && <p className="albatros-nota">Una spesa aggiunta non si può più cambiare né togliere: in caso di errore avvisa l'amministratore.</p>}
             <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button type="button" className="btn-outline-annulla albatros-bottone" onClick={() => setModulo(null)}>Annulla</button>
