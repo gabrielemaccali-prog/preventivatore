@@ -1,19 +1,21 @@
 import { useState, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
-import { leggiEstrattoConto, euro } from '../../lib/banca'
+import { leggiEstrattoConto, verificaContinuita, euro } from '../../lib/banca'
 import { impronteGiaPresenti, importaEstratto, elaboraMovimenti } from './operazioni'
 
 // ============================================================
 // Il caricamento dell'estratto conto ("Lista Movimenti" esportata in Excel dalla banca), in cima
 // alla scheda Spese. Il file si carica quante volte si vuole e su qualunque periodo, anche
-// sovrapposto ai precedenti: entrano solo le righe nuove. Prima di importare si vede un'anteprima
+// sovrapposto ai precedenti: entrano solo le righe nuove. Non può però lasciare buchi: il file deve
+// sovrapporsi almeno di un giorno a quello che è registrato, e il suo saldo agganciarsi a quello dei
+// movimenti registrati; se no l'import è bloccato (verificaContinuita). Prima di importare si vede un'anteprima
 // (periodo, saldi, quante righe sono nuove); dopo, cosa è successo: le uscite nuove diventano spese
 // (classificate dalle regole, o da completare) e i costi dei bonifici si sommano alla spesa del
 // bonifico. I saldi e i movimenti si controllano nella scheda Banca.
 // ============================================================
 
-function CaricaEstratto({ user, regole, controparti, categorie, ricaricaDati }) {
+function CaricaEstratto({ user, regole, controparti, categorie, caricamenti, movimenti, ricaricaDati }) {
   const [anteprima, setAnteprima] = useState(null);
   const [inCorso, setInCorso] = useState(false);
   const [esito, setEsito] = useState(null);
@@ -27,7 +29,10 @@ function CaricaEstratto({ user, regole, controparti, categorie, ricaricaDati }) 
     try {
       const estratto = leggiEstrattoConto(XLSX, new Uint8Array(await file.arrayBuffer()));
       const presenti = await impronteGiaPresenti(estratto.movimenti.map(m => m.impronta));
-      setAnteprima({ estratto, nome: file.name, nuove: estratto.movimenti.filter(m => !presenti.has(m.impronta)) });
+      setAnteprima({
+        estratto, nome: file.name, nuove: estratto.movimenti.filter(m => !presenti.has(m.impronta)),
+        continuita: verificaContinuita(estratto, caricamenti, movimenti),
+      });
     } catch (err) {
       alert(`Non riesco a leggere il file: ${err.message}`);
     }
@@ -68,12 +73,15 @@ function CaricaEstratto({ user, regole, controparti, categorie, ricaricaDati }) 
             {anteprima.estratto.movimenti.length} movimenti nel file: <strong>{anteprima.nuove.length} nuovi</strong>, {anteprima.estratto.movimenti.length - anteprima.nuove.length} già caricati.
             {anteprima.estratto.nonContabilizzati > 0 && <> {anteprima.estratto.nonContabilizzati} non ancora contabilizzati, lasciati fuori: arriveranno col prossimo file.</>}
           </div>
-          {anteprima.estratto.differenzaFile !== 0 && (
-            <p className="albatros-avviso" style={{ marginTop: '8px' }}>Il file non torna con se stesso: saldo iniziale più movimenti fa {euro(anteprima.estratto.differenzaFile)} di differenza dal saldo finale. Qualche riga non è stata letta: meglio non importarlo.</p>
+          {!anteprima.continuita.ok && (
+            <div className="albatros-avviso" style={{ marginTop: '8px' }}>
+              <strong>Import bloccato</strong>: così resterebbe un buco nei movimenti.
+              {anteprima.continuita.motivi.map(m => <div key={m} style={{ marginTop: '4px' }}>{m}</div>)}
+            </div>
           )}
           <div style={{ display: 'flex', gap: '10px', marginTop: '10px', justifyContent: 'flex-end' }}>
-            <button type="button" className="btn-outline-annulla albatros-bottone" onClick={() => setAnteprima(null)}>Annulla</button>
-            <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={importa}>
+            <button type="button" className="btn-outline-annulla albatros-bottone" onClick={() => setAnteprima(null)}>{anteprima.continuita.ok ? 'Annulla' : 'Chiudi'}</button>
+            <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso || !anteprima.continuita.ok} onClick={importa}>
               {inCorso ? 'Importazione…' : anteprima.nuove.length ? `Importa ${anteprima.nuove.length} movimenti` : 'Registra il caricamento'}
             </button>
           </div>

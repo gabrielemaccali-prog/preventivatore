@@ -5,7 +5,7 @@
 // Il file di prova si costruisce qui, con la stessa forma della "Lista Movimenti" della banca.
 import * as XLSX from 'xlsx';
 import {
-  leggiEstrattoConto, controlloSaldi, elabora, regolaPer, controparteDi, preparaControparti, codiceDi, oneriDi, daCompletare,
+  leggiEstrattoConto, controlloSaldi, verificaContinuita, elabora, regolaPer, controparteDi, preparaControparti, codiceDi, oneriDi, daCompletare,
   cosaManca, completaDaRegola, regolaDaSpesa, cercaCategorie, percorsoCategoria, eFoglia, esitoRegola,
 } from './banca.js';
 
@@ -96,6 +96,24 @@ verifica('un nome solo non basta', null, controparteDi(mov[1], 'bubbler', contro
 verifica('campo riconosciuto dalla ragione sociale, senza la forma societaria', 'cmp_1', controparteDi(conTesto('IL CAMPETTO SSD A R.L. Affitto campi Luglio'), 'campo', controparti)?.id);
 verifica('fornitore riconosciuto dal nome', 's2', controparteDi(conTesto('Stomboli Marcello Saldo ft 2'), 'fornitore', controparti)?.id);
 verifica('la sede di BFM non è un fornitore', null, controparteDi(conTesto('BFM Milano giroconto'), 'fornitore', controparti));
+
+// ---------- continuità: niente buchi fra quello che è registrato e il file nuovo ----------
+const fileDa = (dal, al, saldoIniziale, movimenti = [], differenzaFile = 0) => ({ dal, al, saldoIniziale, movimenti, differenzaFile });
+verifica('primo file: passa', true, verificaContinuita(e, [], []).ok);
+verifica('lo stesso file ricaricato: passa', true, verificaContinuita(e, [car], mov).ok);
+verifica('file che non torna con se stesso: bloccato', false, verificaContinuita({ ...e, differenzaFile: 1 }, [], []).ok);
+// Registrato fino al 12/09: il file successivo deve partire dal 12/09 o prima.
+const prima12 = Math.round((finale + 87.8) * 100) / 100; // il saldo a inizio 12/09: prima del POS OBI
+verifica('parte dall\'ultimo giorno registrato, saldo giusto: passa', true, verificaContinuita(fileDa('2026-09-12', '2026-09-30', prima12), [car], mov).ok);
+verifica('parte il giorno dopo: bloccato', false, verificaContinuita(fileDa('2026-09-13', '2026-09-30', finale), [car], mov).ok);
+const buco = verificaContinuita(fileDa('2026-09-20', '2026-09-30', finale), [car], mov);
+verifica('… e dice da quando esportare', true, buco.motivi[0].includes('parta dal 12/09/2026'));
+verifica('date giuste ma saldo diverso (manca un movimento): bloccato', false, verificaContinuita(fileDa('2026-09-12', '2026-09-30', prima12 - 50), [car], mov).ok);
+// Lo storico: un file più vecchio deve arrivare almeno al primo giorno registrato, col saldo che si aggancia.
+const vecchio = [{ dataContabile: '2026-07-10', importo: -200 }, { dataContabile: '2026-07-21', importo: 550 }];
+verifica('storico che si aggancia: passa', true, verificaContinuita(fileDa('2026-07-01', '2026-07-21', 1200, vecchio), [car], mov).ok);
+verifica('storico col saldo che non si aggancia: bloccato', false, verificaContinuita(fileDa('2026-07-01', '2026-07-21', 1300, vecchio), [car], mov).ok);
+verifica('storico che finisce prima del registrato: bloccato', false, verificaContinuita(fileDa('2026-06-01', '2026-07-20', 1200, []), [car], mov).ok);
 
 // ---------- regole ----------
 const regole = [

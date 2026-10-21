@@ -146,6 +146,58 @@ export function controlloSaldi(caricamenti, movimenti) {
   return { partenza, esiti, saldoAttuale: fino(ultimo.al, true), alGiorno: ultimo.al };
 }
 
+// Si può importare questo file senza lasciare buchi? Due controlli, e basta che uno non torni per
+// bloccare l'import:
+//   date  il file deve toccare quello che è già registrato, sovrapponendosi almeno di un giorno:
+//         registrato fino al 10 ottobre, il file parte dal 10 o prima. Il giorno in comune serve
+//         perché l'ultimo giorno di un estratto può essere stato esportato a metà: i movimenti
+//         contabilizzati dopo arrivano col file successivo, con la stessa data. Vale anche
+//         all'indietro, per caricare lo storico: il file deve arrivare almeno al primo giorno
+//         registrato.
+//   saldi il saldo che il file dichiara dove si aggancia deve essere quello che risulta dai
+//         movimenti registrati. Le date possono combaciare e mancare lo stesso dei movimenti (un
+//         giorno caricato a metà, un file tagliato): il saldo se ne accorge, al centesimo.
+// Il primo file non ha niente con cui confrontarsi: passa, se torna con se stesso.
+// Restituisce { ok, motivi }: i motivi dicono cosa non va, in una frase ciascuno.
+const ggmmaaaa = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '');
+export function verificaContinuita(estratto, caricamenti, movimenti) {
+  const motivi = [];
+  if (r2(estratto.differenzaFile) !== 0) {
+    motivi.push(`Il file non torna con se stesso: saldo iniziale più movimenti si scosta di ${euro(estratto.differenzaFile)} dal saldo finale. Qualche riga non è stata letta.`);
+  }
+  const ordinati = [...(caricamenti || [])].sort((a, b) => a.dal.localeCompare(b.dal) || a.id - b.id);
+  if (ordinati.length === 0) return { ok: motivi.length === 0, motivi };
+  const primo = ordinati[0].dal;
+  const ultimo = ordinati.reduce((u, c) => (c.al > u ? c.al : u), ordinati[0].al);
+  const saldoPartenza = r2(ordinati[0].saldo_iniziale);
+
+  if (estratto.dal > ultimo) {
+    motivi.push(`Resterebbe un buco: i movimenti registrati arrivano al ${ggmmaaaa(ultimo)}, il file parte dal ${ggmmaaaa(estratto.dal)}. Esporta dalla banca un periodo che parta dal ${ggmmaaaa(ultimo)} o prima.`);
+  } else if (estratto.al < primo) {
+    motivi.push(`Resterebbe un buco: i movimenti registrati partono dal ${ggmmaaaa(primo)}, il file finisce il ${ggmmaaaa(estratto.al)}. Esporta un periodo che arrivi almeno al ${ggmmaaaa(primo)}.`);
+  } else if (estratto.dal >= primo) {
+    // Il file si aggancia dentro il registrato: il suo saldo iniziale è quello di inizio giornata.
+    const atteso = r2(saldoPartenza + (movimenti || [])
+      .filter(m => m.data_contabile >= primo && m.data_contabile < estratto.dal)
+      .reduce((t, m) => t + Number(m.importo), 0));
+    const diff = r2(r2(estratto.saldoIniziale) - atteso);
+    if (diff !== 0) {
+      motivi.push(`Il saldo iniziale del file al ${ggmmaaaa(estratto.dal)} è ${euro(estratto.saldoIniziale)}, ma dai movimenti registrati risulta ${euro(atteso)} (${euro(diff)} di differenza): prima del ${ggmmaaaa(estratto.dal)} manca qualche movimento, o ce n'è uno di troppo.`);
+    }
+  } else {
+    // Il file parte prima del registrato (lo storico): si confronta il suo saldo all'inizio del primo
+    // giorno registrato con quello da cui il registrato parte.
+    const alPrimo = r2(Number(estratto.saldoIniziale) + (estratto.movimenti || [])
+      .filter(m => m.dataContabile < primo)
+      .reduce((t, m) => t + Number(m.importo), 0));
+    const diff = r2(alPrimo - saldoPartenza);
+    if (diff !== 0) {
+      motivi.push(`Secondo il file il saldo a inizio ${ggmmaaaa(primo)} è ${euro(alPrimo)}, ma i movimenti registrati partono da ${euro(saldoPartenza)} (${euro(diff)} di differenza): il file non si aggancia a quello che c'è.`);
+    }
+  }
+  return { ok: motivi.length === 0, motivi };
+}
+
 // ------------------------------------------------------------
 // Dalla riga di banca alla spesa
 // ------------------------------------------------------------

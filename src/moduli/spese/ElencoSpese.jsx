@@ -21,11 +21,11 @@ import CaricaEstratto from './CaricaEstratto'
 // ============================================================
 
 const leggiImporto = (v) => { const n = Number(String(v ?? '').trim().replace(',', '.')); return Number.isFinite(n) ? r2(n) : NaN; };
-const oggi = () => new Date().toISOString().slice(0, 10);
 // Le celle dell'elenco: più basse di quelle standard, perché le righe sono tante.
 const CELLA = { padding: '5px 8px', verticalAlign: 'middle' };
-const CLASSIFICAZIONE_VUOTA ={ ente: null, natura: null, operativa: null, controparte_id: null, categoria_id: null, albatros_categoria_id: null };
-const SPESA_VUOTA = () => ({ id: null, data: oggi(), importo: '', descrizione: '', beneficiario: '', metodo: 'conto', note: '', origine: 'manuale', ...CLASSIFICAZIONE_VUOTA });
+// Le spese nuove nascono solo dall'estratto conto: scritte anche a mano, la stessa spesa
+// rischierebbe di comparire due volte quando arriva il suo movimento. Quelle a mano già registrate
+// restano, e si modificano come le altre.
 
 function ElencoSpese(props) {
   const { user, categorie, categorieAlbatros, controparti, regole, spese, movimenti, ricaricaDati, ricaricaConfigurazione } = props;
@@ -105,10 +105,7 @@ function ElencoSpese(props) {
     };
     // Il beneficiario di un'operativa è la sua controparte, se non è stato scritto altro.
     if (!record.beneficiario && record.controparte_id) record.beneficiario = nomeControparte(controparti, record.operativa, record.controparte_id);
-    const ok = await scrivi(() => (modulo.id
-      ? supabase.from('spese').update(record).eq('id', modulo.id)
-      : supabase.from('spese').insert([{ ...record, origine: 'manuale', creato_da: user.id }])));
-    if (ok) setModulo(null);
+    if (await scrivi(() => supabase.from('spese').update(record).eq('id', modulo.id))) setModulo(null);
   };
 
   // La riga in modifica si salva tutta insieme, e solo col pulsante Salva: descrizione e
@@ -214,7 +211,6 @@ function ElencoSpese(props) {
           <label className="albatros-etichetta" style={{ flex: '1 1 180px' }}>Cerca
             <input type="search" value={cerca} placeholder="Descrizione, beneficiario…" onChange={(e) => setCerca(e.target.value)} className="albatros-campo" />
           </label>
-          <button type="button" className="btn-accent-inline albatros-bottone" onClick={() => setModulo(SPESA_VUOTA())}>+ Nuova spesa</button>
         </div>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginTop: '12px' }}>
           <button type="button" className={`albatros-chip ${filtroStato === '' ? 'attivo' : ''}`} onClick={() => setFiltroStato('')}>Tutte</button>
@@ -300,7 +296,7 @@ function ElencoSpese(props) {
         <div className="modal-form-backdrop" onClick={() => setModulo(null)}>
           <div className="modal-form-box albatros-overlay" onClick={(e) => e.stopPropagation()}>
             <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setModulo(null)}>✕</button>
-            <h3 style={{ margin: '0 0 12px 0', fontSize: '1.1rem', color: '#0f172a' }}>{modulo.id ? 'Modifica spesa' : 'Nuova spesa'}</h3>
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '1.1rem', color: '#0f172a' }}>Modifica spesa</h3>
             {movAperto && (
               <div className="albatros-nota" style={{ margin: '0 0 12px 0', padding: '8px 10px', background: '#f8fafc', borderRadius: '6px' }}>
                 <strong>Dall'estratto conto</strong> · {formattaDataGGMMAAAA(movAperto.data_contabile)} · {movAperto.tipo} · {euro(-Number(movAperto.importo))}
@@ -345,7 +341,7 @@ function ElencoSpese(props) {
               {modulo.id && modulo.origine === 'manuale' && modulo.movimento_id && <button type="button" className="btn-outline-annulla albatros-bottone" disabled={inCorso} onClick={() => scollega(modulo)}>Scollega dal movimento</button>}
               {modulo.id && modulo.origine === 'manuale' && <button type="button" className="btn-icon-action danger" title="Elimina" style={{ marginRight: 'auto' }} disabled={inCorso} onClick={() => elimina(modulo)}><Icona nome="elimina" size={16} style={{ marginRight: 0 }} /></button>}
               <button type="button" className="btn-outline-annulla albatros-bottone" onClick={() => setModulo(null)}>Annulla</button>
-              <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={salva}><Icona nome="salva" />{modulo.id ? 'Salva' : 'Aggiungi spesa'}</button>
+              <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={salva}><Icona nome="salva" />Salva</button>
             </div>
           </div>
         </div>
