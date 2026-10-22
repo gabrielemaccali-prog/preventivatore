@@ -128,12 +128,14 @@ verifica('fotografia: dice di che controparte è', ['fornitore', 'loc_aq'], [fot
 
 // ---------- campi: affitto + rinfresco ----------
 const campiAnagrafica = [{ id: 'cmp_q', nome: 'Quintosole' }, { id: 'cmp_c', nome: 'Comasina' }];
-const partitaCampo = { id: 'PRN-C1', data: '2026-09-13', stato: STATO_PREN.CONFERMATO, nominativo: 'Marco', campoId: 'cmp_q', campoNome: 'Quintosole', costoCampoNetto: 45.08196721311476, costoRinfrescoNetto: 98.36065573770492, prezzoVenditaNetto: 400 };
-const soloAffitto = { id: 'PRN-C2', data: '2026-09-12', stato: STATO_PREN.CONFERMATO, campoId: 'cmp_q', costoCampo: 61, costoRinfrescoNetto: 0 };
+const partitaCampo = { id: 'PRN-C1', data: '2026-09-13', stato: STATO_PREN.CONFERMATO, nominativo: 'Marco', campoId: 'cmp_q', campoNome: 'Quintosole', costoCampoNetto: 45.08196721311476, costoRinfrescoNetto: 98.36065573770492, prezzoVenditaNetto: 400, oraInizio: '17:00', oraFine: '18:30', tipoRinfresco: 'merenda', numeroPartecipanti: 15 };
+const soloAffitto = { id: 'PRN-C2', data: '2026-09-12', stato: STATO_PREN.CONFERMATO, campoId: 'cmp_q', costoCampo: 61, costoRinfrescoNetto: 0, durataOre: 2, tipoRinfresco: 'aperitivo', numeroPartecipanti: 12 };
 const commissionata = { id: 'PRN-C3', data: '2026-09-14', stato: STATO_PREN.CONFERMATO, campoId: null, prezzoVenditaNetto: 150, clienteCampoId: 'cmp_q' };
 const campiBase = { prenotazioni: [partitaCampo, soloAffitto, commissionata], campi: campiAnagrafica };
 const quintosole = daConsuntivareCampi(campiBase).controparti.find(c => c.controparte.id === 'cmp_q');
-verifica('campo: affitto e rinfresco separati', { affitto: 45.08, rinfresco: 98.36 }, quintosole.righe.find(r => r.riferimento === 'PRN-C1').dettaglio);
+verifica('campo: affitto e rinfresco separati, con ore e paganti', { affitto: 45.08, rinfresco: 98.36, ore: 1.5, merende: 15, aperitivi: 0 }, quintosole.righe.find(r => r.riferimento === 'PRN-C1').dettaglio);
+verifica('campo: senza ora di fine valgono le ore del pacchetto; i paganti contano anche a costo zero', { ore: 2, merende: 0, aperitivi: 12 },
+  (({ ore, merende, aperitivi }) => ({ ore, merende, aperitivi }))(quintosole.righe.find(r => r.riferimento === 'PRN-C2').dettaglio));
 verifica('campo: senza netto salvato, il lordo si scorpora', 50, quintosole.righe.find(r => r.riferimento === 'PRN-C2').preventivato);
 verifica('campo: costo = affitto + rinfresco di tutte le partite', 193.44, quintosole.costo);
 verifica('campo: la partita commissionata è un credito', 150, quintosole.ricavo);
@@ -143,6 +145,14 @@ verifica('campo: un periodo di fornitore non chiude un campo', 3,
   daConsuntivareCampi({ ...campiBase, periodi: [{ controparte: 'fornitore', controparte_id: 'cmp_q', dal: '2026-09-01', al: '2026-09-30' }] }).controparti[0].righe.length);
 verifica('campo: il suo periodo sì', 0,
   daConsuntivareCampi({ ...campiBase, periodi: [{ controparte: 'campo', controparte_id: 'cmp_q', dal: '2026-09-01', al: '2026-09-30' }] }).controparti.length);
+// Un periodo scelto riga per riga chiude solo quelle righe, anche se le altre cadono fra le sue date.
+const perRighe = { controparte: 'campo', controparte_id: 'cmp_q', dal: '2026-09-12', al: '2026-09-14', per_righe: true, righe: [{ riferimento: 'PRN-C2', lato: 'costo' }, { riferimento: 'PRN-C3', lato: 'ricavo' }] };
+verifica('campo: un periodo per righe lascia aperta la riga non scelta', ['PRN-C1'],
+  daConsuntivareCampi({ ...campiBase, periodi: [perRighe] }).controparti[0].righe.map(r => r.riferimento));
+verifica('campo: il lato conta, nel periodo per righe', ['PRN-C1', 'PRN-C3'],
+  daConsuntivareCampi({ ...campiBase, periodi: [{ ...perRighe, righe: [{ riferimento: 'PRN-C2', lato: 'costo' }, { riferimento: 'PRN-C3', lato: 'costo' }] }] }).controparti[0].righe.map(r => r.riferimento));
+verifica('fotografia: per righe solo se richiesto', [undefined, true],
+  [periodoDaControparte(quintosole, 'campo', '2026-09-16').per_righe, periodoDaControparte(quintosole, 'campo', '2026-09-16', true).per_righe]);
 verifica('campo: rettifica sul rinfresco', 183.44,
   daConsuntivareCampi({ ...campiBase, voci: [{ controparte: 'campo', controparte_id: 'cmp_q', riferimento: 'PRN-C1', lato: 'costo', importo: -10 }] }).controparti[0].costo);
 const campoIgnoto = { id: 'PRN-C4', data: '2026-09-10', stato: STATO_PREN.CONFERMATO, campoId: 'cmp_sparito', campoNome: 'Vecchio', costoCampoNetto: 40 };
@@ -156,7 +166,7 @@ verifica("un'annullata senza costi segnati non si consuntiva", 0,
 verifica("un'annullata con i soli operatori non tocca il campo", 0,
   daConsuntivareCampi({ prenotazioni: [{ ...annullata, costiAnnullamento: ['operatori'] }], campi: campiAnagrafica }).controparti.length);
 const rigaSoloAffitto = daConsuntivareCampi({ prenotazioni: [{ ...annullata, costiAnnullamento: ['campo'] }], campi: campiAnagrafica }).controparti[0].righe[0];
-verifica("annullata con il campo: l'affitto sì, il rinfresco no", [45.08, { affitto: 45.08, rinfresco: 0 }, true], [rigaSoloAffitto.preventivato, rigaSoloAffitto.dettaglio, rigaSoloAffitto.annullata]);
+verifica("annullata con il campo: l'affitto sì, il rinfresco no", [45.08, { affitto: 45.08, rinfresco: 0, ore: 1.5, merende: 0, aperitivi: 0 }, true], [rigaSoloAffitto.preventivato, rigaSoloAffitto.dettaglio, rigaSoloAffitto.annullata]);
 verifica('annullata con campo e rinfresco: tutti e due', 143.44,
   daConsuntivareCampi({ prenotazioni: [{ ...annullata, costiAnnullamento: ['campo', 'rinfresco'] }], campi: campiAnagrafica }).controparti[0].costo);
 verifica("un'annullata non porta crediti, nemmeno se commissionata", 0,

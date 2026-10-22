@@ -186,7 +186,7 @@ function Campi({ user }) {
     // Un periodo può essere stato chiuso mentre l'anteprima era aperta: si ricontrolla ora.
     const { data: periodi, error: errPe } = await supabase.from('cons_periodi').select('*').eq('controparte', 'campo').eq('controparte_id', campo.id);
     if (errPe) { console.error(errPe); setRicalcolo(r => ({ ...r, inCorso: false })); return alert("Impossibile leggere i periodi consuntivati: ricalcolo annullato."); }
-    const daScrivere = righe.filter(r => scelte.includes(r.prenotazione.id) && !giornataChiusa(periodi || [], campo.id, r.prenotazione.data));
+    const daScrivere = righe.filter(r => scelte.includes(r.prenotazione.id) && !giornataChiusa(periodi || [], campo.id, r.prenotazione));
     const esiti = await Promise.all(daScrivere.map(r => supabase.from('prenotazioni').update(r.rec).eq('id', r.prenotazione.id)));
     const falliti = esiti.filter(e => e.error);
     falliti.forEach(e => console.error(e.error));

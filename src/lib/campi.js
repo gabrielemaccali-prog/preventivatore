@@ -1,4 +1,5 @@
 import { toMinutes } from './utils.js';
+import { periodoCopre } from './fornitori.js';
 
 // ============================================================
 // Quanto costa una partita al campo: l'affitto dalle tariffe, il rinfresco dal costo a persona.
@@ -57,10 +58,11 @@ export const costiCampoDi = ({ campo, tariffe = [], data, oraInizio, tipoRinfres
   };
 };
 
-// Una giornata di quel campo è già chiusa in un periodo consuntivato: i suoi importi sono stati
+// Una prenotazione di quel campo è già chiusa in un periodo consuntivato: i suoi importi sono stati
 // pagati e non si ricalcolano. Stessa regola della consuntivazione (fornitori.js).
-export const giornataChiusa = (periodi, campoId, data) => periodi.some(pe =>
-  (pe.controparte || 'fornitore') === 'campo' && String(pe.controparte_id) === String(campoId) && data >= pe.dal && data <= pe.al);
+export const giornataChiusa = (periodi, campoId, p) => periodi.some(pe =>
+  (pe.controparte || 'fornitore') === 'campo' && String(pe.controparte_id) === String(campoId)
+  && periodoCopre(pe, { riferimento: p.id, lato: 'costo', data: p.data }));
 
 // Le prenotazioni di un campo i cui importi cambierebbero con le tariffe di adesso, fuori dai
 // periodi già consuntivati. Per ognuna: gli importi salvati, quelli nuovi e il record da scrivere.
@@ -68,7 +70,7 @@ export const ricalcoloCampo = ({ campo, tariffe = [], prenotazioni = [], periodi
   const r2 = (n) => Math.round((+n || 0) * 100) / 100;
   const netto = (n, l) => (n != null ? (parseFloat(n) || 0) : (parseFloat(l) || 0) / 1.22);
   return prenotazioni
-    .filter(p => p.campoId === campo.id && p.data && !giornataChiusa(periodi, campo.id, p.data))
+    .filter(p => p.campoId === campo.id && p.data && !giornataChiusa(periodi, campo.id, p))
     .map(p => {
       const nuovi = costiCampoDi({ campo, tariffe, data: p.data, oraInizio: p.oraInizio, tipoRinfresco: p.tipoRinfresco, numeroPartecipanti: p.numeroPartecipanti });
       return {

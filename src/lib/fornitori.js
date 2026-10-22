@@ -1,4 +1,5 @@
 import { STATO_PREN, COSTO_ANNULLAMENTO, costiAnnullamentoDi } from './costanti.js';
+import { oreDaOrari } from './utils.js';
 
 // ============================================================
 // Fornitori e campi: da quale sede arriva il costo di una prenotazione, e cosa resta da
@@ -127,6 +128,13 @@ export const risolutoreSedi = ({ sedi = [], listino = [], preventivi = [] }) => 
 
 const somma = (elenco, campo) => elenco.reduce((s, x) => s + (parseFloat(x[campo]) || 0), 0);
 
+// Se un periodo chiuso copre una riga. I periodi nati scegliendo le righe da consuntivare
+// (per_righe) le elencano una per una: le partite lasciate fuori, anche se cadono fra le stesse
+// date, restano da consuntivare. I periodi più vecchi coprono tutte le giornate fra dal e al.
+export const periodoCopre = (pe, { riferimento, lato, data }) => (pe.per_righe
+  ? (pe.righe || []).some(r => String(r.riferimento) === String(riferimento) && r.lato === lato)
+  : data >= pe.dal && data <= pe.al);
+
 // I totali di un gruppo di righe. Il saldo è quello che si paga davvero: i costi meno le partite
 // che il fornitore ci ha commissionato. Positivo lo paghiamo noi, negativo ce lo deve lui.
 export const totaliDi = (righe) => {
@@ -160,7 +168,8 @@ export const totaliDi = (righe) => {
 // `senzaControparte` sono i costi che non si sa a chi pagare: vanno detti, non persi.
 const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, voci, periodi, nelFiltro }) => {
   const perId = Object.fromEntries(controparti.map(c => [String(c.id), c]));
-  const chiuso = (id, data) => periodi.some(pe => String(pe.controparte_id) === String(id) && data >= pe.dal && data <= pe.al);
+  const chiuso = (id, p, lato) => periodi.some(pe => String(pe.controparte_id) === String(id)
+    && periodoCopre(pe, { riferimento: p.id, lato, data: p.data }));
 
   const gruppi = new Map();
   const righeDi = (c) => {
@@ -196,7 +205,7 @@ const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, 
         if (c.costo > 0) senzaControparte.push({ prenotazione: p, nome: c.nome, costo: arrotonda2(c.costo) });
         return;
       }
-      if (chiuso(controparte.id, p.data)) return;
+      if (chiuso(controparte.id, p, 'costo')) return;
       const r = { ...riga(controparte, p, 'costo', c.costo, c.giochi || []), dettaglio: c.dettaglio || null };
       // Una riga a zero senza rettifiche non ha niente da consuntivare.
       if (r.preventivato !== 0 || r.voci.length > 0) righeDi(controparte).push(r);
@@ -205,7 +214,7 @@ const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, 
     if (annullata) return; // niente ricavo da compensare: la partita non si è giocata
     const idCliente = clienteDi(p);
     const cliente = idCliente ? perId[String(idCliente)] : null;
-    if (cliente && !chiuso(cliente.id, p.data)) righeDi(cliente).push(riga(cliente, p, 'ricavo', nettoRicavoDi(p), []));
+    if (cliente && !chiuso(cliente.id, p, 'ricavo')) righeDi(cliente).push(riga(cliente, p, 'ricavo', nettoRicavoDi(p), []));
   });
 
   const elenco = [...gruppi.values()].map(({ controparte, righe }) => {
@@ -240,6 +249,10 @@ export const daConsuntivareFornitori = ({ prenotazioni = [], sedi = [], risoluto
 export const nettoAffittoDi = (p) => (p.costoCampoNetto != null ? (parseFloat(p.costoCampoNetto) || 0) : (parseFloat(p.costoCampo) || 0) / 1.22);
 export const nettoRinfrescoDi = (p) => (p.costoRinfrescoNetto != null ? (parseFloat(p.costoRinfrescoNetto) || 0) : (parseFloat(p.costoRinfresco) || 0) / 1.22);
 
+// Quanto dura la partita, in ore: dagli orari quando c'è l'ora di fine, altrimenti dalla durata del
+// pacchetto. Stessa lettura dei compensi.
+const oreDi = (p) => (p.oraFine ? (oreDaOrari(p.oraInizio, p.oraFine) || 0) : (parseFloat(p.durataOre) || 0));
+
 export const daConsuntivareCampi = ({ prenotazioni = [], campi = [], voci = [], periodi = [], nelFiltro = () => true }) => consuntivoControparti({
   prenotazioni, controparti: campi, nelFiltro,
   voci: soloDi('campo', voci), periodi: soloDi('campo', periodi),
@@ -251,15 +264,32 @@ export const daConsuntivareCampi = ({ prenotazioni = [], campi = [], voci = [], 
     if (annullata && !segnati.has(COSTO_ANNULLAMENTO.CAMPO) && !segnati.has(COSTO_ANNULLAMENTO.RINFRESCO)) return [];
     const affitto = !annullata || segnati.has(COSTO_ANNULLAMENTO.CAMPO) ? arrotonda2(nettoAffittoDi(p)) : 0;
     const rinfresco = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO) ? arrotonda2(nettoRinfrescoDi(p)) : 0;
-    return [{ id: p.campoId, nome: p.campoNome || p.campoId, costo: affitto + rinfresco, giochi: [], dettaglio: { affitto, rinfresco } }];
+    // Ore e paganti del rinfresco spiegano affitto e rinfresco: sono i numeri su cui il campo fa il
+    // conto, e quelli che si confrontano con la sua richiesta. I paganti contano quando il rinfresco
+    // è dovuto -- di un'annullata solo se è stato segnato -- anche se costa zero: un aperitivo su un
+    // campo senza prezzo dell'aperitivo va visto, non nascosto.
+    const tipo = String(p.tipoRinfresco || '').trim().toLowerCase();
+    const dovuto = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO);
+    const paganti = dovuto ? (parseFloat(p.numeroPartecipanti) || 0) : 0;
+    return [{
+      id: p.campoId, nome: p.campoNome || p.campoId, costo: affitto + rinfresco, giochi: [],
+      dettaglio: {
+        affitto, rinfresco, ore: oreDi(p),
+        merende: tipo === 'merenda' ? paganti : 0,
+        aperitivi: tipo === 'aperitivo' ? paganti : 0,
+      },
+    }];
   },
   clienteDi: (p) => p.clienteCampoId || null,
 });
 
 // La fotografia di una controparte al momento della consuntivazione: quello che si scrive nel
 // periodo. Solo dati, niente riferimenti agli oggetti vivi, che domani direbbero altro.
-export const periodoDaControparte = (c, tipo, dataConsuntivo) => ({
+// `perRighe`: il periodo copre solo le righe che porta, non tutte le giornate fra dal e al (vedi
+// periodoCopre). Resta spento finché sql/consuntivazione_selezione.sql non è stato eseguito.
+export const periodoDaControparte = (c, tipo, dataConsuntivo, perRighe = false) => ({
   controparte: tipo,
+  ...(perRighe ? { per_righe: true } : {}),
   controparte_id: c.controparte.id,
   dal: c.dal,
   al: c.al,

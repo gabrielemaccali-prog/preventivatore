@@ -5,6 +5,15 @@ export const MOLTIPLICATORE_TARGET = 1.35;
 // confermato viene considerato scaduto (stato derivato, non salvato a database).
 export const GIORNI_VALIDITA_PREVENTIVO = 10;
 
+// --- CONSUNTIVAZIONE DELLA VECCHIA GESTIONE ---
+// Voci finite nella consuntivazione ma pagate con la vecchia gestione: il pulsante OLD le chiude
+// subito fra i consuntivati, senza data di pagamento, documento o ritenuta. Restano costi a tutti
+// gli effetti. Il periodo lo dice con la nota, che c'è già nelle tabelle dei periodi.
+// È un pulsante di passaggio: quando la vecchia gestione è smaltita basta mettere false.
+export const CONSUNTIVA_OLD_ATTIVO = true;
+export const NOTA_OLD = 'OLD';
+export const eOld = (periodo) => periodo?.note === NOTA_OLD;
+
 // --- STATI DI PRENOTAZIONI, VOUCHER E PREVENTIVI ---
 // Ogni stato ha tre facce distinte: il nome usato nel codice (la chiave), il valore salvato nella
 // colonna "stato" e l'etichetta mostrata a schermo. Il codice usa sempre e solo la chiave: così

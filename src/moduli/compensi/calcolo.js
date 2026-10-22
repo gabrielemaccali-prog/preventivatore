@@ -132,6 +132,14 @@ export const totaliVoci = (voci) => (voci || []).reduce((a, v) => {
     : { ...a, aggiunte: a.aggiunte + importo };
 }, { aggiunte: 0, spese: 0 });
 
+// Se un periodo chiuso comprende una giornata. I periodi nati scegliendo le giornate da
+// consuntivare le elencano (giornate); quelli più vecchi, o chiusi per intero, coprono tutto
+// l'intervallo fra dal e al. Si sceglie per giornata e non per partita: blocchi consecutivi e tetto
+// vivono dentro la giornata, e spezzarla cambierebbe il compenso delle partite rimaste.
+export const giornataDelPeriodo = (per, data) => (Array.isArray(per.giornate)
+  ? per.giornate.includes(data)
+  : data >= per.dal && data <= per.al);
+
 // Tutte le giornate da consuntivare, raggruppate per operatore. Le partite arrivano già filtrate
 // (confermate, non future e non già consuntivate): qui si distribuiscono per operatore e data e si
 // agganciano le voci manuali registrate su quello stesso giorno.

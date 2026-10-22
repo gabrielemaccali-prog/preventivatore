@@ -3,9 +3,10 @@ import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import html2pdf from 'html2pdf.js'
-import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita, quotePartite, righeConsuntivo, trasfertePerData } from './calcolo'
+import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita, quotePartite, righeConsuntivo, trasfertePerData, giornataDelPeriodo } from './calcolo'
+import { scaricaExcel } from '../../lib/excel'
 import { toMinutes, righeResidenza, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, generaCompenso } from '../../lib/costanti'
+import { STATO_PREN, generaCompenso, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, eOld } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -211,6 +212,12 @@ function Compensi({ user }) {
   const [operatoreEspanso, setOperatoreEspanso] = useState(null);
   const [inCorso, setInCorso] = useState(null); // chiave dell'azione in corso, per disabilitare il pulsante giusto
   const [formVoce, setFormVoce] = useState(null); // { operatore, data, tipo, descrizione, importo }
+  // Le giornate tolte dalla consuntivazione, come "idOperatore|data". Si tengono le escluse e non
+  // le scelte: una giornata appena arrivata parte scelta, come tutte le altre.
+  const [escluse, setEscluse] = useState(() => new Set());
+  // Scegliere le giornate chiede la colonna giornate (sql/consuntivazione_selezione.sql): senza, un
+  // periodo coprirebbe anche quelle lasciate fuori, e si consuntiva tutto come prima.
+  const [selezioneAttiva, setSelezioneAttiva] = useState(false);
   // Gli indicatori ragionano per anno solare e non per intervallo libero: la soglia oltre la quale
   // il lavoro occasionale cambia trattamento è annuale, quindi un totale su un periodo qualsiasi
   // non si potrebbe confrontare con niente.
@@ -228,7 +235,7 @@ function Compensi({ user }) {
     // all'annullamento si e' segnato che gli operatori si pagano lo stesso (vedi generaCompenso).
     // Tutte le colonne, non un elenco: costiAnnullamento puo' non esistere ancora, e chiederla per
     // nome farebbe fallire lo scarico finche' lo script SQL non e' stato eseguito.
-    const [pr, vc, pe, ca, ut, gi, pag] = await Promise.all([
+    const [pr, vc, pe, ca, ut, gi, pag, sel] = await Promise.all([
       supabase.from('prenotazioni')
         .select('*')
         .in('stato', [STATO_PREN.CONFERMATO, STATO_PREN.ANNULLATA]).lte('data', oggiIso()).order('data', { ascending: false }),
@@ -246,8 +253,10 @@ function Compensi({ user }) {
       supabase.from('giochi').select('id, nome'),
       // Paginata: i pagamenti crescono più in fretta delle prenotazioni e Supabase tronca in silenzio.
       leggiTutte(() => supabase.from('pagamenti').select('*').eq('tipo', 'prenotazione').order('data').order('id')),
+      supabase.from('op_periodi').select('giornate').limit(1),
     ]);
     setCaricamentoPartite(false);
+    setSelezioneAttiva(!sel.error);
     if (pr.error || vc.error || pe.error || ca.error) { console.error(pr.error || vc.error || pe.error || ca.error); return; }
     // L'anagrafica no: se manca, il modulo deve continuare a funzionare e il documento lo dice
     // da sé che i dati fiscali non ci sono.
@@ -283,7 +292,7 @@ function Compensi({ user }) {
   const nelFiltro = useCallback((data) => (!dal || data >= dal) && data <= alEffettivo, [dal, alEffettivo]);
 
   const giaConsuntivato = useCallback(
-    (operatore, data) => periodi.some(p => p.operatore_id === operatore && data >= p.dal && data <= p.al),
+    (operatore, data) => periodi.some(p => p.operatore_id === operatore && giornataDelPeriodo(p, data)),
     [periodi]
   );
 
@@ -296,6 +305,32 @@ function Compensi({ user }) {
     [partite, voci, parametri, giaConsuntivato, nelFiltro]
   );
 
+  // ---- selezione delle giornate ----
+  // Si sceglie per giornata intera: blocchi consecutivi e tetto giornaliero si calcolano sulla
+  // giornata, e togliere una partita sola cambierebbe il compenso di quelle rimaste.
+  const chiaveSel = (opId, data) => `${opId}|${data}`;
+  const giornataScelta = (opId, data) => !selezioneAttiva || !escluse.has(chiaveSel(opId, data));
+  const alternaGiornate = (opId, date, scegli) => setEscluse(prima => {
+    const dopo = new Set(prima);
+    date.forEach(d => (scegli ? dopo.delete(chiaveSel(opId, d)) : dopo.add(chiaveSel(opId, d))));
+    return dopo;
+  });
+  // Il preventivo dell'operatore ricalcolato sulle sole giornate scelte: è quello che si mostra in
+  // testata e che si consuntiva. Si ricalcola da capo invece di sottrarre, così i conti sono quelli
+  // che farebbe il calcolo su quei giorni soli.
+  const preventivoScelto = (op) => {
+    const date = new Set(op.giornate.map(g => g.data).filter(d => giornataScelta(op.id, d)));
+    if (date.size === op.giornate.length) return op;
+    const [suo] = preventiviPerOperatore(
+      partite.filter(p => date.has(p.data) && (p.operatori || []).some(o => o.id === op.id)),
+      voci.filter(v => v.operatore_id === op.id && date.has(v.data)),
+      parametri,
+    ).filter(x => x.id === op.id);
+    return suo
+      ? { ...suo, nome: op.nome }
+      : { ...op, giornate: [], ore: 0, compensoOrario: 0, compenso: 0, spese: 0, totaleRettifiche: 0, totaleRecensioni: 0 };
+  };
+
   // Una riga per periodo chiuso, non per operatore: la data di consuntivazione e il ripristino
   // appartengono al singolo periodo, e raggruppandoli si finiva per doverli ripetere dentro.
   // Il dettaglio si ricalcola con i parametri congelati nel periodo, non con quelli di oggi:
@@ -303,9 +338,9 @@ function Compensi({ user }) {
   const consuntivati = useMemo(() => periodi.map(p => {
     const parUsati = p.parametri && Object.keys(p.parametri).length ? p.parametri : parametri;
     const partiteDelPeriodo = partite.filter(x =>
-      x.data >= p.dal && x.data <= p.al && (x.operatori || []).some(o => o.id === p.operatore_id));
+      giornataDelPeriodo(p, x.data) && (x.operatori || []).some(o => o.id === p.operatore_id));
     const vociDelPeriodo = voci.filter(v =>
-      v.operatore_id === p.operatore_id && v.data >= p.dal && v.data <= p.al);
+      v.operatore_id === p.operatore_id && giornataDelPeriodo(p, v.data));
     // Un eventuale compenso concordato è già dentro le voci, sotto forma di rettifiche "forfait":
     // qui non serve nessuna regola speciale, il calcolo normale arriva da solo al totale pattuito.
     const [dettaglio] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
@@ -387,29 +422,39 @@ function Compensi({ user }) {
   // Chiudere un periodo lo sposta e basta: congela quello che c'è e lo toglie dall'elenco.
   // Rimborso forfettario e ritenuta non si calcolano qui — sono il mestiere della scheda
   // "Elabora rimborso", che arriva dopo e lavora sui periodi già chiusi.
-  const consuntiva = async (op) => {
+  // `old`: voci della vecchia gestione, già pagate fuori da qui. Si chiudono come un diretto --
+  // evase subito, senza documento e senza ritenuta -- con la nota OLD, e senza passare dalla
+  // ricevuta di un intestatario.
+  const consuntiva = async (tutto, old = false) => {
+    const op = preventivoScelto(tutto);
     const date = op.giornate.map(g => g.data).sort();
-    if (date.length === 0) return alert("Niente da consuntivare per questo operatore.");
+    if (date.length === 0) return alert("Nessuna giornata selezionata per questo operatore.");
+    const parziale = date.length < tutto.giornate.length;
     const dal = date[0];
     const al = date[date.length - 1];
     // Per chi è senza ritenuta non c'è niente da calcolare dopo e nessun documento da emettere:
     // il periodo nasce già evaso, saltando "Elabora rimborsi".
-    const diretto = senzaRitenuta(op.id);
+    const diretto = old || senzaRitenuta(op.id);
     // Chi ha un intestatario invece il periodo lo chiude come tutti, ma non risulta pagato finché
     // non esce la ricevuta dell'altro: è quel documento a contenerlo. Segnarlo pagato adesso
     // vorrebbe dire contare lo stesso importo due volte, qui e dentro quel totale.
-    const intestatario = intestatarioDi(op.id);
+    const intestatario = old ? null : intestatarioDi(op.id);
     if (!window.confirm(
-      `Consuntivare ${op.nome || nomeOperatore(op.id)} dal ${dataBreve(dal)} al ${dataBreve(al)}?\n\n`
+      (parziale
+        ? `Non hai selezionato tutte le giornate: ne consuntivi ${date.length} su ${tutto.giornate.length}, le altre restano da consuntivare. Sei sicuro?\n\n`
+        : '')
+      + `Consuntivare ${op.nome || nomeOperatore(op.id)} dal ${dataBreve(dal)} al ${dataBreve(al)}?\n\n`
       + `${euro(op.compenso + op.spese)} da pagare su ${op.giornate.length} giornate.\n\n`
-      + (diretto
+      + (old
+        ? `Vecchia gestione (OLD): il periodo finisce subito fra i rimborsi evasi, senza documento e senza ritenuta.`
+        : diretto
         ? `Senza ritenuta: il periodo risulta subito pagato e finisce fra i rimborsi evasi, senza documento.`
         : intestatario
           ? `Il compenso finisce sulla ricevuta di ${nomeOperatore(intestatario)}: il periodo resta in attesa finché quella ricevuta non viene emessa.`
           : `Il periodo passa fra i consuntivati e le sue giornate non accettano più modifiche.`)
     )) return;
 
-    setInCorso(`consuntiva-${op.id}`);
+    setInCorso(`${old ? 'old' : 'consuntiva'}-${op.id}`);
     // Le righe per partita si congelano qui: dopo, ricostruirle vorrebbe dire rifare il conto sui
     // dati di domani, e un consuntivo che si riscrive da solo non è un consuntivo (vedi calcolo.js).
     // Senza ritenuta l'aliquota è zero, così le righe nascono già con la ritenuta a zero invece di
@@ -417,6 +462,9 @@ function Compensi({ user }) {
     const aliquota = diretto ? 0 : parametri.aliquota_ritenuta;
     const { error } = await supabase.from('op_periodi').insert([{
       operatore_id: op.id, dal, al,
+      // Le giornate chiuse, quando si possono scegliere: quelle lasciate fuori restano aperte anche
+      // se cadono fra dal e al.
+      ...(selezioneAttiva ? { giornate: date } : {}),
       compenso_netto: op.compenso, spese: op.spese,
       righe: righeConsuntivo(quotePartite(op), { aliquota }),
       // Il costo azienda qui è il solo esborso verso l'operatore: la ritenuta si aggiunge
@@ -429,6 +477,7 @@ function Compensi({ user }) {
       // Il periodo diretto nasce pagato: niente fase intermedia, niente documento da congelare.
       // Resta senza "rimborso", ed è proprio la sua assenza a dire che documento non ce n'è.
       ...(diretto ? { evaso_il: new Date().toISOString(), data_consuntivo: oggiIso(), ritenuta: 0 } : {}),
+      ...(old ? { note: NOTA_OLD } : {}),
     }]);
     setInCorso(null);
     if (error) {
@@ -439,6 +488,8 @@ function Compensi({ user }) {
         ? "Una parte di questo intervallo è già stata consuntivata per questo operatore."
         : "Errore nella consuntivazione.");
     }
+    // Le giornate lasciate fuori tornano scelte: la prossima volta si riparte da tutto.
+    setEscluse(prima => new Set([...prima].filter(k => !k.startsWith(`${op.id}|`))));
     fetchPartite();
   };
 
@@ -538,6 +589,9 @@ function Compensi({ user }) {
       // Un periodo confluito nella ricevuta di un altro è già dentro quel totale: contarlo di
       // nuovo gonfierebbe netto e giornate di importi che nessuno ha pagato due volte.
       if (p.confluito_in) continue;
+      // La vecchia gestione è stata pagata e dichiarata fuori da qui, e la sua data di evasione è
+      // quella del giorno in cui la si è chiusa: contarla sposterebbe compensi da un anno all'altro.
+      if (eOld(p)) continue;
       // Il compenso si attribuisce a chi firma la ricevuta: è lui che lo dichiara e di cui conta
       // la soglia annuale. Chi ha materialmente lavorato resta scritto nel proprio periodo.
       const chiave = p.rimborso?.intestatario_id ?? p.operatore_id;
@@ -656,7 +710,7 @@ function Compensi({ user }) {
   // Le spese registrate a mano sul periodo: vanno elencate come rimborsi ed escono dalla base
   // imponibile, perché sono denaro anticipato e restituito, non guadagnato.
   const speseDelPeriodo = useCallback((p) => voci.filter(v =>
-    v.operatore_id === p.operatore_id && v.tipo === 'spesa' && v.data >= p.dal && v.data <= p.al), [voci]);
+    v.operatore_id === p.operatore_id && v.tipo === 'spesa' && giornataDelPeriodo(p, v.data)), [voci]);
 
   const importiElaborazione = useMemo(() => {
     if (!elaborazione) return null;
@@ -852,11 +906,83 @@ function Compensi({ user }) {
   // Dettaglio di un operatore: le stesse righe e le stesse colonne nelle due schede.
   // In sola lettura (periodi già chiusi) recensioni, rettifiche e spese si mostrano come importi
   // invece che come comandi: quello che è stato consuntivato non si tocca più.
-  const tabellaDettaglio = (op, soloLettura = false) => (
+  // ---- excel ----
+  // Le stesse colonne del dettaglio, una riga per partita più le voci della giornata, con gli
+  // importi come numeri.
+  const righeExcelOperatore = (op) => {
+    const nome = op.nome || nomeOperatore(op.id);
+    const scelta = (g) => (selezioneAttiva ? { Selezionata: giornataScelta(op.id, g.data) ? 'sì' : 'no' } : {});
+    return op.giornate.flatMap(g => [
+      ...g.blocchi.flatMap(b => b.partite).map(x => {
+        const rec = recensioneDi(op.id, x.partita.id);
+        const recensione = rec ? parseFloat(rec.importo) || 0 : 0;
+        const rettifica = sommaDi(vociDi(op.id, x.partita.id, 'rettifica'));
+        const spese = sommaDi(vociDi(op.id, x.partita.id, 'spesa'));
+        return {
+          Bubbler: nome, Data: dataBreve(g.data), Orario: intervalloPartita(x.partita), Partita: x.partita.id,
+          Nominativo: x.partita.nominativo || '', Annullata: x.partita.stato === STATO_PREN.ANNULLATA ? 'sì' : '',
+          'Pacchetto · Gioco': etichettaPartita(x.partita.pacchettoNome, nomeGiocoPerId[x.partita.giocoId]) || '',
+          Location: locationDi(x.partita), Ore: arrotonda2(x.oreAttribuite), Contanti: arrotonda2(contantiDi(op.id, x.partita.id)),
+          Compenso: arrotonda2(x.compenso), Rettifica: arrotonda2(rettifica), Recensione: arrotonda2(recensione), Spese: arrotonda2(spese),
+          'Totale partita': arrotonda2(x.compenso + rettifica + recensione + spese), ...scelta(g),
+        };
+      }),
+      ...g.voci.filter(v => !v.riferimento).map(v => ({
+        Bubbler: nome, Data: dataBreve(g.data), Orario: '', Partita: '',
+        Nominativo: `${v.tipo}: ${v.descrizione || ''} (non attribuita a una partita)`, Annullata: '', 'Pacchetto · Gioco': '', Location: '',
+        Ore: 0, Contanti: 0, Compenso: 0,
+        Rettifica: v.tipo === 'spesa' ? 0 : arrotonda2(v.importo), Recensione: 0, Spese: v.tipo === 'spesa' ? arrotonda2(v.importo) : 0,
+        'Totale partita': arrotonda2(v.importo), ...scelta(g),
+      })),
+    ]);
+  };
+  // Il riepilogo conta le sole giornate scelte, come la testata.
+  const riepilogoOperatore = (op) => {
+    const s = preventivoScelto(op);
+    return {
+      Bubbler: op.nome || nomeOperatore(op.id), Giornate: op.giornate.length,
+      ...(selezioneAttiva ? { Selezionate: s.giornate.length } : {}),
+      Ore: arrotonda2(s.ore), 'Contanti in mano': arrotonda2(contantiTotaliDi(s)), Compenso: arrotonda2(s.compensoOrario),
+      Rettifiche: arrotonda2(s.totaleRettifiche), Recensioni: arrotonda2(s.totaleRecensioni), Spese: arrotonda2(s.spese),
+      'Da pagare': arrotonda2(s.compenso + s.spese),
+    };
+  };
+  const esportaOperatore = (op) => scaricaExcel(`Bubbler_${op.nome || nomeOperatore(op.id)}_${oggiIso()}`, [
+    { nome: op.nome || nomeOperatore(op.id), righe: righeExcelOperatore(op) },
+  ]);
+  const esportaDaConsuntivare = () => scaricaExcel(`Bubbler_da_consuntivare_${oggiIso()}`, [
+    { nome: 'Riepilogo', righe: preventivi.map(riepilogoOperatore) },
+    { nome: 'Dettaglio', righe: preventivi.flatMap(righeExcelOperatore) },
+  ]);
+
+  // Da consuntivare ogni giornata ha la sua spunta, sulla prima riga: `scelto` è il preventivo delle
+  // sole giornate spuntate, e i totali in fondo sono i suoi, come quelli in testata.
+  const tabellaDettaglio = (op, soloLettura = false, scelto = op) => {
+    const conSpunte = !soloLettura && selezioneAttiva;
+    const tutteLeDate = op.giornate.map(g => g.data);
+    const nScelte = tutteLeDate.filter(d => giornataScelta(op.id, d)).length;
+    const spunta = (g) => (conSpunte ? (
+      <td style={{ padding: '7px 10px' }}>
+        <input type="checkbox" aria-label={`Consuntiva il ${dataBreve(g.data)}`} title="Si consuntiva per giornata intera" checked={giornataScelta(op.id, g.data)} onChange={(e) => alternaGiornate(op.id, [g.data], e.target.checked)} />
+      </td>
+    ) : null);
+    const vuota = conSpunte ? <td /> : null;
+    const t = scelto;
+    return (
     <div style={{ borderTop: '1px solid #eee', overflowX: 'auto' }}>
       <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.8rem' }}>
         <thead>
           <tr style={{ background: '#f8f8f8', borderBottom: '1px solid #ddd' }}>
+            {conSpunte && (
+              <th style={{ padding: '8px 10px', width: '28px' }}>
+                <input
+                  type="checkbox" aria-label="Seleziona tutte" title="Seleziona o togli tutte le giornate"
+                  checked={nScelte === tutteLeDate.length}
+                  ref={(el) => { if (el) el.indeterminate = nScelte > 0 && nScelte < tutteLeDate.length; }}
+                  onChange={(e) => alternaGiornate(op.id, tutteLeDate, e.target.checked)}
+                />
+              </th>
+            )}
             <th style={{ padding: '8px 10px', width: '82px' }}>Data</th>
             <th style={{ padding: '8px 10px', width: '104px' }}>Orario</th>
             <th style={{ padding: '8px 10px', width: '124px' }}>Partita</th>
@@ -878,6 +1004,7 @@ function Compensi({ user }) {
             // Voci registrate sulla giornata e non su una partita: non se ne creano più, ma se ne
             // esistono vanno mostrate — nei totali continuano a contare.
             const vociGiornata = g.voci.filter(v => !v.riferimento);
+            const opacita = !conSpunte || giornataScelta(op.id, g.data) ? 1 : 0.45;
 
             return (
               <Fragment key={g.data}>
@@ -894,7 +1021,8 @@ function Compensi({ user }) {
                     tipo, descrizione: '', importo: '',
                   });
                   return (
-                    <tr key={x.partita.id}>
+                    <tr key={x.partita.id} style={{ opacity: opacita }}>
+                      {righePartite[0] === x ? spunta(g) : vuota}
                       <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
                         {righePartite[0] === x && <strong>{dataBreve(g.data)}</strong>}
                         {/* Il tetto giornaliero taglia il compenso della giornata, non di una partita:
@@ -985,8 +1113,9 @@ function Compensi({ user }) {
                   );
                 })}
 
-                {vociGiornata.map(v => (
-                  <tr key={v.id}>
+                {vociGiornata.map((v, i) => (
+                  <tr key={v.id} style={{ opacity: opacita }}>
+                    {righePartite.length === 0 && i === 0 ? spunta(g) : vuota}
                     <td style={{ padding: '7px 10px' }}>
                       {righePartite.length === 0 && <strong>{dataBreve(g.data)}</strong>}
                     </td>
@@ -1020,7 +1149,8 @@ function Compensi({ user }) {
                 ))}
 
                 {righePartite.length === 0 && vociGiornata.length === 0 && (
-                  <tr>
+                  <tr style={{ opacity: opacita }}>
+                    {spunta(g)}
                     <td style={{ padding: '7px 10px' }}><strong>{dataBreve(g.data)}</strong></td>
                     <td colSpan="12" style={{ padding: '7px 10px', color: '#999' }}>Giornata senza partite né voci</td>
                   </tr>
@@ -1032,21 +1162,25 @@ function Compensi({ user }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid #333', background: '#f5f8fa' }}>
-            <td style={{ padding: '10px', fontWeight: 'bold' }} colSpan="6">Totale {op.nome || nomeOperatore(op.id)}</td>
-            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{ore(op.ore)}</td>
-            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: '#166534' }}>
-              {contantiTotaliDi(op) > 0 ? euro(contantiTotaliDi(op)) : <span style={{ color: '#ccc' }}>—</span>}
+            <td style={{ padding: '10px', fontWeight: 'bold' }} colSpan={conSpunte ? 7 : 6}>
+              Totale {op.nome || nomeOperatore(op.id)}
+              {conSpunte && nScelte < tutteLeDate.length && <span style={{ fontWeight: 'normal', color: '#b45309' }}> ({nScelte} di {tutteLeDate.length} giornate selezionate)</span>}
             </td>
-            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compensoOrario)}</td>
-            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.totaleRettifiche)}</td>
-            <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold' }}>{euro(op.totaleRecensioni)}</td>
-            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.spese)}</td>
-            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(op.compenso + op.spese)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{ore(t.ore)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: '#166534' }}>
+              {contantiTotaliDi(t) > 0 ? euro(contantiTotaliDi(t)) : <span style={{ color: '#ccc' }}>—</span>}
+            </td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(t.compensoOrario)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(t.totaleRettifiche)}</td>
+            <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold' }}>{euro(t.totaleRecensioni)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(t.spese)}</td>
+            <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{euro(t.compenso + t.spese)}</td>
           </tr>
         </tfoot>
       </table>
     </div>
-  );
+    );
+  };
 
   // Tabella dei periodi consuntivati, condivisa fra "elabora rimborsi" e "rimborsi evasi":
   // stesse colonne e stesso dettaglio, cambia solo l'azione in coda alla riga.
@@ -1095,9 +1229,11 @@ function Compensi({ user }) {
                       )}
                       {/* Un periodo senza documento si legge diversamente dagli altri: ritenuta a
                           zero in colonna e nessuna ristampa fra le azioni. */}
-                      {evasi && !p.rimborso && (
+                      {evasi && !p.rimborso && (eOld(p) ? (
+                        <span title="Vecchia gestione: chiuso senza documento e senza ritenuta" style={{ marginLeft: '8px', fontSize: '0.66rem', fontWeight: 'bold', color: '#fff', background: '#475569', borderRadius: '4px', padding: '2px 6px', whiteSpace: 'nowrap' }}>OLD</span>
+                      ) : (
                         <span title="Consuntivato diretto: nessuna ritenuta, nessun documento di rimborso" style={{ marginLeft: '8px', fontSize: '0.66rem', fontWeight: 'bold', color: '#fff', background: '#7c3aed', borderRadius: '4px', padding: '2px 6px', whiteSpace: 'nowrap' }}>DIRETTO</span>
-                      )}
+                      ))}
                     </td>
                     <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                       {p.dal === p.al ? dataBreve(p.dal) : `${dataBreve(p.dal)} → ${dataBreve(p.al)}`}
@@ -1430,7 +1566,23 @@ function Compensi({ user }) {
                 <span style={{ fontSize: '0.78rem', color: '#888' }}>Date vuote: tutto quello che resta da consuntivare.</span>
               )}
             </div>
+            <div className="filtro-group" style={{ flex: '0 0 auto', marginLeft: 'auto' }}>
+              <button
+                type="button" className="btn-outline-annulla" disabled={preventivi.length === 0} onClick={esportaDaConsuntivare}
+                title="Un foglio di riepilogo per bubbler e uno con tutte le partite"
+                style={{ display: 'inline-flex', alignItems: 'center', padding: '7px 14px', borderRadius: '4px', fontSize: '0.8rem' }}
+              >
+                <Icona nome="excel" size={14} style={{ marginRight: '5px' }} />Esporta Excel
+              </button>
+            </div>
           </div>
+
+          {!selezioneAttiva && !caricamentoPartite && preventivi.length > 0 && (
+            <p style={{ marginTop: '14px', padding: '10px 14px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#475569', fontSize: '0.85rem' }}>
+              Per scegliere quali giornate consuntivare esegui <strong>sql/consuntivazione_selezione.sql</strong> nell&apos;SQL Editor di Supabase.
+              Fino ad allora si consuntiva tutto il periodo, come prima.
+            </p>
+          )}
 
           {caricamentoPartite ? (
             <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>Calcolo in corso...</div>
@@ -1443,6 +1595,8 @@ function Compensi({ user }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
                 {preventivi.map(op => {
                   const espanso = operatoreEspanso === op.id;
+                  // In testata contano le sole giornate scelte: è quello che si sta per pagare.
+                  const s = preventivoScelto(op);
                   return (
                     <div key={op.id} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', overflow: 'hidden' }}>
                       <div
@@ -1463,22 +1617,46 @@ function Compensi({ user }) {
                             </span>
                           )}
                           <span style={{ color: '#888', fontSize: '0.8rem' }}>{op.giornate.length} giornat{op.giornate.length === 1 ? 'a' : 'e'}</span>
+                          {s.giornate.length < op.giornate.length && (
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#b45309', background: '#fef3c7', borderRadius: '4px', padding: '2px 7px' }}>
+                              {s.giornate.length} di {op.giornate.length} selezionate
+                            </span>
+                          )}
                         </div>
                         <div style={{ display: 'flex', gap: '14px', alignItems: 'center', fontSize: '0.85rem', flexWrap: 'wrap' }}>
                           {/* Le voci si sommano fra loro: compenso (ore più eventuali correzioni),
                               recensioni e spese. Compaiono solo quando valgono qualcosa. */}
-                          <span>{ore(op.ore)}</span>
+                          <span>{ore(s.ore)}</span>
                           {/* Solo il totale: la scomposizione in compenso, recensioni e spese sta
                               nella tabella che si apre qui sotto, e ripeterla in testata
                               raddoppiava le cifre da leggere per arrivare allo stesso numero. */}
                           {/* Quello che ha gia' in tasca, accanto a quello che gli dobbiamo: sono
                               due numeri che si guardano insieme quando si decide quanto versargli. */}
-                          {contantiTotaliDi(op) > 0 && (
+                          {contantiTotaliDi(s) > 0 && (
                             <span title="Incassi in contanti che ha ritirato dai clienti: non sono un compenso" style={{ color: '#166534' }}>
-                              💶 <strong>{euro(contantiTotaliDi(op))}</strong> in mano
+                              💶 <strong>{euro(contantiTotaliDi(s))}</strong> in mano
                             </span>
                           )}
-                          <span><strong>{euro(op.compenso + op.spese)}</strong> da pagare</span>
+                          <span><strong>{euro(s.compenso + s.spese)}</strong> da pagare</span>
+                          <button
+                            type="button" className="btn-outline-annulla"
+                            title={`Le partite di ${op.nome || nomeOperatore(op.id)} in Excel`}
+                            onClick={(e) => { e.stopPropagation(); esportaOperatore(op); }}
+                            style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: '4px', fontSize: '0.78rem' }}
+                          >
+                            <Icona nome="excel" size={14} style={{ marginRight: '5px' }} />Excel
+                          </button>
+                          {CONSUNTIVA_OLD_ATTIVO && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); consuntiva(op, true); }}
+                              disabled={inCorso === `old-${op.id}` || s.giornate.length === 0}
+                              title="Vecchia gestione: le giornate selezionate passano subito fra i rimborsi evasi, senza documento e senza ritenuta"
+                              style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: '4px', fontSize: '0.78rem', background: '#475569', color: '#fff', border: 'none', fontWeight: 'bold', cursor: 'pointer' }}
+                            >
+                              OLD
+                            </button>
+                          )}
                           <button
                             type="button"
                             title="Sostituisce il calcolo a ore con un importo pattuito, ripartito sulle ore del periodo"
@@ -1491,7 +1669,7 @@ function Compensi({ user }) {
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); consuntiva(op); }}
-                            disabled={inCorso === `consuntiva-${op.id}`}
+                            disabled={inCorso === `consuntiva-${op.id}` || s.giornate.length === 0}
                             title={senzaRitenuta(op.id)
                               ? "Chiude il periodo e lo segna pagato: niente ritenuta, niente documento di rimborso"
                               : "Chiude il periodo: passa poi da Elabora rimborsi"}
@@ -1503,7 +1681,7 @@ function Compensi({ user }) {
                         </div>
                       </div>
 
-                      {espanso && tabellaDettaglio(op)}
+                      {espanso && tabellaDettaglio(op, false, s)}
                     </div>
                   );
                 })}

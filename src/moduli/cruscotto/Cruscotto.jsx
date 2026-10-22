@@ -10,7 +10,7 @@ import {
 } from '../../lib/costanti'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
-import { preventiviPerOperatore, lordizza, righeConsuntivo, trasfertePerData } from '../compensi/calcolo'
+import { preventiviPerOperatore, lordizza, righeConsuntivo, trasfertePerData, giornataDelPeriodo } from '../compensi/calcolo'
 import { risolutoreSedi, arrotonda2 } from '../../lib/fornitori'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import {
@@ -379,18 +379,18 @@ function Cruscotto({ user }) {
       const suo = (perPartita[id] = perPartita[id] || {});
       Object.entries(perOp).forEach(([opId, q]) => { suo[opId] = { ...q, aliquota }; });
     });
-    // Un periodo copre un intervallo di date, quindi una giornata o e' tutta dentro o e' tutta fuori:
+    // Un periodo copre giornate intere (un intervallo, o le giornate scelte), quindi una giornata o e' tutta dentro o e' tutta fuori:
     // dividere il calcolo qui non spezza ne' i blocchi consecutivi ne' il tetto giornaliero, che
     // vivono dentro la giornata.
     const chiusa = (opId, data) => opPeriodi.some(per => String(per.operatore_id) === String(opId)
-      && data >= per.dal && data <= per.al);
+      && giornataDelPeriodo(per, data));
     aggiungi(compensoPerOperatore(partiteConCompenso, opVoci, parametriCompensi, chiusa), parametriCompensi.aliquota_ritenuta);
     opPeriodi.forEach(per => {
       const par = per.parametri || parametriCompensi;
-      const sue = partiteConCompenso.filter(p => generaCompenso(p) && p.data >= per.dal && p.data <= per.al
+      const sue = partiteConCompenso.filter(p => generaCompenso(p) && giornataDelPeriodo(per, p.data)
         && (p.operatori || []).some(o => String(o.id) === String(per.operatore_id)));
       const sueVoci = opVoci.filter(v => String(v.operatore_id) === String(per.operatore_id)
-        && v.data >= per.dal && v.data <= per.al);
+        && giornataDelPeriodo(per, v.data));
       aggiungi(
         compensoPerOperatore(sue, sueVoci, par, (opId) => String(opId) !== String(per.operatore_id)),
         par.aliquota_ritenuta
@@ -436,7 +436,7 @@ function Cruscotto({ user }) {
       const par = per.parametri || parametriCompensi;
       if (!par) return;
       // Solo le partite che il modulo compensi paga: una FORSE non entra in un periodo chiuso.
-      const sue = partiteConCompenso.filter(p => generaCompenso(p) && p.data >= per.dal && p.data <= per.al
+      const sue = partiteConCompenso.filter(p => generaCompenso(p) && giornataDelPeriodo(per, p.data)
         && (p.operatori || []).some(o => String(o.id) === String(per.operatore_id)));
       const copri = (id) => { (coperte[id] = coperte[id] || new Set()).add(String(per.operatore_id)); };
       sue.forEach(p => copri(p.id));
@@ -475,7 +475,7 @@ function Cruscotto({ user }) {
       }
 
       const sueVoci = opVoci.filter(v => String(v.operatore_id) === String(per.operatore_id)
-        && v.data >= per.dal && v.data <= per.al);
+        && giornataDelPeriodo(per, v.data));
       const quote = compensoPerOperatore(sue, sueVoci, par, (opId) => String(opId) !== String(per.operatore_id));
       const dataDi = (id) => sue.find(p => String(p.id) === String(id))?.data;
       const perData = {};
