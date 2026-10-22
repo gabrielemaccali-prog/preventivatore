@@ -532,7 +532,7 @@ function Controparti({ tipo }) {
             </div>
             <div className="filtro-group" style={{ flex: '0 0 auto', marginLeft: 'auto' }}>
               <button type="button" className="btn-outline-annulla" style={{ ...btnRiga, padding: '7px 14px', fontSize: '0.8rem' }} disabled={gruppi.length === 0} onClick={esportaDaConsuntivare} title={`Un foglio di riepilogo per ${cfg.intestazione.toLowerCase()} e uno con tutte le partite`}>
-                <Icona nome="excel" size={14} style={{ marginRight: '5px' }} />Esporta Excel
+                <Icona nome="excel" size={16} style={{ marginRight: 0 }} aria-label="Esporta in Excel" />
               </button>
             </div>
           </div>
@@ -590,7 +590,7 @@ function Controparti({ tipo }) {
                             title={`Le partite di ${g.controparte.nome} in Excel`}
                             onClick={(e) => { e.stopPropagation(); esportaGruppo(g); }}
                           >
-                            <Icona nome="excel" size={14} style={{ marginRight: '5px' }} />Excel
+                            <Icona nome="excel" size={16} style={{ marginRight: 0 }} aria-label="Esporta in Excel" />
                           </button>
                           {CONSUNTIVA_OLD_ATTIVO && (
                             <button
@@ -636,7 +636,7 @@ function Controparti({ tipo }) {
           <>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
             <button type="button" className="btn-outline-annulla" style={{ ...btnRiga, padding: '7px 14px', fontSize: '0.8rem' }} onClick={esportaConsuntivati} title="Un foglio con i periodi chiusi e uno con tutte le loro partite">
-              <Icona nome="excel" size={14} style={{ marginRight: '5px' }} />Esporta Excel
+              <Icona nome="excel" size={16} style={{ marginRight: 0 }} aria-label="Esporta in Excel" />
             </button>
           </div>
           <div className="admin-table-box-full" style={{ marginTop: '10px', overflowX: 'auto' }}>
@@ -674,7 +674,7 @@ function Controparti({ tipo }) {
                         <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold', color: saldo.colore, whiteSpace: 'nowrap' }}>{saldo.testo}</td>
                         <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                           <button type="button" className="btn-outline-annulla" style={{ ...btnRiga, marginRight: '6px' }} title="Le partite di questo periodo in Excel" onClick={(e) => { e.stopPropagation(); esportaPeriodo(pe); }}>
-                            <Icona nome="excel" size={14} style={{ marginRight: '5px' }} />Excel
+                            <Icona nome="excel" size={16} style={{ marginRight: 0 }} aria-label="Esporta in Excel" />
                           </button>
                           <button type="button" className="btn-outline-annulla" style={btnRiga} disabled={inCorso === `riapri-${pe.id}`} title="Il periodo torna fra quelli da consuntivare" onClick={(e) => { e.stopPropagation(); ripristina(pe); }}>
                             <Icona nome="riporta" size={14} style={{ marginRight: '5px' }} />Ripristina

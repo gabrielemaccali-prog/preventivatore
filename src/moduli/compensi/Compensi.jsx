@@ -1572,7 +1572,7 @@ function Compensi({ user }) {
                 title="Un foglio di riepilogo per bubbler e uno con tutte le partite"
                 style={{ display: 'inline-flex', alignItems: 'center', padding: '7px 14px', borderRadius: '4px', fontSize: '0.8rem' }}
               >
-                <Icona nome="excel" size={14} style={{ marginRight: '5px' }} />Esporta Excel
+                <Icona nome="excel" size={16} style={{ marginRight: 0 }} aria-label="Esporta in Excel" />
               </button>
             </div>
           </div>
@@ -1644,7 +1644,7 @@ function Compensi({ user }) {
                             onClick={(e) => { e.stopPropagation(); esportaOperatore(op); }}
                             style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: '4px', fontSize: '0.78rem' }}
                           >
-                            <Icona nome="excel" size={14} style={{ marginRight: '5px' }} />Excel
+                            <Icona nome="excel" size={16} style={{ marginRight: 0 }} aria-label="Esporta in Excel" />
                           </button>
                           {CONSUNTIVA_OLD_ATTIVO && (
                             <button
