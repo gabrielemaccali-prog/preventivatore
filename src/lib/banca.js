@@ -54,6 +54,9 @@ export const codiceDi = (descrizione) => {
 
 // Una commissione che porta dentro il codice di un'altra disposizione ("... COMMISSIONI 0126...").
 const codiciCitati = (descrizione) => String(descrizione ?? '').match(/\b\d{13,}\b/g) || [];
+// Il riferimento del bonifico ("0306917329058803S90160401604IT"): la commissione di una
+// "DISPOSIZIONE DI BONIFICO" cita un codice suo, diverso da quello del bonifico, ma ripete questo.
+const riferimentiDi = (descrizione) => String(descrizione ?? '').match(/\b\d{10,}[0-9A-Z]*IT\b/g) || [];
 
 // L'impronta di un movimento: la stessa a ogni ricaricamento del file, diversa fra due movimenti.
 // Con il codice basta tipo + codice. Senza, si usano i dati del movimento; e se nello stesso file
@@ -362,10 +365,15 @@ export function elabora({ movimenti, spese, regole, controparti }) {
   const usate = new Set();
 
   // Il movimento principale di un onere: un'uscita, non un onere, con lo stesso codice (o col codice
-  // che la commissione cita nella descrizione).
+  // che la commissione cita nella descrizione); se no, lo stesso giorno, col riferimento del bonifico
+  // che la commissione ripete.
   const principaleDi = (o) => {
+    const uscite = (movimenti || []).filter(x => x.id !== o.id && !eOnere(x) && Number(x.importo) < 0 && !x.ignorato);
     const codici = [o.codice, ...codiciCitati(o.descrizione)].filter(Boolean);
-    return codici.length === 0 ? null : (movimenti || []).find(x => x.id !== o.id && !eOnere(x) && Number(x.importo) < 0 && !x.ignorato && codici.includes(x.codice)) || null;
+    const perCodice = codici.length ? uscite.find(x => codici.includes(x.codice)) : null;
+    if (perCodice) return perCodice;
+    const rif = riferimentiDi(o.descrizione);
+    return rif.length ? uscite.find(x => x.data_contabile === o.data_contabile && riferimentiDi(x.descrizione).some(r => rif.includes(r))) || null : null;
   };
 
   for (const m of liberi) {

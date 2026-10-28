@@ -159,6 +159,19 @@ verifica('generale all\'ultimo livello: completa', null, cosaManca({ ente: 'bfm'
 const el = elabora({ movimenti: mov, spese: [], regole, controparti });
 verifica('entrate e oneri non diventano spese', 7, el.nuove.length);
 verifica('costi dei bonifici e commissione ADUE: oneri della spesa principale', [[3, 2], [5, 4], [10, 9]], el.oneri.map(o => [o.movimento.id, o.principale.id]));
+// La commissione di una "DISPOSIZIONE DI BONIFICO" (26/10/2026, Z5) cita un codice diverso da quello
+// del bonifico: si riconosce dal riferimento ...IT che ripete, lo stesso giorno.
+{
+  const disp = [
+    { id: 966, codice: '0126102620094987', data_contabile: '2026-10-26', tipo: 'DISPOSIZIONE DI BONIFICO', importo: -1165, descrizione: '0126102620094987 0306917329058803S90160401604IT Bonifico da Voi disposto a favore di: Z5 TORINO S.R.L. Affito campi/bar' },
+    { id: 967, codice: null, data_contabile: '2026-10-26', tipo: 'COMMISSIONE DISPOSIZIONE DI BONIFICO', importo: -1, descrizione: 'Bonifico da Voi disposto a favore di: BENEFICIARI DIVERSI - COMMISSIONI 0126102620151570 0306917329058803S90160401604IT' },
+    { id: 960, codice: '0126102725242628', data_contabile: '2026-10-27', tipo: 'DISPOSIZIONE DI BONIFICO', importo: -355, descrizione: '0126102725242628 0306917353498008S90160401604IT Bonifico da Voi disposto a favore di: Cristina Pasini Compensi' },
+    { id: 961, codice: null, data_contabile: '2026-10-27', tipo: 'COMMISSIONE DISPOSIZIONE DI BONIFICO', importo: -1, descrizione: 'Bonifico da Voi disposto a favore di: BENEFICIARI DIVERSI - COMMISSIONI 0126102725259960 0306917353498008S90160401604IT' },
+  ];
+  const d = elabora({ movimenti: disp, spese: [], regole: [], controparti });
+  verifica('commissione della disposizione di bonifico: dal riferimento ...IT', [[967, 966], [961, 960]], d.oneri.map(o => [o.movimento.id, o.principale.id]));
+  verifica('e non diventa una spesa a sé', [966, 960], d.nuove.map(n => n.movimento.id));
+}
 const note = el.nuove.find(n => n.movimento.id === 2).spesa;
 verifica('spesa generale dalla regola, importo senza oneri', [1064.5, 'bfm', 'generale', 21, 2], [note.importo, note.ente, note.natura, note.categoria_id, note.regola_id]);
 verifica('descrizione dal testo dopo "a favore di"', 'Gabriele Maccali Rimborso note spese Luglio 2026', note.descrizione);
