@@ -333,7 +333,14 @@ function Consuntivazione({ user }) {
                 return (
                   <Fragment key={chiave(x)}>
                     <tr onClick={() => apriRiga(x)} style={{ cursor: 'pointer', borderBottom: aperta ? 'none' : '1px solid #eee', background: aperta ? '#f8fafc' : undefined, borderLeft: `3px solid ${COLORE_STATO[x.stato]}` }}>
-                      <td style={cella}><strong>{x.codice}</strong></td>
+                      <td style={cella}>
+                        <strong>{x.codice}</strong>
+                        {/* Le note di solito dicono qualcosa sulla fatturazione: vanno lette prima di
+                            fatturare, e passando sull'asterisco si leggono senza aprire la prenotazione. */}
+                        {String(x.origine?.note || '').trim() && (
+                          <span title={x.origine.note} aria-label="Ha delle note" style={{ color: '#dc2626', fontWeight: 'bold', marginLeft: '3px', cursor: 'help' }}>*</span>
+                        )}
+                      </td>
                       <td style={{ ...cella, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(x.data)}</td>
                       <td style={cella}>{x.intestatario}</td>
                       <td style={{ ...cella, color: '#475569' }}>
@@ -355,8 +362,16 @@ function Consuntivazione({ user }) {
                             const righePag = pagamentiPer[chiave(x)] || [];
                             const incassato = sommaImporti(righePag) + (x.voucher?.valore || 0);
                             const th = { padding: '4px 10px', fontWeight: 600 };
+                            const note = String(x.origine?.note || '').trim();
                             return (
                               <>
+                                {/* In testa, prima dei pagamenti: è quello che va letto prima di fatturare. */}
+                                {note && (
+                                  <>
+                                    <div style={{ ...titoloDettaglio, color: '#dc2626' }}>Note</div>
+                                    <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', whiteSpace: 'pre-wrap', color: '#334155' }}>{note}</p>
+                                  </>
+                                )}
                                 <div style={titoloDettaglio}>Pagamenti</div>
                                 {righePag.length === 0 && !x.voucher
                                   ? <p style={{ margin: '0 0 12px 0', color: '#94a3b8' }}>Nessun pagamento registrato.</p>
