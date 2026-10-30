@@ -141,6 +141,13 @@ verifica('campo: costo = affitto + rinfresco di tutte le partite', 193.44, quint
 verifica('campo: la partita commissionata è un credito', 150, quintosole.ricavo);
 verifica('campo: saldo', 43.44, quintosole.saldo);
 verifica('campo: una partita senza campo non è di nessun campo', 1, daConsuntivareCampi(campiBase).controparti.length);
+// Il campo che commissiona una partita a casa sua non si fa pagare l'affitto: resta il rinfresco,
+// e la partita è un credito al suo prezzo netto.
+const aCasaSua = { ...partitaCampo, id: 'PRN-C4', clienteCampoId: 'cmp_q', prezzoVenditaNetto: 160 };
+const conCasaSua = daConsuntivareCampi({ ...campiBase, prenotazioni: [aCasaSua] }).controparti[0].righe;
+verifica("campo: a casa sua l'affitto è zero, il rinfresco resta", { affitto: 0, rinfresco: 98.36 },
+  (({ affitto, rinfresco }) => ({ affitto, rinfresco }))(conCasaSua.find(r => r.lato === 'costo').dettaglio));
+verifica('campo: a casa sua la partita è un credito', 160, conCasaSua.find(r => r.lato === 'ricavo').consuntivato);
 verifica('campo: un periodo di fornitore non chiude un campo', 3,
   daConsuntivareCampi({ ...campiBase, periodi: [{ controparte: 'fornitore', controparte_id: 'cmp_q', dal: '2026-09-01', al: '2026-09-30' }] }).controparti[0].righe.length);
 verifica('campo: il suo periodo sì', 0,

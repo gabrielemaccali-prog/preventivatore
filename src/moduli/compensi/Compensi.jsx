@@ -6,7 +6,7 @@ import html2pdf from 'html2pdf.js'
 import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita, quotePartite, righeConsuntivo, trasfertePerData, giornataDelPeriodo } from './calcolo'
 import { scaricaExcel } from '../../lib/excel'
 import { toMinutes, righeResidenza, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, generaCompenso, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, eOld } from '../../lib/costanti'
+import { STATO_PREN, generaCompenso, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -446,7 +446,7 @@ function Compensi({ user }) {
       + `Consuntivare ${op.nome || nomeOperatore(op.id)} dal ${dataBreve(dal)} al ${dataBreve(al)}?\n\n`
       + `${euro(op.compenso + op.spese)} da pagare su ${op.giornate.length} giornate.\n\n`
       + (old
-        ? `Vecchia gestione (OLD): il periodo finisce subito fra i rimborsi evasi, senza documento e senza ritenuta.`
+        ? `Vecchia gestione (pregresso): il periodo finisce subito fra i rimborsi evasi, senza documento e senza ritenuta.`
         : diretto
         ? `Senza ritenuta: il periodo risulta subito pagato e finisce fra i rimborsi evasi, senza documento.`
         : intestatario
@@ -1230,7 +1230,7 @@ function Compensi({ user }) {
                       {/* Un periodo senza documento si legge diversamente dagli altri: ritenuta a
                           zero in colonna e nessuna ristampa fra le azioni. */}
                       {evasi && !p.rimborso && (eOld(p) ? (
-                        <span title="Vecchia gestione: chiuso senza documento e senza ritenuta" style={{ marginLeft: '8px', fontSize: '0.66rem', fontWeight: 'bold', color: '#fff', background: '#475569', borderRadius: '4px', padding: '2px 6px', whiteSpace: 'nowrap' }}>OLD</span>
+                        <span title="Vecchia gestione: chiuso senza documento e senza ritenuta" style={{ marginLeft: '8px', fontSize: '0.66rem', fontWeight: 'bold', color: '#fff', background: '#475569', borderRadius: '4px', padding: '2px 6px', whiteSpace: 'nowrap' }}>{ETICHETTA_OLD}</span>
                       ) : (
                         <span title="Consuntivato diretto: nessuna ritenuta, nessun documento di rimborso" style={{ marginLeft: '8px', fontSize: '0.66rem', fontWeight: 'bold', color: '#fff', background: '#7c3aed', borderRadius: '4px', padding: '2px 6px', whiteSpace: 'nowrap' }}>DIRETTO</span>
                       ))}
@@ -1654,7 +1654,7 @@ function Compensi({ user }) {
                               title="Vecchia gestione: le giornate selezionate passano subito fra i rimborsi evasi, senza documento e senza ritenuta"
                               style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: '4px', fontSize: '0.78rem', background: '#475569', color: '#fff', border: 'none', fontWeight: 'bold', cursor: 'pointer' }}
                             >
-                              OLD
+                              {ETICHETTA_OLD}
                             </button>
                           )}
                           <button

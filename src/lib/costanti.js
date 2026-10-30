@@ -11,7 +11,10 @@ export const GIORNI_VALIDITA_PREVENTIVO = 10;
 // gli effetti. Il periodo lo dice con la nota, che c'è già nelle tabelle dei periodi.
 // È un pulsante di passaggio: quando la vecchia gestione è smaltita basta mettere false.
 export const CONSUNTIVA_OLD_ATTIVO = true;
+// A video si chiama "Pregresso", come le prenotazioni della vecchia gestione. Nelle tabelle la nota
+// resta 'OLD': è quella con cui sono già stati chiusi i periodi, e cambiarla li renderebbe normali.
 export const NOTA_OLD = 'OLD';
+export const ETICHETTA_OLD = 'PREGRESSO';
 export const eOld = (periodo) => periodo?.note === NOTA_OLD;
 
 // --- STATI DI PRENOTAZIONI, VOUCHER E PREVENTIVI ---
@@ -33,13 +36,21 @@ export const STATO_PREN = Object.freeze({
   CONFERMATO: 'CONFERMATO',
   ANNULLATA: 'ANNULLATA',
   POSTICIPATA: 'POSTICIPATA',
+  // Una partita giocata prima che ci fosse l'app (dal vecchio foglio): è già fatturata, incassata e
+  // pagata a campi e bubbler. Conta nei ricavi e nei costi, ma non entra nel lavoro di tutti i
+  // giorni (Gestione, Calendario, Compensi, Consuntivazione): sta nella scheda Pregresso.
+  PREGRESSA: 'PREGRESSA',
 });
 export const ETICHETTA_STATO_PREN = Object.freeze({
   [STATO_PREN.FORSE]: 'FORSE',
   [STATO_PREN.CONFERMATO]: 'CONFERMATO',
   [STATO_PREN.ANNULLATA]: 'ANNULLATA',
   [STATO_PREN.POSTICIPATA]: 'POSTICIPATA',
+  [STATO_PREN.PREGRESSA]: ETICHETTA_OLD,
 });
+
+// Le partite che si sono giocate davvero: le confermate e le pregresse.
+export const giocata = (p) => p?.stato === STATO_PREN.CONFERMATO || p?.stato === STATO_PREN.PREGRESSA;
 export const etichettaStatoPren = etichettaDa(ETICHETTA_STATO_PREN);
 
 // Costi di una partita annullata -- colonna prenotazioni.costiAnnullamento (text[]).

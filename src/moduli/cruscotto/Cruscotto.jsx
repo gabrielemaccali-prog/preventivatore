@@ -6,12 +6,12 @@ import { etichettaPartita, etichettaGiochiBreve, formattaDataGGMMAAAA, estraiDat
 import {
   STATO_PREN, etichettaStatoPren, classeBadgeStato, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO,
   costiAnnullamentoDi, generaCompenso, STATO_PREVENTIVO, statoPreventivoDi, GIORNI_VALIDITA_PREVENTIVO,
-  categoriaAnnullamentoDi, etichettaCategoriaAnnullamento, ETICHETTA_NON_CLASSIFICATO,
+  categoriaAnnullamentoDi, etichettaCategoriaAnnullamento, ETICHETTA_NON_CLASSIFICATO, giocata,
 } from '../../lib/costanti'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { preventiviPerOperatore, lordizza, righeConsuntivo, trasfertePerData, giornataDelPeriodo } from '../compensi/calcolo'
-import { risolutoreSedi, arrotonda2 } from '../../lib/fornitori'
+import { risolutoreSedi, arrotonda2, suoCampoDi } from '../../lib/fornitori'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine,
@@ -44,7 +44,7 @@ const STROKE_GRIGLIA = '#e1e0d9';
 const INK_MUTED = '#898781';
 
 const nettoRicavo = (p) => p.prezzoVenditaNetto != null ? parseFloat(p.prezzoVenditaNetto) : (parseFloat(p.prezzoVendita) || 0) / 1.22;
-const nettoCampo = (p) => p.costoCampoNetto != null ? parseFloat(p.costoCampoNetto) : (parseFloat(p.costoCampo) || 0) / 1.22;
+const nettoCampo = (p) => suoCampoDi(p) ? 0 : p.costoCampoNetto != null ? parseFloat(p.costoCampoNetto) : (parseFloat(p.costoCampo) || 0) / 1.22;
 const nettoRinf = (p) => p.costoRinfrescoNetto != null ? parseFloat(p.costoRinfrescoNetto) : (parseFloat(p.costoRinfresco) || 0) / 1.22;
 const nettoEreditato = (p) => p.ereditaCosti ? (parseFloat(p.costoEreditato) || 0) : 0;
 
@@ -224,6 +224,7 @@ const COLORI_STATO_PREN = {
   [STATO_PREN.CONFERMATO]: '#16a34a',
   [STATO_PREN.ANNULLATA]: '#dc2626',
   [STATO_PREN.POSTICIPATA]: '#eab308',
+  [STATO_PREN.PREGRESSA]: '#64748b',
 };
 const coloreStatoPren = (s) => COLORI_STATO_PREN[s] || '#f59e0b';
 
@@ -1163,7 +1164,8 @@ function Cruscotto({ user }) {
       if (!p.data) return;
       if (annoSel && p.data.slice(0, 4) !== annoSel) return;
       if (annoSel && meseSel && parseInt(p.data.slice(5, 7), 10) !== parseInt(meseSel, 10)) return;
-      if (soloConfermate && p.stato !== STATO_PREN.CONFERMATO) return;
+      // "Confermate" vuol dire giocate davvero: anche le pregresse della vecchia gestione.
+      if (soloConfermate && !giocata(p)) return;
       const voci = Array.isArray(p.voci) ? p.voci.filter(Boolean) : [];
       const costoStruttura = nettoCampo(p) + nettoRinf(p);
       // Il compenso sta sulla prenotazione, non sul singolo gioco: va sul gioco che la identifica,

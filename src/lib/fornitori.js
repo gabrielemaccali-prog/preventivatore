@@ -246,7 +246,10 @@ export const daConsuntivareFornitori = ({ prenotazioni = [], sedi = [], risoluto
 // I campi: il costo è l'affitto più il rinfresco, al netto dell'IVA, come li ha calcolati la
 // prenotazione con le tariffe del campo. Il dettaglio li tiene separati: si pagano insieme allo
 // stesso centro sportivo, ma sono due cose diverse e possono cambiare ognuna per conto suo.
-export const nettoAffittoDi = (p) => (p.costoCampoNetto != null ? (parseFloat(p.costoCampoNetto) || 0) : (parseFloat(p.costoCampo) || 0) / 1.22);
+// Una partita commissionata dal campo stesso si gioca a casa sua: l'affitto non si paga.
+export const suoCampoDi = (p) => !!p.campoId && p.clienteCampoId === p.campoId;
+export const nettoAffittoDi = (p) => (suoCampoDi(p) ? 0
+  : p.costoCampoNetto != null ? (parseFloat(p.costoCampoNetto) || 0) : (parseFloat(p.costoCampo) || 0) / 1.22);
 export const nettoRinfrescoDi = (p) => (p.costoRinfrescoNetto != null ? (parseFloat(p.costoRinfrescoNetto) || 0) : (parseFloat(p.costoRinfresco) || 0) / 1.22);
 
 // Quanto dura la partita, in ore: dagli orari quando c'è l'ora di fine, altrimenti dalla durata del

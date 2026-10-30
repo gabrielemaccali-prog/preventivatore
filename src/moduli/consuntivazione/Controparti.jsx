@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { scaricaExcel } from '../../lib/excel'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, eOld } from '../../lib/costanti'
+import { STATO_PREN, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
 import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, arrotonda2, totaliDi } from '../../lib/fornitori'
 
 // ============================================================
@@ -271,7 +271,7 @@ function Controparti({ tipo }) {
     if (nScelte === 0) return alert('Seleziona almeno una partita da consuntivare.');
     if (!window.confirm(
       (nScelte < nTutte ? `Non hai selezionato tutte le partite di ${g.controparte.nome}: ne chiudi ${nScelte} su ${nTutte}, le altre restano da consuntivare. Sei sicuro?\n\n` : '')
-      + `Chiudere come vecchia gestione (OLD) ${nScelte} partit${nScelte === 1 ? 'a' : 'e'} di ${g.controparte.nome}, saldo ${saldoTesto(sel.saldo).testo}?\n\n`
+      + `Chiudere come vecchia gestione (pregresso) ${nScelte} partit${nScelte === 1 ? 'a' : 'e'} di ${g.controparte.nome}, saldo ${saldoTesto(sel.saldo).testo}?\n\n`
       + 'Passano subito fra i consuntivati, senza data di pagamento.'
     )) return;
     consuntiva({ gruppo: sel, data: oggiIso(), old: true });
@@ -445,7 +445,7 @@ function Controparti({ tipo }) {
     const d = x.costo?.dettaglio;
     return {
       [cfg.intestazione]: controparte.nome,
-      ...(periodo ? { Periodo: periodoTesto(periodo.dal, periodo.al), 'Pagato il': eOld(periodo) ? 'OLD' : formattaDataGGMMAAAA(periodo.data_consuntivo) } : {}),
+      ...(periodo ? { Periodo: periodoTesto(periodo.dal, periodo.al), 'Pagato il': eOld(periodo) ? ETICHETTA_OLD : formattaDataGGMMAAAA(periodo.data_consuntivo) } : {}),
       Data: formattaDataGGMMAAAA(x.data),
       Partita: x.riferimento,
       Nominativo: x.nominativo || '',
@@ -479,7 +479,7 @@ function Controparti({ tipo }) {
   ]);
   const contropartePeriodo = (pe) => contropartePerId[String(pe.controparte_id)] || { id: pe.controparte_id, nome: pe.controparte_id };
   const riepilogoPeriodo = (pe) => ({
-    [cfg.intestazione]: contropartePeriodo(pe).nome, Periodo: periodoTesto(pe.dal, pe.al), 'Pagato il': eOld(pe) ? 'OLD' : formattaDataGGMMAAAA(pe.data_consuntivo),
+    [cfg.intestazione]: contropartePeriodo(pe).nome, Periodo: periodoTesto(pe.dal, pe.al), 'Pagato il': eOld(pe) ? ETICHETTA_OLD : formattaDataGGMMAAAA(pe.data_consuntivo),
     Partite: partiteDi(pe.righe || []), Preventivato: r2(pe.costo_preventivato), Consuntivato: r2(pe.costo), Crediti: r2(pe.ricavo), Saldo: r2(pe.saldo),
   });
   const esportaPeriodo = (pe) => scaricaExcel(`${cfg.titolo}_${contropartePeriodo(pe).nome}_${pe.dal}`, [
@@ -599,7 +599,7 @@ function Controparti({ tipo }) {
                               onClick={(e) => { e.stopPropagation(); consuntivaOld(g); }}
                               style={{ ...btnRiga, background: '#475569', color: '#fff', border: 'none', fontWeight: 'bold', cursor: 'pointer' }}
                             >
-                              OLD
+                              {ETICHETTA_OLD}
                             </button>
                           )}
                           <button
@@ -664,7 +664,7 @@ function Controparti({ tipo }) {
                         <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                           <span className="riga-espandibile-chevron" style={{ transform: aperto ? 'rotate(90deg)' : 'none' }}>›</span>
                           <strong>{controparte.nome}</strong>
-                          {eOld(pe) && <span title="Vecchia gestione: chiuso senza data di pagamento" style={stileOld}>OLD</span>}
+                          {eOld(pe) && <span title="Vecchia gestione: chiuso senza data di pagamento" style={stileOld}>{ETICHETTA_OLD}</span>}
                         </td>
                         <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{periodoTesto(pe.dal, pe.al)}</td>
                         <td style={{ padding: '8px 10px', whiteSpace: 'nowrap', color: '#64748b' }}>{eOld(pe) ? nessuno : formattaDataGGMMAAAA(pe.data_consuntivo)}</td>

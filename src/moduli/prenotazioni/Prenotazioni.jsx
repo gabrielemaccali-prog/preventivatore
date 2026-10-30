@@ -5,7 +5,7 @@ import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, 
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi } from '../../lib/campi'
-import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO, categoriaAnnullamentoDi } from '../../lib/costanti'
+import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO, categoriaAnnullamentoDi, ETICHETTA_OLD, giocata } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { formaNome, formaLuogo, formaRagioneSociale, formaEmail, formaCodice, formaTelefono } from '../../lib/maiuscole'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
@@ -84,6 +84,7 @@ const COLORI_STATO = {
   [STATO_PREN.CONFERMATO]: { bg: '#dcfce7', bd: '#16a34a', tx: '#166534' },
   [STATO_PREN.ANNULLATA]: { bg: '#fee2e2', bd: '#dc2626', tx: '#991b1b' },
   [STATO_PREN.POSTICIPATA]: { bg: '#fef9c3', bd: '#eab308', tx: '#854d0e' },
+  [STATO_PREN.PREGRESSA]: { bg: '#e2e8f0', bd: '#64748b', tx: '#334155' },
 };
 const STATO_AMBRA = { bg: '#fed7aa', bd: '#f59e0b', tx: '#9a3412' };
 const coloreStato = (s) => COLORI_STATO[s] || STATO_AMBRA;
@@ -1258,9 +1259,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     </div>
   );
 
-  const esportaExcelPren = () => {
-    if (prenotazioniFiltrate.length === 0) return alert("Nessuna prenotazione da esportare.");
-    const righe = prenotazioniFiltrate.map(p => {
+  const esportaExcelPren = (elenco = prenotazioniFiltrate, nomeFile = "Storico_Prenotazioni.xlsx") => {
+    if (elenco.length === 0) return alert("Nessuna prenotazione da esportare.");
+    const righe = elenco.map(p => {
       const r = {};
       Object.keys(p).forEach(k => {
         const v = p[k];
@@ -1274,7 +1275,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const ws = XLSX.utils.json_to_sheet(righe);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Prenotazioni");
-    XLSX.writeFile(wb, "Storico_Prenotazioni.xlsx");
+    XLSX.writeFile(wb, nomeFile);
   };
 
   // Intervallo lunedì-domenica della settimana mostrata, calcolato una volta sola e non a ogni riga.
@@ -1304,7 +1305,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const mAnnullate = !nascondiAnnullate || filtroPrenStato === STATO_PREN.ANNULLATA || p.stato !== STATO_PREN.ANNULLATA;
     return mData && mSettimana && mStato && mNome && mId && mAnnullate;
   };
-  const prenotazioniFiltrate = prenotazioni.filter(p => passaFiltriPren(p));
+  // Le pregresse (vecchia gestione) hanno una scheda loro: nello Storico ci sono solo quelle dell'app.
+  const prenotazioniFiltrate = prenotazioni.filter(p => p.stato !== STATO_PREN.PREGRESSA && passaFiltriPren(p));
+  // Nella scheda Pregresso lo stato è uno solo: il filtro per stato non c'entra.
+  const pregresseFiltrate = prenotazioni.filter(p => p.stato === STATO_PREN.PREGRESSA && passaFiltriPren({ ...p, stato: filtroPrenStato || p.stato }));
 
   const filtriPrenotazioni = ({ conNascondiAnnullate = true } = {}) => (
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
@@ -1329,7 +1333,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
               <label>Stato:</label>
               <select value={filtroPrenStato} onChange={(e) => setFiltroPrenStato(e.target.value)}>
                 <option value="">Tutti</option>
-                {Object.values(STATO_PREN).map(stato => <option key={stato} value={stato}>{etichettaStatoPren(stato)}</option>)}
+                {Object.values(STATO_PREN).filter(stato => stato !== STATO_PREN.PREGRESSA).map(stato => <option key={stato} value={stato}>{etichettaStatoPren(stato)}</option>)}
               </select>
             </div>
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
@@ -1596,9 +1600,13 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // Il lordo dipende da come si paga: la quota in contanti resta senza IVA.
     const prezzoVenditaLordo = lordoConContanti(prezzoVenditaNetto, contantiDi(f), IVA);
     const numPart = numOrNull(f.numeroPartecipanti);
-    const { costoCampoNetto, costoCampoLordo, costoRinfrescoNetto, costoRinfrescoLordo } = costiCampoDi({
+    const costiDelCampo = costiCampoDi({
       campo, tariffe, data: f.data, oraInizio, tipoRinfresco: pac.prevedeRinfresco ? f.tipoRinfresco : null, numeroPartecipanti: numPart,
     });
+    // Una partita commissionata dal campo stesso si gioca a casa sua: l'affitto non si paga.
+    const { costoRinfrescoNetto, costoRinfrescoLordo } = costiDelCampo;
+    const { costoCampoNetto, costoCampoLordo } = campo && f.clienteCampoId === campo.id
+      ? { costoCampoNetto: 0, costoCampoLordo: 0 } : costiDelCampo;
     // "Non servono operatori" e una scelta dichiarata, diversa da "non ancora assegnati": si salva
     // come tale e azzera l'elenco, cosi le due cose non si confondono a distanza di tempo.
     const senzaOperatori = !!f.senzaOperatori;
@@ -2565,6 +2573,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         {puoVedere(user, 'prenotazioni', 'storico') && (
           <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}><Icona nome="storico" />Storico</button>
         )}
+        {puoVedere(user, 'prenotazioni', 'pregresso') && (
+          <button className={`nav-btn ${currentView === 'pregresso' ? 'active' : ''}`} onClick={() => setCurrentView("pregresso")}><Icona nome="storico" />Pregresso</button>
+        )}
       </nav>
 
       {/* ===================== CONFIGURATORE ===================== */}
@@ -2671,7 +2682,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <h2 style={{ margin: 0 }}>Storico Prenotazioni</h2>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button onClick={esportaExcelPren} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
+              <button onClick={() => esportaExcelPren()} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
             </div>
           </div>
           <p className="descrizione-pagina">Consulta, apri, cambia stato o elimina le prenotazioni.</p>
@@ -2679,6 +2690,23 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           {filtriPrenotazioni()}
 
           {tabellaPren(prenotazioniFiltrate, "Nessuna prenotazione trovata.")}
+        </div>
+      )}
+      {currentView === "pregresso" && puoVedere(user, 'prenotazioni', 'pregresso') && (
+        <div className="schermata-storico no-print">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <h2 style={{ margin: 0 }}>Prenotazioni pregresse</h2>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button onClick={() => esportaExcelPren(pregresseFiltrate, "Prenotazioni_Pregresse.xlsx")} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
+            </div>
+          </div>
+          <p className="descrizione-pagina" style={{ background: '#e2e8f0', border: '1px solid #64748b', color: '#334155', borderRadius: '6px', padding: '8px 12px' }}>
+            <strong>{ETICHETTA_OLD}</strong>: le partite della vecchia gestione, giocate prima dell'app e ricostruite dal vecchio foglio, dalle fatture, dalla prima nota, dall'estratto conto e dal calendario. Sono già fatturate, incassate e pagate a campi e bubbler: contano nei ricavi e nei costi, ma non entrano in Calendario, Compensi e Consuntivazione. In Gestione compaiono solo fra quelle da saldare, se resta un incasso aperto.
+          </p>
+
+          {filtriPrenotazioni({ conNascondiAnnullate: false })}
+
+          {tabellaPren(pregresseFiltrate, "Nessuna prenotazione pregressa trovata.")}
         </div>
       )}
       {currentView === "gestione" && puoVedere(user, 'prenotazioni', 'gestione') && (() => {
@@ -2718,7 +2746,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // torna fra quelle da completare.
         const mancaOperatore = confermate.filter(p => mancanoOperatori(p) && fineEventoDi(p) >= oggiIso);
         const daCompletare = confermate.filter(p => mancaAnagrafica(p) || (mancanoOperatori(p) && fineEventoDi(p) < oggiIso));
-        const daSaldare = confermate.filter(mancaIncasso);
+        // Fra quelle da saldare ci sono anche le pregresse: la vecchia gestione ha lasciato qualche
+        // incasso aperto, e va sollecitato come gli altri. Le altre schede restano senza: una
+        // pregressa non ha più dati da completare né turni da coprire.
+        const daSaldare = base.filter(p => giocata(p) && mancaIncasso(p));
         // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
         // partita annullata non ce n'e'. Si trovano nello Storico.
         // Le schede in ordine, ognuna con la sua lista. Si mostrano solo quelle che hanno qualcosa:
@@ -2731,7 +2762,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           { chiave: 'partiteAttive', etichetta: 'Partite attive', icona: 'partiteAttive', lista: partiteAttive },
           { chiave: 'mancaOperatore', etichetta: 'Manca operatore', icona: 'perOperatore', lista: mancaOperatore, titolo: 'Partite ancora da giocare senza nessun operatore assegnato: turni da coprire' },
           { chiave: 'daCompletare', etichetta: 'Da completare', icona: 'daCompletare', lista: daCompletare, titolo: 'Confermate a cui mancano i dati di fatturazione, o gli operatori su una partita già giocata' },
-          { chiave: 'daSaldare', etichetta: 'Da saldare', icona: 'attesaPagamento', lista: daSaldare, titolo: "Confermate non ancora saldate per intero" },
+          { chiave: 'daSaldare', etichetta: 'Da saldare', icona: 'attesaPagamento', lista: daSaldare, titolo: "Confermate e pregresse non ancora saldate per intero" },
         ];
         const visibili = schede.filter(sc => sc.lista.length > 0);
         // Se la scheda scelta si e' svuotata -- l'ultima prenotazione e' stata confermata, o un filtro
@@ -2768,7 +2799,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // farebbe sembrare pieno uno slot che e' libero. Una posticipata invece resta: l'acconto e'
         // stato incassato e il campo e' ancora tenuto, finche' non si decide la data nuova.
         const prenDelGiorno = (iso) => prenotazioni
-          .filter(p => p.stato !== STATO_PREN.ANNULLATA && giorniEventoDi(p).includes(iso))
+          .filter(p => p.stato !== STATO_PREN.ANNULLATA && p.stato !== STATO_PREN.PREGRESSA && giorniEventoDi(p).includes(iso))
           .sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
 
         // --- Griglia oraria (viste Settimana/Giorno): posiziona ogni prenotazione in base a orario e durata reali ---
@@ -3118,7 +3149,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const isoSettimana = new Set(Array.from({ length: 7 }, (_, i) => toISODate(addGiorni(inizio, i))));
         // Stessa regola dei promemoria: a un campo non si annuncia una partita annullata, mentre
         // una posticipata resta sua finche' non la si sposta.
-        const righeSettimana = prenotazioni.filter(p => p.stato !== STATO_PREN.ANNULLATA && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
+        const righeSettimana = prenotazioni.filter(p => p.stato !== STATO_PREN.ANNULLATA && p.stato !== STATO_PREN.PREGRESSA && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
         const locLabelRiep = (p) => p.campoNome || luogoLiberoDi(p) || '—';
 
         // Come si legge un evento in un promemoria: prima cosa si gioca, poi -- se c'è -- il
