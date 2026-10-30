@@ -6,7 +6,7 @@ import { etichettaPartita, etichettaGiochiBreve, formattaDataGGMMAAAA, estraiDat
 import {
   STATO_PREN, etichettaStatoPren, classeBadgeStato, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO,
   costiAnnullamentoDi, generaCompenso, STATO_PREVENTIVO, statoPreventivoDi, GIORNI_VALIDITA_PREVENTIVO,
-  categoriaAnnullamentoDi, etichettaCategoriaAnnullamento, ETICHETTA_NON_CLASSIFICATO, giocata,
+  categoriaAnnullamentoDi, etichettaCategoriaAnnullamento, ETICHETTA_NON_CLASSIFICATO, giocata, trasformataInVoucher,
 } from '../../lib/costanti'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
@@ -115,11 +115,12 @@ const raggruppaPerCategoria = (righe, valoreDi = () => 0) => {
     .map(g => ({ ...g, nome: g.categoria?.etichetta || ETICHETTA_NON_CLASSIFICATO, descrizione: g.categoria?.descrizione || 'Annullamenti senza categoria: vanno classificati.' }))
     .sort((a, b) => (a.chiave === '') - (b.chiave === '') || b.n - a.n || b.valore - a.valore);
 };
-// Annullato si', ma non perso: una richiesta che non era vera, o un cliente passato a un'altra
-// nostra formula. Restano nell'elenco ma fuori dal valore perso e dalla conversione.
+// Annullato si', ma non perso: una richiesta che non era vera, un cliente passato a un'altra
+// nostra formula, o una partita i cui soldi sono diventati un voucher -- quel ricavo torna con la
+// prenotazione nuova. Restano nell'elenco ma fuori dal valore perso e dalla conversione.
 const annullatoMaNonPerso = (p) => {
   const cat = categoriaAnnullamentoDi(p);
-  return !!(cat && (cat.fuoriStatistiche || cat.nonPerso));
+  return trasformataInVoucher(p) || !!(cat && (cat.fuoriStatistiche || cat.nonPerso));
 };
 
 // Nella colonna in pila il ricavo non e' una barra: e' l'altezza delle due messe insieme. Il tooltip
@@ -223,20 +224,18 @@ const sommaOperatori = (perOperatore) => Object.fromEntries(
 const COLORI_STATO_PREN = {
   [STATO_PREN.CONFERMATO]: '#16a34a',
   [STATO_PREN.ANNULLATA]: '#dc2626',
-  [STATO_PREN.POSTICIPATA]: '#eab308',
   [STATO_PREN.PREGRESSA]: '#64748b',
 };
 const coloreStatoPren = (s) => COLORI_STATO_PREN[s] || '#f59e0b';
 
-// Le schede di andamento guardano solo le partite in piedi: un'annullata o una posticipata non ha
-// prodotto niente, e una posticipata lo produrra' alla data nuova.
-const nonInPiedi = (p) => p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA;
+// Le schede di andamento guardano solo le partite in piedi: un'annullata non ha prodotto niente, e
+// se i suoi soldi sono diventati un voucher il ricavo arrivera' con la prenotazione nuova.
+const nonInPiedi = (p) => p.stato === STATO_PREN.ANNULLATA;
 
-// Il cruscotto invece le mostra tutte, e fuori dai totali tiene quelle che non muovono soldi: la
-// posticipata, e l'annullata senza costi segnati. Un'annullata con costi (il campo pagato lo stesso,
-// gli operatori gia' sul posto) resta dentro: il ricavo non c'e', ma quei costi sono usciti davvero.
-const fuoriDaiTotali = (p) => p.stato === STATO_PREN.POSTICIPATA
-  || (p.stato === STATO_PREN.ANNULLATA && costiAnnullamentoDi(p).size === 0);
+// Il cruscotto invece le mostra tutte, e fuori dai totali tiene quelle che non muovono soldi:
+// l'annullata senza costi segnati. Un'annullata con costi (il campo pagato lo stesso, gli
+// operatori gia' sul posto) resta dentro: il ricavo non c'e', ma quei costi sono usciti davvero.
+const fuoriDaiTotali = (p) => p.stato === STATO_PREN.ANNULLATA && costiAnnullamentoDi(p).size === 0;
 
 // A che punto e' il consuntivo di un gruppo di voci: tutte chiuse, nessuna, oppure alcune.
 // Un gruppo vuoto non ha niente da consuntivare, e lo si dice invece di spacciarlo per chiuso.
@@ -305,9 +304,9 @@ function Cruscotto({ user }) {
     setConsPeriodi(cpe.data || []);
     // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher), non più
     // nella colonna jsonb prenotazioni.pagamenti: vengono agganciati qui a ogni prenotazione.
-    // Una partita annullata non ha prodotto niente, e una posticipata lo produrra' un altro
-    // giorno: contarle qui vorrebbe dire mettere a bilancio ricavi che non ci sono e costi che
-    // non sono stati sostenuti. Restano nel modulo prenotazioni, che e' dove servono.
+    // Una partita annullata non ha prodotto niente, e quella diventata voucher lo produrra' un
+    // altro giorno: contarle qui vorrebbe dire mettere a bilancio ricavi che non ci sono e costi
+    // che non sono stati sostenuti. Restano nel modulo prenotazioni, che e' dove servono.
     if (pr.data) {
       const conPagamenti = pr.data.map(p => ({
         ...p,
@@ -559,7 +558,7 @@ function Cruscotto({ user }) {
       const annullata = p.stato === STATO_PREN.ANNULLATA;
       const segnati = costiAnnullamentoDi(p);
       if (annullata) {
-        // Annullata vuol dire senza incasso (con un incasso sarebbe posticipata): il ricavo non c'e'.
+        // Annullata vuol dire senza ricavo: se un incasso c'era, se n'è andato nel voucher.
         ricavo = { prev: 0, cons: null, nessuno: true, nota: 'Nessun ricavo', titolo: 'Annullata senza incasso' };
       } else if (p.clienteSedeId || p.clienteCampoId) {
         const righe = consuntivate(p.clienteSedeId ? 'fornitore' : 'campo', p, 'ricavo');
@@ -826,7 +825,7 @@ function Cruscotto({ user }) {
             {p.stato === STATO_PREN.ANNULLATA && (costiAnnullamentoDi(p).size > 0
               ? <em style={{ color: '#991b1b' }}>Annullata con costi da sostenere: {[...costiAnnullamentoDi(p)].map(c => ETICHETTA_COSTO_ANNULLAMENTO[c] || c).join(', ').toLowerCase()}.</em>
               : null)}
-            {p.stato === STATO_PREN.POSTICIPATA && <em style={{ color: '#854d0e' }}>Posticipata: esclusa dai totali, conterà alla data nuova.</em>}
+            {trasformataInVoucher(p) && <em style={{ color: '#5b21b6' }}>Diventata il voucher {p.voucherGenerato}: il ricavo conterà sulla prenotazione nuova.</em>}
           </div>
           <table className="tabella-dettaglio-cruscotto">
             <colgroup>
@@ -1045,7 +1044,7 @@ function Cruscotto({ user }) {
   const [annoAnn, setAnnoAnn] = useState("");
   const [meseAnn, setMeseAnn] = useState("");
   const meseAnnSel = annoAnn ? meseAnn : "";
-  const [statoAnn, setStatoAnn] = useState(""); // '' | ANNULLATA | POSTICIPATA, solo per le prenotazioni
+  const [statoAnn, setStatoAnn] = useState(""); // '' | 'perse' | 'voucher', solo per le prenotazioni
   const [motivoAnn, setMotivoAnn] = useState(null); // categoria scelta ('' = non classificati), null = tutte
 
   const dataAnnullatoDi = useCallback((p) => String((annullatiPren ? p.data : p.dataEmissione) || '').slice(0, 10), [annullatiPren]);
@@ -1066,7 +1065,8 @@ function Cruscotto({ user }) {
     const fuori = (p) => !!categoriaAnnullamentoDi(p)?.fuoriStatistiche;
     const valore = annullatiPren ? nettoRicavo : (p) => parseFloat(p.totaleVendita) || 0;
     const annullati = annullatiPren
-      ? nelPeriodo.filter(p => statoAnn ? p.stato === statoAnn : (p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA))
+      ? nelPeriodo.filter(p => p.stato === STATO_PREN.ANNULLATA
+          && (statoAnn === 'voucher' ? trasformataInVoucher(p) : statoAnn === 'perse' ? !trasformataInVoucher(p) : true))
       : nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO);
     const motivi = raggruppaPerCategoria(annullati, valore);
     const scelto = motivoAnn == null ? null : motivi.find(m => m.chiave === motivoAnn);
@@ -1080,16 +1080,17 @@ function Cruscotto({ user }) {
     };
 
     if (annullatiPren) {
-      const annullate = annullati.filter(p => p.stato === STATO_PREN.ANNULLATA);
-      const posticipate = annullati.filter(p => p.stato === STATO_PREN.POSTICIPATA);
+      // Due cose diverse sotto lo stesso stato: la partita persa davvero, e quella i cui soldi
+      // sono diventati un voucher. La seconda non e' un ricavo perso -- il cliente tornera' -- e
+      // quello che vale e' quanto c'e' dentro il voucher, non il prezzo della partita saltata.
+      const trasformate = annullati.filter(trasformataInVoucher);
+      const perse = annullati.filter(p => !trasformataInVoucher(p));
       return {
         ...comune,
-        annullate: annullate.filter(p => !fuori(p)), posticipate: posticipate.filter(p => !fuori(p)),
-        // La posticipata non e' un ricavo perso: l'acconto c'e' e la partita si rifara'. Persa e'
-        // l'annullata, ed e' quella che si somma.
-        ricavoPerso: annullate.filter(p => !annullatoMaNonPerso(p)).reduce((s, p) => s + nettoRicavo(p), 0),
-        daRiprogrammare: posticipate.reduce((s, p) => s + nettoRicavo(p), 0),
-        conCosti: annullate.filter(p => costiAnnullamentoDi(p).size > 0),
+        annullate: perse.filter(p => !fuori(p)), trasformate: trasformate.filter(p => !fuori(p)),
+        ricavoPerso: perse.filter(p => !annullatoMaNonPerso(p)).reduce((s, p) => s + nettoRicavo(p), 0),
+        parcheggiato: trasformate.reduce((s, p) => s + (valoriVoucher[p.voucherGenerato] || 0), 0),
+        conCosti: annullati.filter(p => costiAnnullamentoDi(p).size > 0),
       };
     }
 
@@ -1102,7 +1103,7 @@ function Cruscotto({ user }) {
       // li annulla gliela da'. Si contano per dire quanti potrebbero ancora arrivare in questa lista.
       azioneRichiesta: nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.AZIONE_RICHIESTA).length,
     };
-  }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi, annoAnn, meseAnnSel, statoAnn, motivoAnn]);
+  }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi, annoAnn, meseAnnSel, statoAnn, motivoAnn, valoriVoucher]);
 
   const esportaAnnullati = () => {
     if (statAnnullati.righe.length === 0) return alert("Niente da esportare.");
@@ -1382,7 +1383,7 @@ function Cruscotto({ user }) {
             {' '}<span className="importo-preventivo">€0.00</span> preventivo,
             {' '}<span className="importo-misto"><span className="importo-segno">◐</span>€0.00</span> in parte consuntivato.
             Il ricavo è consuntivato quando è fatturato per intero; costi di operatori, fornitori e campi quando il loro periodo è chiuso.
-            Apri una riga per vedere preventivo e consuntivo voce per voce. Le posticipate restano fuori dai totali. Le annullate compaiono solo se all'annullamento si sono segnati costi (campo, rinfresco, operatori): non hanno ricavo, ma quei costi contano.
+            Apri una riga per vedere preventivo e consuntivo voce per voce. Le annullate compaiono solo se all'annullamento si sono segnati costi (campo, rinfresco, operatori): non hanno ricavo, ma quei costi contano.
           </p>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
@@ -1480,7 +1481,7 @@ function Cruscotto({ user }) {
                 <tr style={{ borderTop: '2px solid #ddd', background: '#f8fafc', fontWeight: 'bold' }}>
                   <td style={{ padding: '10px' }} colSpan={6}>
                     TOTALE ({totaliCruscotto.n})
-                    {totaliCruscotto.n < righeCruscotto.length && <span style={{ fontWeight: 'normal', fontSize: '0.78rem', color: '#64748b' }}> · escluse {righeCruscotto.length - totaliCruscotto.n} posticipate</span>}
+                    {totaliCruscotto.n < righeCruscotto.length && <span style={{ fontWeight: 'normal', fontSize: '0.78rem', color: '#64748b' }}> · escluse {righeCruscotto.length - totaliCruscotto.n} senza movimenti</span>}
                   </td>
                   <td style={{ padding: '10px', textAlign: 'right' }}>€{totaliCruscotto.ricavo.toFixed(2)}</td>
                   <td style={{ padding: '10px', textAlign: 'right', color: '#c62828' }}>€{totaliCruscotto.costo.toFixed(2)}</td>
@@ -1917,14 +1918,14 @@ function Cruscotto({ user }) {
             {sottoschede.length === 0 ? <p className="descrizione-pagina">Nessuna sottoscheda abilitata per il tuo ruolo.</p> : (<>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                 <h2 style={{ margin: 0 }}>
-                  {annullatiPren ? 'Prenotazioni annullate e posticipate' : 'Preventivi annullati'}
+                  {annullatiPren ? 'Prenotazioni annullate' : 'Preventivi annullati'}
                   {' '}<span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>({annullatiPren ? 'per data della partita, ricavi senza IVA' : 'per data di emissione, importi di vendita'})</span>
                 </h2>
                 <button onClick={esportaAnnullati} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
               </div>
               <p className="descrizione-pagina">
                 {annullatiPren
-                  ? <>Una partita senza incasso si <strong>annulla</strong> e il suo ricavo è perso; con un acconto si <strong>posticipa</strong> e resta da riprogrammare. Il perché è la categoria scelta annullando; la nota scritta a mano è nell'elenco in fondo.</>
+                  ? <>Una partita senza incasso si <strong>annulla</strong> e il suo ricavo è perso; se un acconto era entrato, quei soldi <strong>diventano un voucher</strong> e il ricavo tornerà con la prenotazione nuova. Il perché è la categoria scelta annullando; la nota scritta a mano è nell'elenco in fondo.</>
                   : <>I preventivi chiusi dal cliente o da noi, con la categoria scelta annullandoli. Quelli scaduti senza risposta non sono qui finché qualcuno non li annulla.</>}
                 {' '}Le richieste non valide restano fuori dalle percentuali; con quelle passate a un'altra nostra formula, anche dal valore perso. Clicca una categoria per vedere solo le sue righe.
               </p>
@@ -1948,9 +1949,9 @@ function Cruscotto({ user }) {
                   <div className="filtro-group" style={{ flex: '1 1 160px' }}>
                     <label>Stato:</label>
                     <select value={statoAnn} onChange={(e) => { setStatoAnn(e.target.value); setMotivoAnn(null); }}>
-                      <option value="">Annullate e posticipate</option>
-                      <option value={STATO_PREN.ANNULLATA}>Solo annullate</option>
-                      <option value={STATO_PREN.POSTICIPATA}>Solo posticipate</option>
+                      <option value="">Tutte</option>
+                      <option value="perse">Solo perse</option>
+                      <option value="voucher">Solo diventate voucher</option>
                     </select>
                   </div>
                 )}
@@ -1959,7 +1960,7 @@ function Cruscotto({ user }) {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '20px' }}>
                 {annullatiPren ? (<>
                   {riquadro('Annullate', s.annullate.length, `${percentuale(quota(s.annullate.length))} delle ${s.totale} partite del periodo`, '#b91c1c')}
-                  {riquadro('Posticipate', s.posticipate.length, `${percentuale(quota(s.posticipate.length))} delle partite, ${formattaEuro(s.daRiprogrammare)} da riprogrammare`, '#a16207')}
+                  {riquadro('Diventate voucher', s.trasformate.length, `${percentuale(quota(s.trasformate.length))} delle partite, ${formattaEuro(s.parcheggiato)} da riusare`, '#6d28d9')}
                   {riquadro('Ricavo perso', formattaEuro(s.ricavoPerso), 'quello delle annullate davvero perse', '#b91c1c')}
                   {riquadro('Con costi da sostenere', s.conCosti.length, 'annullate ma con campo, rinfresco o operatori da pagare')}
                   {riquadro('Non perse', s.nonPersi.length, 'richieste non valide o passate a un\'altra nostra formula')}
@@ -1988,7 +1989,7 @@ function Cruscotto({ user }) {
                       </div>
                       {s.motivi.map(m => {
                         const attivo = motivoAnn === m.chiave;
-                        const nAnn = annullatiPren ? m.righe.filter(p => p.stato === STATO_PREN.ANNULLATA).length : m.n;
+                        const nAnn = annullatiPren ? m.righe.filter(p => !trasformataInVoucher(p)).length : m.n;
                         const totaleMotivi = s.motivi.reduce((t, x) => t + x.n, 0);
                         return (
                           <div key={m.chiave || '_'} onClick={() => setMotivoAnn(attivo ? null : m.chiave)}
@@ -2003,7 +2004,7 @@ function Cruscotto({ user }) {
                             </div>
                             <div style={{ width: '160px', display: 'flex' }}>
                               <div style={{ width: `${(nAnn / massimo) * 160}px`, height: '10px', background: COLORE_COSTO, borderRadius: nAnn === m.n ? '5px' : '5px 0 0 5px' }} />
-                              <div style={{ width: `${((m.n - nAnn) / massimo) * 160}px`, height: '10px', background: '#eab308', borderRadius: nAnn === 0 ? '5px' : '0 5px 5px 0' }} />
+                              <div style={{ width: `${((m.n - nAnn) / massimo) * 160}px`, height: '10px', background: '#8b5cf6', borderRadius: nAnn === 0 ? '5px' : '0 5px 5px 0' }} />
                             </div>
                             <strong style={{ width: '40px', textAlign: 'right' }}>{m.n}</strong>
                             <span style={{ width: '44px', textAlign: 'right', color: '#64748b' }}>{percentuale((m.n / totaleMotivi) * 100)}</span>
@@ -2011,10 +2012,10 @@ function Cruscotto({ user }) {
                           </div>
                         );
                       })}
-                      {annullatiPren && s.posticipate.length > 0 && statoAnn === '' && (
+                      {annullatiPren && s.trasformate.length > 0 && statoAnn === '' && (
                         <div style={{ display: 'flex', gap: '14px', fontSize: '0.75rem', color: '#64748b', padding: '8px 8px 0' }}>
-                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: COLORE_COSTO, marginRight: '5px', verticalAlign: 'middle' }} />Annullate</span>
-                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: '#eab308', marginRight: '5px', verticalAlign: 'middle' }} />Posticipate</span>
+                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: COLORE_COSTO, marginRight: '5px', verticalAlign: 'middle' }} />Perse</span>
+                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: '#8b5cf6', marginRight: '5px', verticalAlign: 'middle' }} />Diventate voucher</span>
                         </div>
                       )}
                     </div>

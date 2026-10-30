@@ -277,7 +277,9 @@ export const daConsuntivareCampi = ({ prenotazioni = [], campi = [], voci = [], 
     return [{
       id: p.campoId, nome: p.campoNome || p.campoId, costo: affitto + rinfresco, giochi: [],
       dettaglio: {
-        affitto, rinfresco, ore: oreDi(p),
+        // Le ore sono quelle che il centro mette in fattura: una partita di un'ora su due campi
+        // affiancati sono due ore di campo, ed è il numero con cui si confronta la sua richiesta.
+        affitto, rinfresco, ore: oreDi(p) * Math.max(parseInt(p.campiOccupati, 10) || 1, 1),
         merende: tipo === 'merenda' ? paganti : 0,
         aperitivi: tipo === 'aperitivo' ? paganti : 0,
       },

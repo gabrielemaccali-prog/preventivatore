@@ -42,11 +42,13 @@ export const tariffaCampoDi = (campo, tariffe, dataStr, oraInizio) => {
 
 // Gli importi che una prenotazione salva per il campo, netti e lordi. `tipoRinfresco` va passato
 // solo se il pacchetto prevede il rinfresco: senza, il rinfresco vale zero.
-export const costiCampoDi = ({ campo, tariffe = [], data, oraInizio, tipoRinfresco, numeroPartecipanti }) => {
+// `campiOccupati`: due campi affiancati nella stessa ora sono due ore che il centro fattura.
+// Moltiplica il solo affitto -- il rinfresco segue le persone, non i campi.
+export const costiCampoDi = ({ campo, tariffe = [], data, oraInizio, tipoRinfresco, numeroPartecipanti, campiOccupati = 1 }) => {
   if (!campo) return { costoCampoNetto: 0, costoCampoLordo: 0, costoRinfrescoNetto: 0, costoRinfrescoLordo: 0 };
   const ivaCampo = fracIva(campo.ivaCampo);
   const ivaRinfresco = fracIva(campo.ivaRinfresco);
-  const affitto = tariffaCampoDi(campo, tariffe, data, oraInizio);
+  const affitto = tariffaCampoDi(campo, tariffe, data, oraInizio) * Math.max(parseInt(campiOccupati, 10) || 1, 1);
   const numPart = parseFloat(numeroPartecipanti) || 0;
   const perPersona = tipoRinfresco === 'merenda' ? (parseFloat(campo.costoMerenda) || 0) : (parseFloat(campo.costoAperitivo) || 0);
   const rinfresco = tipoRinfresco && numPart ? perPersona * numPart : 0;

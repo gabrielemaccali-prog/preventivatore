@@ -210,8 +210,15 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
     ? [p.ragioneSociale]
     : [`${p.fattNome || ''} ${p.fattCognome || ''}`, `${p.fattCognome || ''} ${p.fattNome || ''}`, p.nominativo]
   ).map(norm).filter(Boolean);
-  const chiaviVoucher = (v) => [v.fattCF].map(norm).filter(Boolean);
-  const nomiVoucher = (v) => [`${v.fattNome || ''} ${v.fattCognome || ''}`, `${v.fattCognome || ''} ${v.fattNome || ''}`].map(norm).filter(Boolean);
+  // Un voucher si intesta a una persona o a un'azienda, come una prenotazione: quello nato dal
+  // posticipo di una partita eredita il cliente della partita, e se e' un'azienda la fattura
+  // arriva con la sua partita IVA e la sua ragione sociale. Cercarlo solo per codice fiscale
+  // voleva dire non trovarlo piu'.
+  const chiaviVoucher = (v) => [v.fattCF, v.pIva, v.cfAzienda].map(norm).filter(Boolean);
+  const nomiVoucher = (v) => (v.fattTipo === 'azienda'
+    ? [v.ragioneSociale]
+    : [`${v.fattNome || ''} ${v.fattCognome || ''}`, `${v.fattCognome || ''} ${v.fattNome || ''}`, v.nominativo]
+  ).map(norm).filter(Boolean);
 
   const candidati = [
     ...prenotazioni.map(p => ({

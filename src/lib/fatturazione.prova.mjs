@@ -40,6 +40,20 @@ verifica('ripartizione sul resto da fatturare', [['PRN-1', 200], ['PRN-2', 220]]
 const conContanti = abbinaFatture([fattura(470)], { prenotazioni: [p1, p2], inContanti: (id) => (id === 'PRN-1' ? 50 : 0) }).proposte[0];
 verifica('il contante esce dal resto, come nella tabella', [['PRN-1', 250], ['PRN-2', 220]], parti(conContanti));
 
+// ---------- un voucher intestato a un'azienda ----------
+// Nasce dal posticipo di una partita di un'azienda: la fattura arriva con la partita IVA e la
+// ragione sociale, e il voucher si deve riconoscere lo stesso.
+const voucherAzienda = {
+  codice: 'VCH-2026-1001', dataEmissione: '2026-10-20', importo: 300, nominativo: 'Rossi Anna',
+  fattTipo: 'azienda', ragioneSociale: 'Acme Srl', pIva: '12345678903', daPosticipo: true,
+};
+const perAzienda = abbinaFatture(
+  [{ data: '2026-10-22', numero: '201', cliente: 'Acme Srl', cf: '', piva: '12345678903', centro: '', importo: 300 }],
+  { voucher: [voucherAzienda] },
+).proposte[0];
+verifica('voucher di un\'azienda: trovato per partita IVA', [['VCH-2026-1001', 300]], parti(perAzienda));
+verifica('voucher di un\'azienda, importo giusto: certa', true, perAzienda.certa);
+
 // Due combinazioni danno lo stesso totale: si propone, ma va verificata.
 const p4 = { ...cliente, id: 'PRN-4', data: '2026-10-18', prezzoVendita: 300 };
 const ambigua = abbinaFatture([fattura(520)], { prenotazioni: [p1, p2, p4] }).proposte[0];

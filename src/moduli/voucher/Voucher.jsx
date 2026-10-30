@@ -2,13 +2,14 @@ import { useState, useEffect, Fragment } from 'react'
 import html2pdf from 'html2pdf.js';
 import { supabase } from '../../lib/supabaseClient';
 import { puoVedere } from '../../lib/permessi';
-import { formattaDataIT, formattaIndirizzoPulito, formattaDataGGMMAAAA } from '../../lib/utils';
-import { STATO_VOUCHER, etichettaStatoVoucher, classeBadgeStato } from '../../lib/costanti';
+import { formattaDataIT, formattaIndirizzoPulito, formattaDataGGMMAAAA, campiFatturazioneMancanti, siglaProvincia, errorePIva } from '../../lib/utils';
+import { STATO_VOUCHER, etichettaStatoVoucher, classeBadgeStato, STATI_ESTERI } from '../../lib/costanti';
 import Icona from '../../components/Icona';
 import SuggerimentoEmail from '../../components/SuggerimentoEmail';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
+import { prossimoCodiceVoucher } from '../../lib/voucher';
 import { sommaImporti, statoFatturazione, daFatturareVoucher } from '../../lib/fatturazione';
-import { formaNome, formaLuogo, formaEmail, formaCodice, formaTelefono } from '../../lib/maiuscole';
+import { formaNome, formaLuogo, formaEmail, formaCodice, formaTelefono, formaRagioneSociale } from '../../lib/maiuscole';
 
 // Un'email scritta male si segnala in rosso ma non blocca il salvataggio: il voucher si emette
 // lo stesso, e il contatto si corregge dopo. Vuota non e' un errore.
@@ -21,6 +22,13 @@ const FORM_VUOTO = {
   // Il valore del buono di norma non si stampa: è un regalo, non una ricevuta.
   importo: "", nascondiImporto: true, testoOfferta: "",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
+  // Un voucher nato dal posticipo di una partita eredita il cliente della partita, che puo' essere
+  // un'azienda: i dati di fatturazione sono quindi gli stessi di una prenotazione, con gli stessi
+  // nomi, perche' la regola che dice quali mancano e' una sola per tutti e due.
+  fattTipo: "privato", fattStraniero: false, fattStato: "",
+  ragioneSociale: "", aziIndirizzo: "", aziCap: "", aziCitta: "", aziProvincia: "", pIva: "", cfAzienda: "", sdi: "",
+  // Li scrive solo la trasformazione di una prenotazione: a mano non si impostano.
+  daPosticipo: false, prenotazioneOrigine: "",
   pagamenti: [],
   stato: STATO_VOUCHER.INCOMPLETO, dataEmissione: "",
   // Voucher pregresso: venduto col vecchio sistema, ha già un codice suo scritto sul buono.
@@ -95,9 +103,11 @@ const erroreCF = (cfRaw) => {
   return null;
 };
 
-// Verifica presenza dei dati di fatturazione (con CF valido)
-const fatturazioneCompletaDi = (f) =>
-  !!(f.fattNome && f.fattCognome && f.fattIndirizzo && f.fattCitta && validaCF(f.fattCF));
+// Verifica presenza dei dati di fatturazione. La regola e' quella delle prenotazioni, parola per
+// parola: privato italiano col CF valido, privato straniero con lo stato di appartenenza, azienda
+// con ragione sociale, P.IVA (o codice fiscale) e SDI. La fattura e' la stessa cosa, non puo'
+// avere due regole a seconda di dove sono scritti i dati.
+const fatturazioneCompletaDi = (f) => campiFatturazioneMancanti(f).length === 0;
 
 // Lo stato dipende dalla presenza dei dati di fatturazione (a meno che sia già "usato")
 const calcolaStato = (f, statoPrecedente) => {
@@ -310,34 +320,21 @@ function Voucher({ user }) {
     const civico = a.house_number ? ` ${a.house_number}` : "";
     let prov = a.county || "";
     prov = prov.replace("Provincia di ", "").replace("Città Metropolitana di ", "");
-    setForm(prev => ({
-      ...prev,
-      fattIndirizzo: `${via}${civico}`.trim(),
-      fattCap: a.postcode || "",
-      fattCitta: a.city || a.town || a.village || "",
-      fattProvincia: prov
-    }));
+    const indirizzo = `${via}${civico}`.trim();
+    const cap = a.postcode || "";
+    const citta = a.city || a.town || a.village || "";
+    // Un'azienda ha un suo blocco di campi: la ricerca riempie quello che si sta compilando.
+    setForm(prev => prev.fattTipo === 'azienda'
+      ? { ...prev, aziIndirizzo: indirizzo, aziCap: cap, aziCitta: citta, aziProvincia: siglaProvincia(prov) }
+      : { ...prev, fattIndirizzo: indirizzo, fattCap: cap, fattCitta: citta, fattProvincia: siglaProvincia(prov) });
     setRisultatiRicerca([]);
     setQueryIndirizzo("");
   };
 
   // Legge l'ultimo codice dell'anno corrente dal DB e ritorna il successivo (reset annuale da 1001)
-  const generaCodiceVoucher = async () => {
-    const anno = new Date().getFullYear();
-    const prefix = `VCH-${anno}-`;
-    const { data } = await supabase
-      .from('voucher')
-      .select('codice')
-      .like('codice', `${prefix}%`)
-      .order('codice', { ascending: false })
-      .limit(1);
-    let prossimo = 1001;
-    if (data && data.length > 0) {
-      const ultimo = parseInt(data[0].codice.replace(prefix, ''));
-      if (!isNaN(ultimo)) prossimo = ultimo + 1;
-    }
-    return `${prefix}${prossimo}`;
-  };
+  // La serie dei codici e' una sola, e la tiene lib/voucher: un voucher puo' nascere anche
+  // dall'annullamento di una prenotazione, e due generatori separati finirebbero sullo stesso numero.
+  const generaCodiceVoucher = () => prossimoCodiceVoucher(supabase);
 
   const salvaVoucher = async () => {
     // Tutti i campi obbligatori vengono controllati insieme (non uno alla volta) così l'utente
@@ -346,8 +343,11 @@ function Voucher({ user }) {
       setMostraErroriValidazione(true);
       return alert("Compila i campi obbligatori evidenziati in rosso.");
     }
-    const erroreCodiceFiscale = erroreCF(form.fattCF);
+    // Il codice fiscale si controlla a una persona, la partita IVA a un'azienda: non tutti e due.
+    const erroreCodiceFiscale = form.fattTipo === 'azienda' ? null : erroreCF(form.fattCF);
     if (erroreCodiceFiscale) return alert(erroreCodiceFiscale);
+    const errorePartitaIva = form.fattTipo === 'azienda' ? errorePIva(form.pIva) : null;
+    if (errorePartitaIva) return alert(errorePartitaIva);
     if (pagamentoInSospeso && !window.confirm("Il pagamento digitato non è stato aggiunto con \"+ Pagamento\": salvando non verrà registrato. Procedere?")) return;
     setMostraErroriValidazione(false);
 
@@ -369,6 +369,17 @@ function Voucher({ user }) {
       fattCitta: formaLuogo(form.fattCitta),
       fattProvincia: form.fattProvincia,
       fattCF: formaCodice(form.fattCF) || "",
+      fattTipo: form.fattTipo || 'privato',
+      fattStraniero: !!form.fattStraniero,
+      fattStato: form.fattStato || null,
+      ragioneSociale: formaRagioneSociale(form.ragioneSociale) || null,
+      aziIndirizzo: formaLuogo(form.aziIndirizzo) || null,
+      aziCap: form.aziCap || null,
+      aziCitta: formaLuogo(form.aziCitta) || null,
+      aziProvincia: siglaProvincia(form.aziProvincia) || null,
+      pIva: formaCodice(form.pIva) || null,
+      cfAzienda: formaCodice(form.cfAzienda) || null,
+      sdi: formaCodice(form.sdi) || null,
       statoPagamento: statoPagamentoDi(form.pagamenti, form.importo),
       stato
     };
@@ -471,6 +482,12 @@ function Voucher({ user }) {
       fattCitta: v.fattCitta || "",
       fattProvincia: v.fattProvincia || "",
       fattCF: v.fattCF || "",
+      fattTipo: v.fattTipo || "privato",
+      fattStraniero: !!v.fattStraniero, fattStato: v.fattStato || "",
+      ragioneSociale: v.ragioneSociale || "", aziIndirizzo: v.aziIndirizzo || "", aziCap: v.aziCap || "",
+      aziCitta: v.aziCitta || "", aziProvincia: v.aziProvincia || "", pIva: v.pIva || "",
+      cfAzienda: v.cfAzienda || "", sdi: v.sdi || "",
+      daPosticipo: !!v.daPosticipo, prenotazioneOrigine: v.prenotazioneOrigine || "",
       pagamenti: v.pagamenti || [],
       stato: v.stato || STATO_VOUCHER.INCOMPLETO,
       dataEmissione: v.dataEmissione || "",
@@ -557,7 +574,12 @@ function Voucher({ user }) {
             {v.pregresso && <span className="badge-stato pregresso" style={{ marginLeft: '6px' }}>pregresso</span>}
           </td>
           <td style={{ padding: '12px', color: '#777', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{formattaDataIT(v.dataEmissione)}</td>
-          <td style={{ padding: '12px' }}><span className={`badge-stato badge-mini ${classeBadgeStato(v.stato)}`}>{etichettaStatoVoucher(v.stato)}</span></td>
+          <td style={{ padding: '12px' }}>
+            <span className={`badge-stato badge-mini ${classeBadgeStato(v.stato)}`}>{etichettaStatoVoucher(v.stato)}</span>
+            {/* Non è uno stato a parte -- vive come tutti gli altri -- ma dice da dove arriva il
+                denaro: non un regalo comprato, una partita saltata che tornerà. */}
+            {v.daPosticipo && <span className="badge-stato badge-mini" style={{ marginLeft: '4px', background: '#ede9fe', color: '#5b21b6' }} title={`Nato dal posticipo di ${v.prenotazioneOrigine || 'una prenotazione'}`}>POST</span>}
+          </td>
           <td style={{ padding: '12px' }}>👤 {v.nominativo}</td>
           <td style={{ padding: '12px', fontSize: '0.85rem', color: '#555' }}>{v.pacchettoNome ? `${v.pacchettoNome} — ` : ''}€{(parseFloat(v.importo) || 0).toFixed(2)}</td>
           <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
@@ -585,11 +607,16 @@ function Voucher({ user }) {
                     <div><span style={{ color: '#94a3b8' }}>Pregresso </span>venduto col vecchio sistema: fatturazione e incasso sono lì</div>
                   ) : (
                     <>
-                      <div><span style={{ color: '#94a3b8' }}>Fatturazione </span>{v.fattNome || v.fattCognome ? `${v.fattNome || ''} ${v.fattCognome || ''}`.trim() : <em style={{ color: '#999' }}>Da completare</em>}</div>
+                      <div><span style={{ color: '#94a3b8' }}>Fatturazione </span>{v.fattTipo === 'azienda'
+                        ? (v.ragioneSociale || <em style={{ color: '#999' }}>Da completare</em>)
+                        : (v.fattNome || v.fattCognome ? `${v.fattNome || ''} ${v.fattCognome || ''}`.trim() : <em style={{ color: '#999' }}>Da completare</em>)}</div>
                       {(v.fattNome || v.fattCognome) && v.fattIndirizzo && <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{v.fattIndirizzo}</div>}
                       {(v.fattNome || v.fattCognome) && v.fattCF && <div><span style={{ color: '#94a3b8' }}>Codice fiscale </span>{v.fattCF}</div>}
                       <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(v.pagamenti && v.pagamenti.length > 0) ? v.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${formattaDataGGMMAAAA(pg.data)}`).join(', ') : 'nessuno'} <em style={{ color: '#94a3b8' }}>({statoPag})</em></div>
                     </>
+                  )}
+                  {v.daPosticipo && (
+                    <div><span style={{ color: '#94a3b8' }}>Da posticipo </span>{v.prenotazioneOrigine || <em style={{ color: '#999' }}>prenotazione non indicata</em>}</div>
                   )}
                   {v.stato === STATO_VOUCHER.USATO && (
                     <div><span style={{ color: '#94a3b8' }}>Usato su </span>{prenUso ? `${prenUso.id} — ${prenUso.nominativo || ''} (${prenUso.data || ''})` : <em style={{ color: '#999' }}>prenotazione non trovata</em>}</div>
@@ -708,14 +735,34 @@ function Voucher({ user }) {
           <div className="sezione">
             <h2>Dati di Fatturazione (acquirente)</h2>
             <p className="descrizione-pagina" style={{ marginTop: 0 }}>Facoltativi in fase di creazione: senza questi dati il voucher resta <strong>incompleto</strong>.</p>
-            <div className="date-grid">
-              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome
-                <input type="text" value={form.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} onBlur={(e) => setF({ fattNome: formaNome(e.target.value) })} className={evidenzia('fattNome')} />
-              </label>
-              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Cognome
-                <input type="text" value={form.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} onBlur={(e) => setF({ fattCognome: formaNome(e.target.value) })} className={evidenzia('fattCognome')} />
-              </label>
+            {form.daPosticipo && (
+              <p style={{ margin: '0 0 12px', fontSize: '0.82rem', color: '#5b21b6', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: '6px', padding: '8px 12px' }}>
+                Voucher nato dal posticipo di <strong>{form.prenotazioneOrigine || 'una prenotazione'}</strong>: i dati arrivano da lì, e qui si correggono.
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: '18px', marginBottom: '12px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.9rem' }}><input type="radio" name="fattTipoVoucher" checked={form.fattTipo !== 'azienda'} onChange={() => setF({ fattTipo: 'privato' })} /> Privato</label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.9rem' }}><input type="radio" name="fattTipoVoucher" checked={form.fattTipo === 'azienda'} onChange={() => setF({ fattTipo: 'azienda' })} /> Azienda</label>
             </div>
+            {form.fattTipo === 'azienda' ? (
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem' }}>Ragione sociale
+                <input type="text" value={form.ragioneSociale} onChange={(e) => setF({ ragioneSociale: e.target.value })} onBlur={(e) => setF({ ragioneSociale: formaRagioneSociale(e.target.value) })} className={evidenzia('ragioneSociale')} />
+              </label>
+            ) : (
+              <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.85rem', marginBottom: '12px' }}>
+                  <input type="checkbox" checked={!!form.fattStraniero} onChange={(e) => setF({ fattStraniero: e.target.checked })} /> Cliente straniero
+                </label>
+                <div className="date-grid">
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Nome
+                    <input type="text" value={form.fattNome} onChange={(e) => setF({ fattNome: e.target.value })} onBlur={(e) => setF({ fattNome: formaNome(e.target.value) })} className={evidenzia('fattNome')} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Cognome
+                    <input type="text" value={form.fattCognome} onChange={(e) => setF({ fattCognome: e.target.value })} onBlur={(e) => setF({ fattCognome: formaNome(e.target.value) })} className={evidenzia('fattCognome')} />
+                  </label>
+                </div>
+              </>
+            )}
             <div className="date-grid" style={{ marginTop: '12px' }}>
               <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Telefono
                 <input type="tel" value={form.telefono} onChange={(e) => setF({ telefono: e.target.value })} onBlur={(e) => setF({ telefono: formaTelefono(e.target.value) })} placeholder="Es. 333 1234567" className={evidenzia('telefono')} />
@@ -741,6 +788,41 @@ function Voucher({ user }) {
               )}
             </div>
 
+            {form.fattTipo === 'azienda' ? (
+              <>
+                <div className="date-grid">
+                  <label style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo (via e civico)
+                    <input type="text" value={form.aziIndirizzo} onChange={(e) => setF({ aziIndirizzo: e.target.value })} onBlur={(e) => setF({ aziIndirizzo: formaLuogo(e.target.value) })} className={evidenzia('aziIndirizzo')} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>CAP
+                    <input type="text" value={form.aziCap} onChange={(e) => setF({ aziCap: e.target.value })} className={evidenzia('aziCap')} />
+                  </label>
+                </div>
+                <div className="date-grid" style={{ marginTop: '12px' }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Città
+                    <input type="text" value={form.aziCitta} onChange={(e) => setF({ aziCitta: e.target.value })} onBlur={(e) => setF({ aziCitta: formaLuogo(e.target.value) })} className={evidenzia('aziCitta')} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Provincia
+                    <input type="text" value={form.aziProvincia} onChange={(e) => setF({ aziProvincia: e.target.value })} onBlur={(e) => setF({ aziProvincia: siglaProvincia(e.target.value) })} className={evidenzia('aziProvincia')} />
+                  </label>
+                </div>
+                <div className="date-grid" style={{ marginTop: '12px' }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Partita IVA
+                    <input type="text" value={form.pIva} onChange={(e) => setF({ pIva: e.target.value })} onBlur={(e) => setF({ pIva: formaCodice(e.target.value) })} className={errorePIva(form.pIva) ? 'campo-errore' : evidenzia('pIva')} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Codice Fiscale
+                    <input type="text" maxLength={20} value={form.cfAzienda} onChange={(e) => setF({ cfAzienda: formaCodice(e.target.value) })} className={evidenzia('cfAzienda')} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Codice SDI
+                    <input type="text" maxLength={7} value={form.sdi} onChange={(e) => setF({ sdi: formaCodice(e.target.value) })} className={evidenzia('sdi')} />
+                  </label>
+                </div>
+                {errorePIva(form.pIva) && (
+                  <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', color: '#c62828' }}>⚠️ {errorePIva(form.pIva)}</p>
+                )}
+              </>
+            ) : (
+              <>
             <div className="date-grid">
               <label style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Indirizzo (via e civico)
                 <input type="text" value={form.fattIndirizzo} onChange={(e) => setF({ fattIndirizzo: e.target.value })} onBlur={(e) => setF({ fattIndirizzo: formaLuogo(e.target.value) })} className={evidenzia('fattIndirizzo')} />
@@ -770,6 +852,16 @@ function Voucher({ user }) {
               <p style={{ margin: '6px 0 0 0', fontSize: '0.82rem', color: '#c62828' }}>
                 ⚠️ {erroreCF(form.fattCF)}
               </p>
+            )}
+            {form.fattStraniero && (
+              <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>Stato
+                <select value={form.fattStato} onChange={(e) => setF({ fattStato: e.target.value })} className={evidenzia('fattStato')}>
+                  <option value="">-- Seleziona --</option>
+                  {STATI_ESTERI.map(st => <option key={st} value={st}>{st}</option>)}
+                </select>
+              </label>
+            )}
+              </>
             )}
           </div>
         </div>

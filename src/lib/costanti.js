@@ -35,7 +35,6 @@ export const STATO_PREN = Object.freeze({
   FORSE: 'FORSE',
   CONFERMATO: 'CONFERMATO',
   ANNULLATA: 'ANNULLATA',
-  POSTICIPATA: 'POSTICIPATA',
   // Una partita giocata prima che ci fosse l'app (dal vecchio foglio): è già fatturata, incassata e
   // pagata a campi e bubbler. Conta nei ricavi e nei costi, ma non entra nel lavoro di tutti i
   // giorni (Gestione, Calendario, Compensi, Consuntivazione): sta nella scheda Pregresso.
@@ -45,9 +44,11 @@ export const ETICHETTA_STATO_PREN = Object.freeze({
   [STATO_PREN.FORSE]: 'FORSE',
   [STATO_PREN.CONFERMATO]: 'CONFERMATO',
   [STATO_PREN.ANNULLATA]: 'ANNULLATA',
-  [STATO_PREN.POSTICIPATA]: 'POSTICIPATA',
   [STATO_PREN.PREGRESSA]: ETICHETTA_OLD,
 });
+// Annullata, ma col ricavo parcheggiato in un voucher invece che perso: la partita salta, i soldi
+// gia' incassati restano del cliente e tornano quando riprenota. Non si conta fra le perse.
+export const trasformataInVoucher = (p) => p?.stato === STATO_PREN.ANNULLATA && !!p?.voucherGenerato;
 
 // Le partite che si sono giocate davvero: le confermate e le pregresse.
 export const giocata = (p) => p?.stato === STATO_PREN.CONFERMATO || p?.stato === STATO_PREN.PREGRESSA;

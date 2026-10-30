@@ -44,7 +44,8 @@ const SCHEDE = [
   { id: 'bubbler', label: 'Bubbler', icona: 'compensi' },
 ];
 
-const intestatarioVoucher = (v) => [v.fattCognome, v.fattNome].filter(Boolean).join(' ') || v.nominativo || '—';
+const intestatarioVoucher = (v) => (v.fattTipo === 'azienda' ? v.ragioneSociale : null)
+  || [v.fattCognome, v.fattNome].filter(Boolean).join(' ') || v.nominativo || '—';
 
 function Consuntivazione({ user }) {
   const [scheda, setScheda] = useState('fatture');

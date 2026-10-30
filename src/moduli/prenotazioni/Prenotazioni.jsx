@@ -12,16 +12,22 @@ import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
 import SuggerimentoEmail from '../../components/SuggerimentoEmail'
 import DialogoAnnullamento from '../../components/DialogoAnnullamento'
+import { prossimoCodiceVoucher, voucherDaPrenotazione } from '../../lib/voucher'
 
 // Il centro di ricavo non sta piu' qui: viaggia sul gioco, a catalogo. Un pacchetto dice la
 // modalita' di vendita, e la modalita' non ha un centro di ricavo suo.
-const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", prevedeRinfresco: false, numeroPartecipanti: "", giochi_richiesti: "1" };
+const PACCHETTO_VUOTO = { nome: "", durataOre: "", locationTipo: "libera", prezzo: "", prevedeRinfresco: false, numeroPartecipanti: "", giochi_richiesti: "1", campi_richiesti: "1" };
 
 // Riga vuota del pagamento che si sta digitando, prima di aggiungerla alla prenotazione.
 const PAGAMENTO_VUOTO = { importo: "", data: "", nominativo: "", contanti: false, ritiratoDa: "" };
 
 // Quanto di una prenotazione è stato incassato in contanti: soldi che non sono passati dall'azienda
 // ma stanno in tasca a un operatore. Non si fatturano, e vanno restituiti o scalati dal suo compenso.
+// Quanti campi occupa un pacchetto nella stessa ora: "2 SET" sono due giochi in parallelo, quindi
+// due campi e un'ora che il centro fattura doppia. Sta sul pacchetto perché è una caratteristica
+// di come si vende, non una scelta da rifare a ogni prenotazione.
+const campiDelPacchetto = (pacchetto) => Math.max(parseInt(pacchetto?.campi_richiesti, 10) || 1, 1);
+
 const contantiDi = (p) => (p?.pagamenti || []).filter(pg => pg.contanti).reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0);
 
 // Quanto paga davvero il cliente: la parte in contanti vale il netto (niente fattura, niente IVA),
@@ -83,7 +89,6 @@ const inizioSettimana = (d) => { const x = new Date(d); const g = x.getDay(); x.
 const COLORI_STATO = {
   [STATO_PREN.CONFERMATO]: { bg: '#dcfce7', bd: '#16a34a', tx: '#166534' },
   [STATO_PREN.ANNULLATA]: { bg: '#fee2e2', bd: '#dc2626', tx: '#991b1b' },
-  [STATO_PREN.POSTICIPATA]: { bg: '#fef9c3', bd: '#eab308', tx: '#854d0e' },
   [STATO_PREN.PREGRESSA]: { bg: '#e2e8f0', bd: '#64748b', tx: '#334155' },
 };
 const STATO_AMBRA = { bg: '#fed7aa', bd: '#f59e0b', tx: '#9a3412' };
@@ -672,7 +677,14 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       // lasciarlo lì farebbe sembrare scelta una strada che non è stata scelta. Il resto —
       // luogo, date, contatti — resta: è roba della prenotazione, ormai, e cancellarla
       // sarebbe una sorpresa.
-      setFormPren(prev => ({ ...prev, preventivoCollegato: "", ereditaCosti: false, giocoId: "", costoEreditato: "", voci: [] }));
+      setFormPren(prev => {
+        // I giochi di un pacchetto da campo sono suoi, non del preventivo: restano. Su un
+        // noleggio invece il gioco l'aveva compilato lui, e lasciarlo lì farebbe sembrare
+        // scelta una strada che non è stata scelta.
+        const pac = pacchetti.find(x => x.id === prev.pacchettoId);
+        if (pac?.locationTipo === 'campi') return { ...prev, preventivoCollegato: "", ereditaCosti: false, costoEreditato: "", voci: [] };
+        return { ...prev, preventivoCollegato: "", ereditaCosti: false, giocoId: "", costoEreditato: "", voci: [] };
+      });
       return;
     }
     const luogo = scomponiDestinazione(pv.destinazione);
@@ -690,7 +702,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         ...prev,
         preventivoCollegato: codice, ereditaCosti: true,
         voci: vociDalPreventivo(codice), sconto: "0",
-        giocoId: giocoDelPreventivo(codice) || prev.giocoId,
+        // Quello che hai già scelto a mano vince: il preventivo lo propone solo se manca.
+        giocoId: prev.giocoId || giocoDelPreventivo(codice),
         data: seVuoto(prev.data, inizio),
         piuGiorni: prev.piuGiorni || giorniInMezzo.length > 0,
         altriGiorni: prev.altriGiorni.length > 0 ? prev.altriGiorni : giorniInMezzo,
@@ -992,7 +1005,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     }
     // Tornando fra le partite vive il motivo dell'annullamento se ne va con lo stato: tenerlo
     // vorrebbe dire raccontare di una cosa che non e' piu' successa.
-    const tornaInGioco = p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA;
+    const tornaInGioco = p.stato === STATO_PREN.ANNULLATA;
     await supabase.from('prenotazioni')
       .update(tornaInGioco
         ? { stato: nuovoStato, motivoAnnullamento: null, ...(p.categoriaAnnullamento ? { categoriaAnnullamento: null } : {}), ...(p.costiAnnullamento ? { costiAnnullamento: null } : {}) }
@@ -1001,38 +1014,93 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     fetchTutto();
     if (nuovoStato === STATO_PREN.CONFERMATO) { setPrenConferma(p); setConfermaInglese(false); }
   };
-  // Annullare una partita non e' una cosa sola: se non e' entrato niente e' finita li', ma se un
-  // acconto c'e' quel denaro resta del cliente e la partita e' solo da riprogrammare. Sono due
-  // situazioni diverse -- una si archivia, l'altra si insegue -- e l'incasso e' l'unica cosa che
-  // le distingue, quindi lo stato lo decide lui invece di chiederlo a chi clicca.
+  // Annullare una partita non e' una cosa sola. Se non e' entrato niente e' finita li'. Se invece
+  // un acconto c'e', quel denaro resta del cliente: non si rimborsa e non si tiene fermo su una
+  // partita che non si giochera' piu', diventa un voucher che usera' quando riprenota. La partita
+  // si annulla comunque -- cosi' si possono segnare i costi gia' sostenuti -- ma non e' persa: il
+  // ricavo e' solo parcheggiato, e lo dice la colonna "voucherGenerato".
+  //
+  // Il voucher vale i soldi che abbiamo davvero in cassa: non il prezzo della partita (il voucher
+  // e' denaro, non la promessa di rifare la stessa festa) e nemmeno i contanti ancora da ritirare,
+  // che non sono mai arrivati. Un voucher usato su questa partita non ci entra: si libera, e resta
+  // quello di prima.
+  const soldiInCassaDi = (p) => Math.max(incassatoDi(p, oggiIso) - (parseFloat(p.voucherValore) || 0), 0);
   const annullaPrenotazione = async (p) => {
-    const incassato = incassatoDi(p, oggiIso);
-    const nuovoStato = incassato > 0 ? STATO_PREN.POSTICIPATA : STATO_PREN.ANNULLATA;
+    const incassato = soldiInCassaDi(p);
+    const nuovoStato = STATO_PREN.ANNULLATA;
     const spiegazione = incassato > 0
-      ? `Su ${p.id} risultano €${incassato.toFixed(2)} già incassati, quindi non si annulla: passa a ${etichettaStatoPren(nuovoStato)}, da riprogrammare.`
+      ? `Su ${p.id} risultano €${incassato.toFixed(2)} già incassati: la prenotazione si annulla e quei soldi diventano un voucher, che il cliente userà quando riprenoterà. Pagamenti e fattura si spostano sul voucher.`
       : `Su ${p.id} non risulta alcun incasso: passa ad ${etichettaStatoPren(nuovoStato)}.`;
     // Il motivo non e' un di piu': lo stato dice che la partita non si fa, il motivo dice se il
     // problema era del cliente, del campo o del tempo. Fra due mesi e' l'unica cosa che serve, e
     // se non lo si scrive adesso resta nella testa di chi ha cliccato. Per questo si chiede qui e
     // senza saltarlo: la categoria e' obbligatoria, la nota racconta il caso (vedi DialogoAnnullamento).
-    setDialogoAnnullamento({ p, nuovoStato, spiegazione });
+    setDialogoAnnullamento({ p, nuovoStato, spiegazione, incassato });
   };
-  // Su una partita gia' annullata o posticipata si cambia solo il perche': lo stato resta quello, e
+
+  // Il voucher che nasce da una partita saltata, e il denaro che gli va dietro.
+  //
+  // Pagamenti e fatture si spostano invece di essere ricopiati: lo stesso incasso non puo' stare
+  // in due posti, o verrebbe contato due volte -- una sulla partita annullata e una sulla
+  // prenotazione nuova, quando il voucher si usa. La fattura, se c'era, resta una sola e segue i
+  // soldi: non se ne emette un'altra.
+  const creaVoucherDaPosticipo = async (p, importo) => {
+    const codice = await prossimoCodiceVoucher(supabase);
+    const { error } = await supabase.from('voucher').insert([{ codice, ...voucherDaPrenotazione(p, importo) }]);
+    if (error) {
+      console.error(error);
+      alert(`Errore nella creazione del voucher: ${error.message}\n\nServe lo script sql/voucher_da_posticipo.sql.`);
+      return null;
+    }
+    return codice;
+  };
+  const spostaIncassiSulVoucher = async (p, codice) => {
+    const pag = await supabase.from('pagamenti').update({ tipo: 'voucher', riferimento: codice }).eq('tipo', 'prenotazione').eq('riferimento', p.id);
+    const fat = await supabase.from('fatture').update({ tipo: 'voucher', riferimento: codice }).eq('tipo', 'prenotazione').eq('riferimento', p.id);
+    if (pag.error || fat.error) {
+      console.error(pag.error || fat.error);
+      alert(`Il voucher ${codice} è stato creato, ma pagamenti o fattura di ${p.id} non si sono spostati. Vanno spostati a mano.`);
+    }
+  };
+  // Su una partita gia' annullata si cambia solo il perche': lo stato resta quello, e
   // i costi da sostenere non si richiedono (si erano gia' chiesti annullandola).
   const cambiaMotivoAnnullamento = (p) => setDialogoAnnullamento({ p, nuovoStato: p.stato, modifica: true });
 
   const confermaAnnullamento = async ({ categoria, nota }) => {
-    const { p, nuovoStato, modifica } = dialogoAnnullamento;
+    const { p, nuovoStato, modifica, incassato = 0 } = dialogoAnnullamento;
     const modifiche = { stato: nuovoStato, categoriaAnnullamento: categoria, motivoAnnullamento: nota || null };
+    // Prima il voucher: se non riesce non si e' toccato niente e si puo' riprovare. I soldi si
+    // spostano solo dopo che la prenotazione e' stata annullata davvero.
+    let codiceVoucher = null;
+    if (!modifica && incassato > 0) {
+      codiceVoucher = await creaVoucherDaPosticipo(p, incassato);
+      if (!codiceVoucher) return;
+      modifiche.voucherGenerato = codiceVoucher;
+    }
     const { error } = await supabase.from('prenotazioni').update(modifiche).eq('id', p.id);
-    if (error) { console.error(error); return alert(`Errore nell'annullamento: ${error.message}\n\nServe lo script sql/categoria_annullamento.sql.`); }
+    if (error) {
+      console.error(error);
+      // Il voucher appena creato non deve restare orfano di una partita ancora viva.
+      if (codiceVoucher) await supabase.from('voucher').delete().eq('codice', codiceVoucher);
+      return alert(`Errore nell'annullamento: ${error.message}\n\nServe lo script sql/voucher_da_posticipo.sql.`);
+    }
+    if (codiceVoucher) {
+      await spostaIncassiSulVoucher(p, codiceVoucher);
+      // Un voucher usato su questa partita torna disponibile: il cliente non l'ha speso.
+      if (p.voucherCodice) {
+        await supabase.from('voucher').update({ stato: STATO_VOUCHER.EMESSO }).eq('codice', p.voucherCodice);
+        await supabase.from('prenotazioni').update({ voucherCodice: null }).eq('id', p.id);
+      }
+      alert(`${p.id} annullata. I €${incassato.toFixed(2)} già incassati sono diventati il voucher ${codiceVoucher}.`);
+    }
     setDialogoAnnullamento(null);
     setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, ...modifiche } : prev);
     fetchTutto();
-    // Senza incasso non c'e' ricavo, ma un costo puo' esserci lo stesso: il campo che chiede
-    // l'affitto, il rinfresco gia' pronto, gli operatori gia' sul posto. E' raro, e proprio per
-    // questo si chiede adesso: dopo nessuno se lo ricorda. Una posticipata no: si giochera', e i
-    // costi arriveranno con lei. Se la partita non ha niente che possa costare, non si chiede.
+    // Il ricavo non c'e' (o se n'e' andato nel voucher), ma un costo puo' esserci lo stesso: il
+    // campo che chiede l'affitto, il rinfresco gia' pronto, gli operatori gia' sul posto. E' raro,
+    // e proprio per questo si chiede adesso: dopo nessuno se lo ricorda. Vale anche quando nasce
+    // un voucher, perche' la partita nuova sara' un'altra, con i suoi costi: questi sono di
+    // questa. Se la partita non ha niente che possa costare, non si chiede.
     if (!modifica && nuovoStato === STATO_PREN.ANNULLATA && costiPossibiliAnnullamento(p).length > 0) {
       setFormCostiAnnullamento({ p: { ...p, stato: nuovoStato }, scelte: p.costiAnnullamento || [] });
     }
@@ -1202,6 +1270,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                       {' '}<button type="button" onClick={() => setFormCostiAnnullamento({ p, scelte: p.costiAnnullamento || [] })} style={{ background: 'none', border: 'none', padding: 0, color: '#0288d1', cursor: 'pointer', fontSize: '0.82rem', textDecoration: 'underline' }}>modifica</button>
                     </div>
                   )}
+                  {p.voucherGenerato && (
+                    <div><span style={{ color: '#94a3b8' }}>Diventata voucher </span><strong style={{ color: '#5b21b6' }}>{p.voucherGenerato}</strong></div>
+                  )}
                   {p.note && <div><span style={{ color: '#94a3b8' }}>Note </span><em>{p.note}</em></div>}
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
@@ -1214,9 +1285,12 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                   {(p.stato === STATO_PREN.FORSE || p.stato === STATO_PREN.CONFERMATO) && (
                     <button type="button" className="btn-icon-action danger" title="Annulla la prenotazione" onClick={() => annullaPrenotazione(p)}><Icona nome="annulla" size={16} style={{ marginRight: 0 }} /></button>
                   )}
-                  {(p.stato === STATO_PREN.ANNULLATA || p.stato === STATO_PREN.POSTICIPATA) && (<>
+                  {p.stato === STATO_PREN.ANNULLATA && (<>
                     <button type="button" className="btn-icon-action" title={categoriaAnnullamentoDi(p) ? "Cambia il motivo dell'annullamento" : "Scegli la categoria dell'annullamento"} onClick={() => cambiaMotivoAnnullamento(p)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
-                    <button type="button" className="btn-icon-action" title="Rimetti in FORSE" onClick={() => cambiaStatoPren(p, STATO_PREN.FORSE)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
+                    {/* Una partita diventata voucher non si rimette in gioco: i suoi soldi non sono
+                        piu' qui. Quando il cliente torna si fa una prenotazione nuova, che usa il
+                        voucher come si usa un voucher qualunque. */}
+                    {!p.voucherGenerato && <button type="button" className="btn-icon-action" title="Rimetti in FORSE" onClick={() => cambiaStatoPren(p, STATO_PREN.FORSE)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>}
                   </>)}
                   <button type="button" className="btn-icon-action" title="Apri" onClick={() => caricaPrenotazione(p)}><Icona nome="apri" size={16} style={{ marginRight: 0 }} /></button>
                   {!p.googleCalendarSync && (
@@ -1532,7 +1606,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // casella sparisce appena scegli il preventivo. Pretenderli lo stesso rendeva il salvataggio
     // impossibile — "compila i campi in rosso" senza niente in rosso, perché il campo che mancava
     // non era a video. Che il noleggio dica di cosa parla lo controlla già noleggioIncompleto.
-    const giochiDalPreventivo = noleggioPac && !!f.preventivoCollegato;
+    // Su un pacchetto da campo no: i giochi sono del pacchetto, il preventivo dà solo il prezzo,
+    // e la casella è a video — quindi si chiedono come sempre.
+    const giochiDalPreventivo = noleggioPac && !!f.preventivoCollegato && !luogoDaCampi;
     const giochiRichiestiMancanti = !giochiDalPreventivo
       && [f.giocoId, ...(f.giochiAltri || [])].slice(0, quantiRichiesti).filter(Boolean).length < quantiRichiesti;
     // Elencati per nome, non solo evidenziati: un campo obbligatorio può non essere a video — lo
@@ -1602,6 +1678,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const numPart = numOrNull(f.numeroPartecipanti);
     const costiDelCampo = costiCampoDi({
       campo, tariffe, data: f.data, oraInizio, tipoRinfresco: pac.prevedeRinfresco ? f.tipoRinfresco : null, numeroPartecipanti: numPart,
+      campiOccupati: campo ? campiDelPacchetto(pac) : 1,
     });
     // Una partita commissionata dal campo stesso si gioca a casa sua: l'affitto non si paga.
     const { costoRinfrescoNetto, costoRinfrescoLordo } = costiDelCampo;
@@ -1626,7 +1703,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       giocoId: f.giocoId || null,
       durataOre, oraInizio, oraFine: (senzaOrario || durataFissa) ? null : oraFine,
       nominativo: formaNome(f.nominativo), email: formaEmail(f.email), telefono: formaTelefono(f.telefono),
-      campoId: campo ? campo.id : null, campoNome: campo ? campo.nome : null, campoPrenotato: f.campoPrenotato,
+      campoId: campo ? campo.id : null, campoNome: campo ? campo.nome : null, campiOccupati: campo ? campiDelPacchetto(pac) : 1, campoPrenotato: f.campoPrenotato,
       locationNome: campo ? null : (formaRagioneSociale(f.locationNome) || null),
       locationIndirizzo: campo ? null : formaLuogo(f.locationIndirizzo), locationCap: campo ? null : f.locationCap,
       locationCitta: campo ? null : formaLuogo(f.locationCitta), locationProvincia: campo ? null : siglaProvincia(f.locationProvincia),
@@ -1718,7 +1795,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       prevedeRinfresco: formPacchetto.prevedeRinfresco,
       numeroPartecipanti: numOrNull(formPacchetto.numeroPartecipanti),
       // Quanti giochi chiede: uno di norma, due per "Due giochi", e non c'e' un tetto.
-      giochi_richiesti: Math.max(1, parseInt(formPacchetto.giochi_richiesti, 10) || 1)
+      giochi_richiesti: Math.max(1, parseInt(formPacchetto.giochi_richiesti, 10) || 1),
+      campi_richiesti: Math.max(1, parseInt(formPacchetto.campi_richiesti, 10) || 1)
     };
     let error;
     if (editPacchetto) ({ error } = await supabase.from('pren_pacchetti').update(rec).eq('id', editPacchetto));
@@ -1732,7 +1810,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     setFormPacchetto({
       nome: p.nome || "", durataOre: p.durataOre ?? "", locationTipo: p.locationTipo || "libera",
       prezzo: p.prezzo ?? "", prevedeRinfresco: !!p.prevedeRinfresco, numeroPartecipanti: p.numeroPartecipanti ?? "",
-      giochi_richiesti: String(p.giochi_richiesti ?? 1)
+      giochi_richiesti: String(p.giochi_richiesti ?? 1),
+      campi_richiesti: String(p.campi_richiesti ?? 1)
     });
     setShowFormPacchetto(true);
   };
@@ -1748,7 +1827,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     setDatiPacchettoInline({
       nome: p.nome || "", durataOre: p.durataOre ?? "", locationTipo: p.locationTipo || "libera",
       prezzo: p.prezzo ?? "", prevedeRinfresco: !!p.prevedeRinfresco, numeroPartecipanti: p.numeroPartecipanti ?? "",
-      giochi_richiesti: String(p.giochi_richiesti ?? 1)
+      giochi_richiesti: String(p.giochi_richiesti ?? 1),
+      campi_richiesti: String(p.campi_richiesti ?? 1)
     });
   };
   const salvaInlinePacchetto = async () => {
@@ -1756,7 +1836,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const { error } = await supabase.from('pren_pacchetti').update({
       nome: d.nome, durataOre: numOrNull(d.durataOre), locationTipo: d.locationTipo,
       prezzo: numOrNull(d.prezzo), prevedeRinfresco: d.prevedeRinfresco, numeroPartecipanti: numOrNull(d.numeroPartecipanti),
-      giochi_richiesti: Math.max(1, parseInt(d.giochi_richiesti, 10) || 1)
+      giochi_richiesti: Math.max(1, parseInt(d.giochi_richiesti, 10) || 1),
+      campi_richiesti: Math.max(1, parseInt(d.campi_richiesti, 10) || 1)
     }).eq('id', idPacchettoInline);
     if (error) { console.error(error); return alert("Errore salvataggio pacchetto"); }
     setIdPacchettoInline(null); fetchTutto();
@@ -1866,15 +1947,19 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           altri[i - 1] = id;
           setF({ giochiAltri: altri });
         };
-        // Su un noleggio le due strade si escludono: scelto il preventivo il gioco non si chiede
-        // più (sta là dentro), scelto il gioco il preventivo non serve. Finché non hai scelto,
-        // sono a video tutte e due. Il preventivo ha la precedenza perché sceglierlo compila da
-        // sé anche il gioco, e senza questa priorità la casella si nasconderebbe da sola.
         const noleggio = eUnNoleggio(pac);
-        // Un preventivo già collegato si vede comunque, anche prima che il pacchetto sia scelto:
-        // altrimenti arrivando dal Preventivatore sembrerebbe che il collegamento non ci sia.
-        const mostraPreventivo = (noleggio || !!formPren.preventivoCollegato) && (!!formPren.preventivoCollegato || !formPren.giocoId);
-        const mostraGioco = !noleggio || (!formPren.preventivoCollegato && (!!formPren.giocoId || !formPren.preventivoCollegato));
+        const daCampi = pac?.locationTipo === 'campi';
+        // Se il prezzo non sta sul pacchetto deve venire da qualche parte, e quel posto è il
+        // preventivo: la casella resta quindi sempre a video su un pacchetto a prezzo libero,
+        // anche dopo aver scelto i giochi. Un preventivo già collegato si vede comunque, anche
+        // prima che il pacchetto sia scelto: altrimenti arrivando dal Preventivatore sembrerebbe
+        // che il collegamento non ci sia.
+        const mostraPreventivo = noleggio || !!formPren.preventivoCollegato;
+        // Su un noleggio libero il preventivo dice da sé quali giochi, e allora la casella del
+        // gioco non serve più. Su un pacchetto da campo invece i giochi sono suoi — un "2 SET"
+        // sono due giochi in parallelo, e quali sono lo dici tu — e il preventivo serve solo a
+        // dare il prezzo: restano a video tutti e due.
+        const mostraGioco = !noleggio || daCampi || !formPren.preventivoCollegato;
         const scegliereUnaStrada = noleggioIncompleto(pac, formPren.giocoId, formPren.preventivoCollegato);
         // Su un pacchetto da campo il gioco è sempre obbligatorio; su un noleggio lo è solo se
         // non hai collegato un preventivo.
@@ -1951,7 +2036,11 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
             </div>
             {noleggio && (
               <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: scegliereUnaStrada ? '#c62828' : '#64748b' }}>
-                {formPren.preventivoCollegato
+                {daCampi
+                  ? (formPren.preventivoCollegato
+                      ? 'Pacchetto a prezzo libero: prezzo e costi arrivano dal preventivo collegato. I giochi restano quelli che scegli qui.'
+                      : 'Pacchetto a prezzo libero (quotazione ad hoc): collega il preventivo da cui prendere prezzo e costi, oppure scrivi il prezzo a mano.')
+                  : formPren.preventivoCollegato
                   ? 'Giochi, sedi e costi arrivano dal preventivo. Per scegliere invece un singolo gioco nostro, togli il preventivo.'
                   : formPren.giocoId
                     ? 'Un solo gioco, nostro: non serve preventivo. Per noleggiare più giochi o roba di un fornitore, azzera il gioco e collega un preventivo.'
@@ -2043,6 +2132,14 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     </select>
                   </label>
 
+                  {/* Lo dice il pacchetto, non chi inserisce: su "2 SET" i giochi vanno in parallelo
+                      e il centro fattura il doppio delle ore. Qui si vede soltanto, perché cambia
+                      il costo e chi prenota il campo deve saperlo. */}
+                  {campiDelPacchetto(pac) > 1 && (
+                    <p style={{ margin: '0 0 12px', fontSize: '0.82rem', color: '#b45309' }}>
+                      ⚠️ Questo pacchetto occupa <strong>{campiDelPacchetto(pac)} campi</strong> nella stessa fascia oraria: l&apos;affitto vale {campiDelPacchetto(pac)} ore.
+                    </p>
+                  )}
                   <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, marginBottom: '12px', cursor: 'pointer' }}>
                     <input type="checkbox" checked={formPren.campoPrenotato} onChange={(e) => setF({ campoPrenotato: e.target.checked })} /> 🔒 Campo prenotato
                   </label>
@@ -2606,6 +2703,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                       </select></Campo>
                       <Campo label="Prezzo € (vuoto = manuale in prenotazione. Se fissato è IVA inclusa)"><input type="number" step="any" value={formPacchetto.prezzo} onChange={(e) => setFormPacchetto({ ...formPacchetto, prezzo: e.target.value })} style={inputStyle} /></Campo>
                       <Campo label="N° partecipanti (se stabilito in anticipo)"><input type="number" step="1" value={formPacchetto.numeroPartecipanti} onChange={(e) => setFormPacchetto({ ...formPacchetto, numeroPartecipanti: e.target.value })} style={inputStyle} /></Campo>
+                      <Campo label="N° campi occupati nella stessa ora (2 = i giochi vanno in parallelo)"><input type="number" step="1" min="1" value={formPacchetto.campi_richiesti} onChange={(e) => setFormPacchetto({ ...formPacchetto, campi_richiesti: e.target.value })} style={inputStyle} /></Campo>
                       <Campo label="N° giochi che il pacchetto comprende"><input type="number" step="1" min="1" value={formPacchetto.giochi_richiesti} onChange={(e) => setFormPacchetto({ ...formPacchetto, giochi_richiesti: e.target.value })} style={inputStyle} /></Campo>
                       <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
                         <input type="checkbox" checked={formPacchetto.prevedeRinfresco} onChange={(e) => setFormPacchetto({ ...formPacchetto, prevedeRinfresco: e.target.checked })} /> Prevede rinfresco dopo partita
@@ -2620,9 +2718,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
               )}
 
                 <div className="admin-table-box" style={boxTabella}>
-                  <table style={{ width: '100%', minWidth: '850px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                  <table style={{ width: '100%', minWidth: '920px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                     <thead><tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                      <th style={{ padding: '10px 12px' }}>Nome</th><th style={{ padding: '10px 12px' }}>Durata</th><th style={{ padding: '10px 12px' }}>Location</th><th style={{ padding: '10px 12px' }}>Prezzo</th><th style={{ padding: '10px 12px' }}>Giochi</th><th style={{ padding: '10px 12px' }}>N° Part.</th><th style={{ padding: '10px 12px' }}>Rinfresco</th><th style={{ padding: '10px 12px', textAlign: 'center', width: '70px' }}>Attivo</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Azioni</th>
+                      <th style={{ padding: '10px 12px' }}>Nome</th><th style={{ padding: '10px 12px' }}>Durata</th><th style={{ padding: '10px 12px' }}>Location</th><th style={{ padding: '10px 12px' }}>Prezzo</th><th style={{ padding: '10px 12px' }}>Giochi</th><th style={{ padding: '10px 12px' }} title="Campi occupati nella stessa ora: 2 = giochi in parallelo, l'affitto vale doppio">Campi</th><th style={{ padding: '10px 12px' }}>N° Part.</th><th style={{ padding: '10px 12px' }}>Rinfresco</th><th style={{ padding: '10px 12px', textAlign: 'center', width: '70px' }}>Attivo</th><th style={{ padding: '10px 12px', textAlign: 'center' }}>Azioni</th>
                     </tr></thead>
                     <tbody>
                       {pacchetti.map(p => idPacchettoInline === p.id ? (
@@ -2632,8 +2730,15 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                           <td style={{ padding: '8px' }}><select className="table-input" value={datiPacchettoInline.locationTipo} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, locationTipo: e.target.value })} style={{ height: '30px', fontSize: '0.8rem' }}><option value="libera">Libera</option><option value="campi">Dai campi</option></select></td>
                           <td style={{ padding: '8px' }}><input className="table-input" type="number" step="any" placeholder="Manuale" value={datiPacchettoInline.prezzo} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, prezzo: e.target.value })} style={{ width: '80px', height: '28px', fontSize: '0.8rem' }} /></td>
                           <td style={{ padding: '8px' }}><input className="table-input" type="number" step="1" min="1" value={datiPacchettoInline.giochi_richiesti} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, giochi_richiesti: e.target.value })} style={{ width: '60px', height: '28px', fontSize: '0.8rem' }} /></td>
+                          <td style={{ padding: '8px' }}><input className="table-input" type="number" step="1" min="1" value={datiPacchettoInline.campi_richiesti} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, campi_richiesti: e.target.value })} style={{ width: '60px', height: '28px', fontSize: '0.8rem' }} /></td>
                           <td style={{ padding: '8px' }}><input className="table-input" type="number" step="1" value={datiPacchettoInline.numeroPartecipanti} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, numeroPartecipanti: e.target.value })} style={{ width: '60px', height: '28px', fontSize: '0.8rem' }} /></td>
                           <td style={{ padding: '8px', textAlign: 'center' }}><input type="checkbox" checked={datiPacchettoInline.prevedeRinfresco} onChange={(e) => setDatiPacchettoInline({ ...datiPacchettoInline, prevedeRinfresco: e.target.checked })} /></td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            <input
+                              type="checkbox" checked={p.attivo !== false} onChange={() => alternaAttivoPacchetto(p)}
+                              title={p.attivo === false ? 'Spento: non si può più scegliere su una prenotazione nuova' : 'Attivo: compare nella tendina'}
+                            />
+                          </td>
                           <td style={{ padding: '8px', textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                               <button className="btn-accent-inline" style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.8rem', padding: '4px 8px' }} onClick={salvaInlinePacchetto}><Icona nome="salva" size={14} style={{ marginRight: '4px' }} />Salva</button>
@@ -2648,6 +2753,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                           <td style={{ padding: '10px 12px' }}>{p.locationTipo === 'campi' ? 'Dai campi' : 'Libera'}</td>
                           <td style={{ padding: '10px 12px' }}>{p.prezzo != null ? `€${parseFloat(p.prezzo).toFixed(2)} IVA incl.` : 'Manuale (+IVA)'}</td>
                           <td style={{ padding: '10px 12px' }}>{p.giochi_richiesti > 1 ? <strong>{p.giochi_richiesti}</strong> : (p.giochi_richiesti ?? 1)}</td>
+                          <td style={{ padding: '10px 12px' }}>{p.campi_richiesti > 1 ? <strong>{p.campi_richiesti}</strong> : (p.campi_richiesti ?? 1)}</td>
                           <td style={{ padding: '10px 12px' }}>{p.numeroPartecipanti || '—'}</td>
                           <td style={{ padding: '10px 12px' }}>{p.prevedeRinfresco ? 'Sì' : 'No'}</td>
                           {/* Un pacchetto non si cancella — le prenotazioni passate ci puntano —
@@ -2666,7 +2772,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                           </td>
                         </tr>
                       ))}
-                      {pacchetti.length === 0 && <tr><td colSpan="9" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun pacchetto.</td></tr>}
+                      {pacchetti.length === 0 && <tr><td colSpan="10" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>Nessun pacchetto.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -2714,8 +2820,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // quante ce ne sono fra quelle cercate, non in tutto l'archivio.
         const base = prenotazioni.filter(p => passaFiltriPren(p));
         // Una FORSE con la data gia' passata non aspetta piu' un pagamento ne' una conferma: la
-        // partita non c'e' stata, e va chiusa -- annullata, o posticipata se c'era un acconto. Esce
-        // dalle due liste delle FORSE e sta in una sua, cosi' non si mescola con quelle ancora vive.
+        // partita non c'e' stata, e va chiusa. Si annulla -- e se un acconto era entrato, quei
+        // soldi diventano un voucher. Esce dalle due liste delle FORSE e sta in una sua, cosi'
+        // non si mescola con quelle ancora vive.
         const daAnnullarePosticipare = base.filter(p => p.stato === STATO_PREN.FORSE && fineEventoDi(p) < oggiIso);
         const forseVive = base.filter(p => p.stato === STATO_PREN.FORSE && fineEventoDi(p) >= oggiIso);
         const inAttesaPagamento = forseVive.filter(p => !p.statoPagamento || p.statoPagamento === 'in attesa');
@@ -2750,14 +2857,15 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // incasso aperto, e va sollecitato come gli altri. Le altre schede restano senza: una
         // pregressa non ha più dati da completare né turni da coprire.
         const daSaldare = base.filter(p => giocata(p) && mancaIncasso(p));
-        // Annullate e posticipate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una
-        // partita annullata non ce n'e'. Si trovano nello Storico.
+        // Le annullate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una partita
+        // annullata non ce n'e'. Si trovano nello Storico -- e quelle diventate un voucher si
+        // ritrovano nei Voucher, che e' dove aspettano il cliente.
         // Le schede in ordine, ognuna con la sua lista. Si mostrano solo quelle che hanno qualcosa:
         // Gestione e' il lavoro da fare, e una scheda con zero prenotazioni non chiede niente ma
         // occupa posto e costringe a leggerla per scoprirlo.
         const schede = [
           { chiave: 'inAttesaPagamento', etichetta: 'In attesa di pagamento', icona: 'attesaPagamento', lista: inAttesaPagamento },
-          { chiave: 'daAnnullarePosticipare', etichetta: 'Da annullare o posticipare', icona: 'annulla', lista: daAnnullarePosticipare, titolo: "In forse con la data già passata: da annullare, o da posticipare se c'è un acconto" },
+          { chiave: 'daAnnullarePosticipare', etichetta: 'Da annullare', icona: 'annulla', lista: daAnnullarePosticipare, titolo: "In forse con la data già passata: da annullare. Se un acconto era entrato, diventa un voucher" },
           { chiave: 'daConfermare', etichetta: 'Da confermare', icona: 'daConfermare', lista: daConfermare },
           { chiave: 'partiteAttive', etichetta: 'Partite attive', icona: 'partiteAttive', lista: partiteAttive },
           { chiave: 'mancaOperatore', etichetta: 'Manca operatore', icona: 'perOperatore', lista: mancaOperatore, titolo: 'Partite ancora da giocare senza nessun operatore assegnato: turni da coprire' },
@@ -2796,8 +2904,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       {currentView === "calendario" && puoVedere(user, 'prenotazioni', 'calendario') && (() => {
         // Una prenotazione su più giorni compare in ciascuno dei suoi giorni, anche se non consecutivi.
         // Una partita annullata non occupa piu' niente, quindi dal calendario sparisce: lasciarla
-        // farebbe sembrare pieno uno slot che e' libero. Una posticipata invece resta: l'acconto e'
-        // stato incassato e il campo e' ancora tenuto, finche' non si decide la data nuova.
+        // farebbe sembrare pieno uno slot che e' libero. Vale anche per quella diventata un
+        // voucher: la data nuova sara' di un'altra prenotazione, e sara' lei a prendersi lo slot.
         const prenDelGiorno = (iso) => prenotazioni
           .filter(p => p.stato !== STATO_PREN.ANNULLATA && p.stato !== STATO_PREN.PREGRESSA && giorniEventoDi(p).includes(iso))
           .sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
@@ -3117,6 +3225,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     {contantiDaRitirareDi(prenSelezionata, oggiIso) > 0 && (
                       <><span style={{ color: '#b45309', fontWeight: 'bold' }}>💶 DA RITIRARE €{contantiDaRitirareDi(prenSelezionata, oggiIso).toFixed(2)} IN CONTANTI{nomiRitiroContanti(prenSelezionata) ? ' · ' + nomiRitiroContanti(prenSelezionata) : ''}</span><br /></>
                     )}
+                    {prenSelezionata.voucherGenerato && <><span style={{ color: '#5b21b6', fontWeight: 'bold' }}>🎟️ Diventata il voucher {prenSelezionata.voucherGenerato}</span><br /></>}
                     💶 Pagato €{incassatoDi(prenSelezionata, oggiIso).toFixed(2)} / €{(parseFloat(prenSelezionata.prezzoVendita) || 0).toFixed(2)} · <strong>{prenSelezionata.statoPagamento || 'in attesa'}</strong>{prenSelezionata.voucherCodice ? ` · 🎟️ ${prenSelezionata.voucherCodice}` : ''}<br />
                     📅 <button type="button" onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(prenSelezionata); }} title="Clic per correggere a mano lo stato di sincronizzazione" style={{ border: 'none', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: prenSelezionata.googleCalendarSync ? '#dcfce7' : '#fee2e2', color: prenSelezionata.googleCalendarSync ? '#166534' : '#991b1b' }}>{prenSelezionata.googleCalendarSync ? '✅ Sincronizzato con Google Calendar' : '⚠️ Non sincronizzato con Google Calendar'}</button>
                     {prenSelezionata.campoId && (
@@ -3129,8 +3238,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     <button className="btn-modifica-inline" title="Apri" style={{ padding: '8px 12px' }} onClick={() => { caricaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>📂</button>
                     {prenSelezionata.stato === STATO_PREN.FORSE && <button className="btn-conferma" disabled={senzaIncasso(prenSelezionata) && !puoConfermareSenzaIncasso} title={senzaIncasso(prenSelezionata) ? (puoConfermareSenzaIncasso ? "Conferma senza incasso (da amministratore)" : "Serve almeno un acconto per confermare") : "Conferma (prepara mail al cliente)"} style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.CONFERMATO); setPrenSelezionata(null); }}>✔️</button>}
                     {(prenSelezionata.stato === STATO_PREN.FORSE || prenSelezionata.stato === STATO_PREN.CONFERMATO) && <button className="btn-elimina-prev" title="Annulla la prenotazione" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { annullaPrenotazione(prenSelezionata); setPrenSelezionata(null); }}>🚫</button>}
-                    {(prenSelezionata.stato === STATO_PREN.ANNULLATA || prenSelezionata.stato === STATO_PREN.POSTICIPATA) && <button className="btn-modifica-inline" title="Motivo dell'annullamento" style={{ padding: '8px 12px' }} onClick={() => { cambiaMotivoAnnullamento(prenSelezionata); setPrenSelezionata(null); }}>✏️</button>}
-                    {(prenSelezionata.stato === STATO_PREN.ANNULLATA || prenSelezionata.stato === STATO_PREN.POSTICIPATA) && <button className="btn-ripristina" title="Rimetti in FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.FORSE); setPrenSelezionata(null); }}>↩️</button>}
+                    {prenSelezionata.stato === STATO_PREN.ANNULLATA && <button className="btn-modifica-inline" title="Motivo dell'annullamento" style={{ padding: '8px 12px' }} onClick={() => { cambiaMotivoAnnullamento(prenSelezionata); setPrenSelezionata(null); }}>✏️</button>}
+                    {prenSelezionata.stato === STATO_PREN.ANNULLATA && !prenSelezionata.voucherGenerato && <button className="btn-ripristina" title="Rimetti in FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.FORSE); setPrenSelezionata(null); }}>↩️</button>}
                     {prenSelezionata.stato === STATO_PREN.CONFERMATO && <button className="btn-ripristina" title="Riporta a FORSE" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { cambiaStatoPren(prenSelezionata, STATO_PREN.FORSE); setPrenSelezionata(null); }}>↩️</button>}
                     <button className="btn-modifica-inline" title={prenSelezionata.googleCalendarSync ? "Già aggiunto a Google Calendar (clic per riaprire)" : "Aggiungi a Google Calendar"} style={{ padding: '8px 12px' }} onClick={() => apriGoogleCalendar(prenSelezionata)}>📅</button>
                     {user.isAdmin && <button className="btn-elimina-prev" title="Elimina" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => { eliminaPrenotazione(prenSelezionata.id); setPrenSelezionata(null); }}>🗑️</button>}
@@ -3147,8 +3256,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const inizio = inizioSettimana(riepilogoData);
         const fine = addGiorni(inizio, 6);
         const isoSettimana = new Set(Array.from({ length: 7 }, (_, i) => toISODate(addGiorni(inizio, i))));
-        // Stessa regola dei promemoria: a un campo non si annuncia una partita annullata, mentre
-        // una posticipata resta sua finche' non la si sposta.
+        // Stessa regola dei promemoria: a un campo non si annuncia una partita annullata.
         const righeSettimana = prenotazioni.filter(p => p.stato !== STATO_PREN.ANNULLATA && p.stato !== STATO_PREN.PREGRESSA && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
         const locLabelRiep = (p) => p.campoNome || luogoLiberoDi(p) || '—';
 
@@ -3355,7 +3463,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           titolo={`${dialogoAnnullamento.modifica ? 'Motivo dell\'annullamento di' : 'Annulla'} ${dialogoAnnullamento.p.id}${dialogoAnnullamento.p.nominativo ? ` · ${dialogoAnnullamento.p.nominativo}` : ''}`}
           spiegazione={dialogoAnnullamento.spiegazione}
           iniziale={{ categoria: dialogoAnnullamento.p.categoriaAnnullamento, nota: dialogoAnnullamento.p.motivoAnnullamento }}
-          etichettaConferma={dialogoAnnullamento.modifica ? 'Salva' : dialogoAnnullamento.nuovoStato === STATO_PREN.POSTICIPATA ? 'Posticipa' : 'Annulla la prenotazione'}
+          etichettaConferma={dialogoAnnullamento.modifica ? 'Salva' : dialogoAnnullamento.incassato > 0 ? 'Annulla e crea il voucher' : 'Annulla la prenotazione'}
           onConferma={confermaAnnullamento}
           onChiudi={() => setDialogoAnnullamento(null)}
         />

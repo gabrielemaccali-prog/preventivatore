@@ -23,6 +23,15 @@ verifica('rinfresco IVA inclusa: lordo', 61, merenda.costoRinfrescoLordo);
 verifica('rinfresco IVA inclusa: netto', 50, merenda.costoRinfrescoNetto);
 verifica('senza rinfresco nel pacchetto: zero', 0, costiCampoDi({ campo, tariffe, data: '2026-09-25', oraInizio: '17:00', tipoRinfresco: null, numeroPartecipanti: 10 }).costoRinfrescoNetto);
 
+// ---------- piu' campi nella stessa ora ----------
+// Due campi affiancati sono due ore che il centro fattura: raddoppia l'affitto, non il rinfresco,
+// che segue le persone.
+const due = costiCampoDi({ campo, tariffe, data: '2026-09-25', oraInizio: '17:00', tipoRinfresco: 'merenda', numeroPartecipanti: 10, campiOccupati: 2 });
+verifica('due campi: affitto raddoppiato', 200, due.costoCampoNetto);
+verifica('due campi: rinfresco invariato', 50, due.costoRinfrescoNetto);
+verifica('due campi in fascia serale', 300, costiCampoDi({ campo, tariffe, data: '2026-09-25', oraInizio: '21:30', campiOccupati: 2 }).costoCampoNetto);
+verifica('campi non indicati: vale uno', 100, costiCampoDi({ campo, tariffe, data: '2026-09-25', oraInizio: '17:00', campiOccupati: null }).costoCampoNetto);
+
 // ---------- ricalcolo ----------
 const prenotazioni = [
   { id: 'P-VECCHIA', campoId: 'cmp_1', data: '2026-09-25', oraInizio: '17:00', costoCampoNetto: 80, costoRinfrescoNetto: 0 },
