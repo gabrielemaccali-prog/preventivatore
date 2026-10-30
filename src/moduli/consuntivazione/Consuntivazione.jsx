@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
-import { fineEventoDi, formattaDataGGMMAAAA, locationBreveDi } from '../../lib/utils'
+import { fineEventoDi, formattaDataGGMMAAAA, locationBreveDi, incassatoDi, statoIncassoDi } from '../../lib/utils'
 import { STATO_PREN } from '../../lib/costanti'
 import {
   sommaImporti, statoFatturazione, daFatturarePrenotazione, daFatturareVoucher,
@@ -26,6 +26,8 @@ const ETICHETTA_STATO = { daFatturare: 'Da fatturare', parziale: 'Fatturata in p
 // promozionale venduto a zero. Dirle entrambe "coperta da voucher" racconterebbe una cosa falsa.
 const etichettaStatoFattura = (x) => (x.stato === 'nonDovuta' && !x.voucher ? 'Promozionale' : ETICHETTA_STATO[x.stato]);
 const COLORE_STATO = { daFatturare: '#b91c1c', parziale: '#b45309', fatturata: '#0284c7', nonDovuta: '#64748b' };
+// Gli stessi colori del pallino di pagamento dello storico prenotazioni.
+const colorePagamento = (stato) => ({ saldato: '#16a34a', acconto: '#ca8a04', compensazione: '#7c3aed', omaggio: '#0284c7', 'da ritirare': '#b45309' }[stato] || '#dc2626');
 const FATTURA_VUOTA = { data: '', numero: '', importo: '' };
 const titoloDettaglio = { fontSize: '0.75rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '2px 0 4px 0' };
 const stileEtichettaFattura = { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem', fontWeight: 600, color: '#334155' };
@@ -63,6 +65,19 @@ function Consuntivazione({ user }) {
   const [filtroStato, setFiltroStato] = useState('aperte');
   const [soloPassate, setSoloPassate] = useState(true);
   const [cerca, setCerca] = useState('');
+  // "aaaa-mm": il mese della partita, o della vendita per un voucher. Vuoto = tutti.
+  const [filtroMese, setFiltroMese] = useState('');
+  // Senza mese scelto le frecce partono dal mese corrente, come nel Cruscotto.
+  const spostaMese = (delta) => {
+    const [a, m] = filtroMese ? filtroMese.split('-').map(Number) : [new Date().getFullYear(), new Date().getMonth() + 1];
+    const d = new Date(a, m - 1 + delta, 1);
+    setFiltroMese(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
+  const etichettaMese = (mese) => {
+    const [a, m] = mese.split('-').map(Number);
+    const testo = new Date(a, m - 1, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
+    return testo.charAt(0).toUpperCase() + testo.slice(1);
+  };
 
   const [espansa, setEspansa] = useState(null);
   const [nuova, setNuova] = useState(FATTURA_VUOTA);
@@ -144,6 +159,7 @@ function Consuntivazione({ user }) {
 
   const visibili = voci.filter(x => {
     if (filtroTipo && x.tipo !== filtroTipo) return false;
+    if (filtroMese && String(x.data || '').slice(0, 7) !== filtroMese) return false;
     // "Già giocate" vale per le partite; un voucher, una volta venduto, è già fatturabile.
     if (soloPassate && x.tipo === 'prenotazione' && !(x.fine < oggi)) return false;
     if (filtroStato === 'aperte' && !(x.stato === 'daFatturare' || x.stato === 'parziale')) return false;
@@ -155,6 +171,22 @@ function Consuntivazione({ user }) {
   const totali = visibili.reduce((a, x) => ({ dovuto: a.dovuto + x.dovuto, fatturato: a.fatturato + x.fatturato }), { dovuto: 0, fatturato: 0 });
 
   const chiave = (x) => `${x.tipo}|${x.codice}`;
+
+  // Il recap del pagamento in riga, come nello storico prenotazioni: incassato sul totale, con il
+  // pallino dello stato. Per una prenotazione valgono le stesse regole dello storico (il voucher
+  // usato conta come incasso, i contanti non ancora ritirati no); un voucher venduto è saldato
+  // quando i pagamenti coprono il suo valore.
+  const recapPagamento = (x) => {
+    const righe = (pagamentiPer[chiave(x)] || []).map(pg => ({ ...pg, contanti: !!pg.contanti }));
+    const contanti = righe.filter(pg => pg.contanti).reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0);
+    if (x.tipo === 'prenotazione') {
+      const p = { ...x.origine, pagamenti: righe, voucherValore: x.voucher?.valore || 0 };
+      return { pagato: incassatoDi(p, oggi), totale: parseFloat(p.prezzoVendita) || 0, stato: statoIncassoDi(p, oggi), contanti };
+    }
+    const pagato = sommaImporti(righe);
+    const totale = valoreVoucher(x.codice);
+    return { pagato, totale, stato: pagato > 0 && pagato + 0.001 >= totale ? 'saldato' : pagato > 0 ? 'acconto' : null, contanti };
+  };
   const apriRiga = (x) => {
     if (espansa === chiave(x)) { setEspansa(null); return; }
     setEspansa(chiave(x));
@@ -300,6 +332,20 @@ function Consuntivazione({ user }) {
               <option value="tutte">Tutte</option>
             </select>
           </div>
+          {/* Lo stesso selettore del Cruscotto: si scorre di un mese per volta. */}
+          <div className="filtro-group" style={{ flex: '1 1 250px' }} title="Il mese della partita, o della vendita per un voucher">
+            <label>Mese:</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese precedente" onClick={() => spostaMese(-1)}>‹</button>
+              <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: filtroMese ? '#334155' : '#94a3b8' }}>
+                {filtroMese ? etichettaMese(filtroMese) : 'tutti'}
+              </span>
+              <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese successivo" onClick={() => spostaMese(1)}>›</button>
+              {filtroMese
+                ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per mese" onClick={() => setFiltroMese('')}>✕</button>
+                : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese corrente" onClick={() => spostaMese(0)}>Oggi</button>}
+            </div>
+          </div>
           <div className="filtro-group" style={{ flex: '1 1 200px' }}>
             <label>Cerca:</label>
             <input type="text" placeholder="Codice, cliente o location" value={cerca} onChange={(e) => setCerca(e.target.value)} />
@@ -320,6 +366,7 @@ function Consuntivazione({ user }) {
                 <th style={cella}>Intestatario</th>
                 <th style={cella}>Descrizione</th>
                 <th style={cella}>Location</th>
+                <th style={cella} title="Incassato sul totale, come nello storico prenotazioni">Pagamenti</th>
                 <th style={{ ...cella, textAlign: 'right' }}>Da fatturare</th>
                 <th style={{ ...cella, textAlign: 'right' }}>Fatturato</th>
                 <th style={cella}>Stato</th>
@@ -327,7 +374,7 @@ function Consuntivazione({ user }) {
             </thead>
             <tbody>
               {visibili.length === 0 && (
-                <tr><td colSpan={8} style={{ ...cella, textAlign: 'center', color: '#666', padding: '20px' }}>Nessuna voce con questi filtri.</td></tr>
+                <tr><td colSpan={9} style={{ ...cella, textAlign: 'center', color: '#666', padding: '20px' }}>Nessuna voce con questi filtri.</td></tr>
               )}
               {visibili.map(x => {
                 const aperta = espansa === chiave(x);
@@ -349,6 +396,16 @@ function Consuntivazione({ user }) {
                         {x.voucher && <span style={{ color: '#94a3b8' }}> · voucher {x.voucher.codice} −{euro(x.voucher.valore)}</span>}
                       </td>
                       <td style={{ ...cella, color: '#555' }}>{x.location || '—'}</td>
+                      {(() => {
+                        const pg = recapPagamento(x);
+                        return (
+                          <td style={{ ...cella, whiteSpace: 'nowrap' }}>
+                            <span title={`pagamento ${pg.stato || 'in attesa'}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: colorePagamento(pg.stato), marginRight: '6px' }}></span>
+                            {euro(pg.pagato)} <span style={{ color: '#94a3b8' }}>/ {euro(pg.totale)}</span>
+                            {pg.contanti > 0 && <span title={`${euro(pg.contanti)} in contanti`} style={{ marginLeft: '6px' }}>💶</span>}
+                          </td>
+                        );
+                      })()}
                       <td style={destra}>{euro(x.dovuto)}</td>
                       <td style={destra}>{euro(x.fatturato)}</td>
                       <td style={{ ...cella, whiteSpace: 'nowrap', color: COLORE_STATO[x.stato], fontWeight: 600 }}>
@@ -357,7 +414,7 @@ function Consuntivazione({ user }) {
                     </tr>
                     {aperta && (
                       <tr className="riga-espandibile-dettaglio">
-                        <td colSpan={8} onClick={(e) => e.stopPropagation()} style={{ padding: '10px 14px', borderBottom: '1px solid #eee' }}>
+                        <td colSpan={9} onClick={(e) => e.stopPropagation()} style={{ padding: '10px 14px', borderBottom: '1px solid #eee' }}>
                           {(() => {
                             // Il voucher usato a saldo conta come pagamento, pur non essendo una riga di pagamenti.
                             const righePag = pagamentiPer[chiave(x)] || [];
