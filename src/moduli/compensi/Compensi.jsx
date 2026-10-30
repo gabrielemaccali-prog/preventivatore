@@ -343,7 +343,11 @@ function Compensi({ user }) {
       v.operatore_id === p.operatore_id && giornataDelPeriodo(p, v.data));
     // Un eventuale compenso concordato è già dentro le voci, sotto forma di rettifiche "forfait":
     // qui non serve nessuna regola speciale, il calcolo normale arriva da solo al totale pattuito.
-    const [dettaglio] = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati);
+    // Le partite fatte in coppia portano anche il collega: il calcolo restituisce un preventivo per
+    // ognuno, e va preso quello dell'operatore del periodo, non il primo in ordine alfabetico --
+    // che poteva essere il collega, con le sole partite in comune.
+    const dettaglio = preventiviPerOperatore(partiteDelPeriodo, vociDelPeriodo, parUsati)
+      .find(x => String(x.id) === String(p.operatore_id));
     // Il dettaglio può mancare quando il periodo non ha più partite né voci: la riga resta
     // comunque, con i suoi valori congelati.
     return { ...p, dettaglio: dettaglio || null };
@@ -351,6 +355,9 @@ function Compensi({ user }) {
 
   // Colonne ordinabili della tabella consuntivati, come negli storici degli altri moduli.
   // Il periodo ordina sulla data d'inizio: è quella con cui si cerca un periodo, non la fine.
+  // La ritenuta di un periodo: quella del documento di rimborso; senza documento -- un periodo
+  // pregresso, già pagato con la vecchia gestione -- quella congelata nel periodo stesso.
+  const ritenutaDelPeriodo = (p) => parseFloat(p.rimborso ? p.rimborso.ritenuta : p.ritenuta) || 0;
   const COLONNE_CONSUNTIVATI = [
     { chiave: 'operatore', label: 'Operatore', valore: (p) => nomeOperatore(p.operatore_id) },
     { chiave: 'periodo', label: 'Periodo', valore: (p) => p.dal || '' },
@@ -358,7 +365,7 @@ function Compensi({ user }) {
     // Sugli evasi il costo mostrato è il totale congelato sul documento: l'ordinamento segue quello.
     { chiave: 'costo', label: 'Costo', stile: { textAlign: 'right' }, valore: (p) => parseFloat(p.rimborso?.totale ?? p.costo_azienda) || 0 },
     // La ritenuta nasce elaborando il rimborso, quindi la colonna esiste solo fra gli evasi.
-    { chiave: 'ritenuta', label: 'Ritenuta', soloEvasi: true, stile: { textAlign: 'right' }, valore: (p) => parseFloat(p.rimborso?.ritenuta) || 0 },
+    { chiave: 'ritenuta', label: 'Ritenuta', soloEvasi: true, stile: { textAlign: 'right' }, valore: ritenutaDelPeriodo },
   ];
   const { ordina: ordinaConsuntivati, propsTestata: testataConsuntivati, frecciaOrdinamento: frecciaConsuntivati } =
     useOrdinamentoTabella(Object.fromEntries(COLONNE_CONSUNTIVATI.map(c => [c.chiave, c.valore])));
@@ -570,6 +577,41 @@ function Compensi({ user }) {
   // contraddirla.
   const daElaborare = useMemo(() => consuntivati.filter(p => !p.evaso_il), [consuntivati]);
   const evasi = useMemo(() => consuntivati.filter(p => p.evaso_il), [consuntivati]);
+
+  // Filtri delle due tabelle dei periodi: per bubbler e per mese. Valgono solo per quello che si
+  // guarda -- gli indicatori contano sempre tutto l'anno di tutti.
+  const [filtroOperatore, setFiltroOperatore] = useState('');
+  const [filtroMese, setFiltroMese] = useState('');
+  // Un periodo sta in un mese se lo tocca: uno a cavallo di fine mese compare in tutti e due.
+  const perFiltri = (righe) => righe.filter(p => (!filtroOperatore || String(p.operatore_id) === filtroOperatore)
+    && (!filtroMese || (String(p.dal).slice(0, 7) <= filtroMese && String(p.al).slice(0, 7) >= filtroMese)));
+  const filtriPeriodi = (righe) => {
+    const operatori = [...new Set(righe.map(p => String(p.operatore_id)))]
+      .map(id => ({ id, nome: nomeOperatore(Number(id)) }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'it'));
+    return (
+      <div className="filtri-storico" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div className="filtro-group" style={{ flex: '1 1 200px' }}>
+          <label>Bubbler:</label>
+          <select value={filtroOperatore} onChange={(e) => setFiltroOperatore(e.target.value)}>
+            <option value="">Tutti</option>
+            {operatori.map(o => <option key={o.id} value={o.id}>{o.nome}</option>)}
+          </select>
+        </div>
+        <div className="filtro-group" style={{ flex: '1 1 160px' }}>
+          <label>Mese:</label>
+          <input type="month" value={filtroMese} onChange={(e) => setFiltroMese(e.target.value)} />
+        </div>
+        {(filtroOperatore || filtroMese) && (
+          <div className="filtro-group" style={{ flex: '0 0 auto' }}>
+            <button type="button" onClick={() => { setFiltroOperatore(''); setFiltroMese(''); }} className="btn-outline-annulla" style={{ ...btnRiga, marginLeft: 0, padding: '7px 14px', fontSize: '0.8rem' }}>
+              <Icona nome="annulla" size={14} style={{ marginRight: '5px' }} />Togli i filtri
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Gli indicatori contano solo i rimborsi già evasi: prima dell'elaborazione le giornate del
   // documento non esistono ancora e il netto non è ancora deciso. Un periodo entra se tocca
@@ -1246,7 +1288,7 @@ function Compensi({ user }) {
                     </td>
                     {evasi && (
                       <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>
-                        {euro(p.rimborso?.ritenuta)}
+                        {euro(ritenutaDelPeriodo(p))}
                       </td>
                     )}
                     <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -1866,7 +1908,8 @@ function Compensi({ user }) {
             non con quelli di oggi. Ripristinare un periodo rimette le sue giornate fra quelle da consuntivare e
             cancella i valori salvati; le voci registrate restano.
           </p>
-          {tabellaPeriodi(daElaborare, "Nessun rimborso da elaborare.", false)}
+          {daElaborare.length > 0 && filtriPeriodi(daElaborare)}
+          {tabellaPeriodi(perFiltri(daElaborare), daElaborare.length ? "Nessun periodo con questi filtri." : "Nessun rimborso da elaborare.", false)}
         </>
       )}
 
@@ -2037,7 +2080,8 @@ function Compensi({ user }) {
             Periodi pagati. Il documento si ristampa identico a com'era stato generato:
             i suoi importi sono congelati, non ricalcolati. I periodi segnati DIRETTO sono di bubbler senza ritenuta: sono stati chiusi in un passaggio solo e non hanno un documento da ristampare.
           </p>
-          {tabellaPeriodi(evasi, "Nessun rimborso evaso.", true)}
+          {evasi.length > 0 && filtriPeriodi(evasi)}
+          {tabellaPeriodi(perFiltri(evasi), evasi.length ? "Nessun periodo con questi filtri." : "Nessun rimborso evaso.", true)}
         </>
       )}
         </div>
