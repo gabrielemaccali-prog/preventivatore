@@ -144,7 +144,7 @@ function Voucher({ user }) {
   // --- DATI ---
   const [pacchetti, setPacchetti] = useState([]);
   const [voucherSalvati, setVoucherSalvati] = useState([]);
-  // Le fatture servono solo alla spunta blu FT: si leggono a parte, e di nuovo ogni volta che
+  // Le fatture servono solo al pallino blu FT: si leggono a parte, e di nuovo ogni volta che
   // l'elenco dei voucher si ricarica, cosi' una fattura aggiunta in Consuntivazione si vede qui.
   const [fattureVoucher, setFattureVoucher] = useState([]);
   useEffect(() => {
@@ -589,7 +589,7 @@ function Voucher({ user }) {
               <>
                 <span title={`pagamento ${statoPag}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
                 €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{(parseFloat(v.importo) || 0).toFixed(2)}</span>
-                {fatturatoPerIntero(v) && <span title="Fatturato per intero" style={{ color: '#0284c7', fontWeight: 'bold', marginLeft: '6px' }}>✓</span>}
+                {fatturatoPerIntero(v) && <span title="Fatturato per intero" style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: '#0284c7', marginLeft: '6px' }}></span>}
               </>
             )}
           </td>

@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
-import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, statoIncassoDi, contantiDaRitirareDi, incassatoDi, daIncassareDi, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, formattaOraInput, normalizzaOra24, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
+import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, partitaInCompensazione, statoIncassoDi, contantiDaRitirareDi, incassatoDi, daIncassareDi, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, formattaOraInput, normalizzaOra24, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi } from '../../lib/campi'
@@ -287,7 +287,10 @@ const COLONNE_PREN = [
   { chiave: 'pacchetto', label: 'Pacchetto · Gioco', valore: (p) => p.pacchettoNome || '' },
   { chiave: 'location', label: 'Location', valore: (p) => locationBreveDi(p) },
   { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') || (p.senzaOperatori ? 'non richiesti' : '') },
-  { chiave: 'importo', label: 'Pagato / Totale / FT', valore: (p) => daIncassareDi(p) },
+  { chiave: 'importo', label: 'Pagato / Totale', valore: (p) => daIncassareDi(p) },
+  // Come sta la fattura. Il valore di ordinamento viene sostituito nel componente, dove si sa
+  // quali fatture sono state emesse: qui le fatture non si vedono.
+  { chiave: 'fattura', label: 'FT', valore: () => '' },
 ];
 const VALORI_ORDINAMENTO_PREN = Object.fromEntries(COLONNE_PREN.map(c => [c.chiave, c.valore]));
 
@@ -333,7 +336,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
 
   // --- NUOVA PRENOTAZIONE ---
   const [prenotazioni, setPrenotazioni] = useState([]);
-  // Le fatture servono solo alla spunta blu FT: si leggono a parte, e di nuovo ogni volta che
+  // Le fatture servono solo al pallino blu FT: si leggono a parte, e di nuovo ogni volta che
   // l'elenco si ricarica, cosi' una fattura aggiunta in Consuntivazione si vede qui.
   const [fatturePren, setFatturePren] = useState([]);
   useEffect(() => {
@@ -369,6 +372,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   const [filtroPrenStato, setFiltroPrenStato] = useState("");
   const [filtroPrenNome, setFiltroPrenNome] = useState("");
   const [filtroPrenId, setFiltroPrenId] = useState("");
+  // Come sta la fattura: "" = tutte, altrimenti uno dei valori di statoFatturaDi.
+  const [filtroPrenFattura, setFiltroPrenFattura] = useState("");
   // Nello storico le annullate partono nascoste: di solito si cerca cosa si e' giocato o si
   // giochera', e le disdette in mezzo sono rumore. Togliendo la spunta tornano, perche' restano
   // comunque parte dell'archivio.
@@ -1187,16 +1192,38 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     ...VALORI_ORDINAMENTO_PREN,
     // La colonna mostra "gioco · pacchetto": si ordina su quello che si legge, non su metà.
     pacchetto: (p) => etichettaBreveDi(p),
+    // Ordinando per FT vengono prima quelle da fatturare, che sono il lavoro da fare.
+    fattura: (p) => statoFatturaDi(p),
   });
 
   // Riga di tabella condivisa da Storico e dalle sotto-schede di Gestione.
   // Il clic sulla riga espande un pannello con i dettagli (telefono, email, note, pagamenti) e sblocca le azioni (apri, conferma, calendario, elimina).
-  // Spunta blu solo quando le fatture coprono tutto quello che c'e' da fatturare: il prezzo meno
-  // l'eventuale voucher, che e' gia' stato fatturato quando e' stato venduto.
-  const fatturataPerIntero = (p) => statoFatturazione(
-    daFatturarePrenotazione(p, p.voucherValore),
-    sommaImporti(fatturePren.filter(f => f.riferimento === String(p.id)))
-  ) === 'fatturata';
+  // Quanto c'e' da fatturare: il prezzo meno il voucher -- gia' fatturato quando e' stato venduto
+  // -- e meno i contanti, che in fattura non ci vanno. Senza togliere i contanti una partita
+  // incassata meta' in contanti e fatturata per il resto risultava sempre incompleta.
+  const dovutoDaFatturare = (p) => daFatturarePrenotazione(p, p.voucherValore, contantiDi(p));
+  const fatturatoDi = (p) => sommaImporti(fatturePren.filter(f => f.riferimento === String(p.id)));
+  // Spunta blu solo quando le fatture coprono tutto quello che c'e' da fatturare.
+  const fatturataPerIntero = (p) => statoFatturazione(dovutoDaFatturare(p), fatturatoDi(p)) === 'fatturata';
+
+  // Una partita puo' non avere niente da fatturare, e allora la fattura non manca: non si deve.
+  // Il motivo si dice per esteso, perche' "non si fattura" senza il perche' sembra una dimenticanza.
+  const motivoNienteFattura = (p) => {
+    if (partitaInCompensazione(p)) return 'In compensazione con il cliente: non si fattura, si scala dal suo conto';
+    if ((parseFloat(p.prezzoVendita) || 0) <= 0.01) return 'Prezzo zero (omaggio o promozionale): non c\'è niente da fatturare';
+    if ((parseFloat(p.voucherValore) || 0) > 0.01) return `Coperta dal voucher ${p.voucherCodice || ''}, già fatturato quando è stato venduto`;
+    return 'Incassata in contanti: non passa da fattura';
+  };
+  // Fatturato piu' di quello che c'era da fatturare. Prima spariva dietro la spunta blu -- "copre
+  // tutto" e' vero anche quando copre troppo -- e una fattura di trenta euro in piu' non la vedeva
+  // nessuno. Vale anche quando non c'era niente da fatturare e una fattura c'e' lo stesso.
+  const eccedenzaFatturata = (p) => fatturatoDi(p) - dovutoDaFatturare(p);
+  // Come sta la fattura, in una parola. Ordina la colonna FT, decide il simbolo e alimenta il filtro.
+  const statoFatturaDi = (p) => {
+    if (eccedenzaFatturata(p) > 0.01) return 'da controllare';
+    if (senzaFatturaDaEmettere(p)) return 'non dovuta';
+    return fatturataPerIntero(p) ? 'fatturata' : 'da fatturare';
+  };
 
   const rigaTabellaPren = (p) => {
     const totPagato = incassatoDi(p, oggiIso);
@@ -1249,12 +1276,20 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
             <span title={`pagamento ${statoIncassoDi(p) || 'in attesa'}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
             €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{totale.toFixed(2)}</span>
-            {fatturataPerIntero(p) && <span title="Fatturata per intero" style={{ color: '#0284c7', fontWeight: 'bold', marginLeft: '6px' }}>✓</span>}
-            {/* I contanti non seguono la strada della fattura: al posto della spunta blu, le
-                banconote. Chi li ha in mano si legge nel titolo e nella consuntivazione bubbler. */}
-            {contantiDi(p) > 0 && (
-              <span title={`€${contantiDi(p).toFixed(2)} in contanti${nomiRitiroContanti(p) ? ' ritirati da ' + nomiRitiroContanti(p) : ', operatore da indicare'}`} style={{ marginLeft: '6px' }}>💶</span>
-            )}
+          </td>
+          {/* La fattura ha una colonna sua: pallino blu quando copre tutto, cerchio sbarrato
+              quando non c'e' niente da fatturare -- che e' una risposta, non un buco. Con una
+              parte incassata in contanti, che in fattura non ci va, restano solo le banconote:
+              un simbolo per casella, e quello che dice di piu' e' il contante. Il triangolo
+              rosso viene prima di tutti: un errore da guardare batte qualsiasi informazione. */}
+          <td style={{ padding: '8px 10px', whiteSpace: 'nowrap', textAlign: 'center' }}>
+            {statoFatturaDi(p) === 'da controllare'
+              ? <span title={`Fatturato €${fatturatoDi(p).toFixed(2)} a fronte di €${dovutoDaFatturare(p).toFixed(2)} da fatturare: €${eccedenzaFatturata(p).toFixed(2)} di troppo`} style={{ color: '#dc2626', fontWeight: 'bold' }}>⚠</span>
+              : contantiDi(p) > 0
+              ? <span title={`€${contantiDi(p).toFixed(2)} in contanti${nomiRitiroContanti(p) ? ' ritirati da ' + nomiRitiroContanti(p) : ', operatore da indicare'}`}>💶</span>
+              : senzaFatturaDaEmettere(p)
+                ? <span title={motivoNienteFattura(p)} style={{ color: '#94a3b8', fontWeight: 'bold' }}>⊘</span>
+                : fatturataPerIntero(p) && <span title="Fatturata per intero" style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: '#0284c7' }}></span>}
           </td>
         </tr>
         {espansa && (
@@ -1394,7 +1429,12 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // Se lo stato scelto e' proprio ANNULLATA la spunta non le nasconde: vorrebbe dire chiedere una
     // cosa e toglierla nello stesso momento, e restare con un elenco vuoto senza capire perche'.
     const mAnnullate = !nascondiAnnullate || filtroPrenStato === STATO_PREN.ANNULLATA || p.stato !== STATO_PREN.ANNULLATA;
-    return mData && mSettimana && mStato && mNome && mId && mAnnullate;
+    // "Da fatturare" tiene dentro anche quelle con la fattura sballata: sono lavoro di chi
+    // fattura, e lasciarle in un elenco a parte vorrebbe dire non guardarle mai.
+    const statoFt = statoFatturaDi(p);
+    const mFattura = !filtroPrenFattura || statoFt === filtroPrenFattura
+      || (filtroPrenFattura === 'da fatturare' && statoFt === 'da controllare');
+    return mData && mSettimana && mStato && mNome && mId && mAnnullate && mFattura;
   };
   // Le pregresse (vecchia gestione) hanno una scheda loro: nello Storico ci sono solo quelle dell'app.
   const prenotazioniFiltrate = prenotazioni.filter(p => p.stato !== STATO_PREN.PREGRESSA && passaFiltriPren(p));
@@ -1425,6 +1465,15 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
               <select value={filtroPrenStato} onChange={(e) => setFiltroPrenStato(e.target.value)}>
                 <option value="">Tutti</option>
                 {Object.values(STATO_PREN).filter(stato => stato !== STATO_PREN.PREGRESSA).map(stato => <option key={stato} value={stato}>{etichettaStatoPren(stato)}</option>)}
+              </select>
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
+              <label>Fattura:</label>
+              <select value={filtroPrenFattura} onChange={(e) => setFiltroPrenFattura(e.target.value)}>
+                <option value="">Tutte</option>
+                <option value="da fatturare">Da fatturare o da controllare</option>
+                <option value="fatturata">✓ Fatturate</option>
+                <option value="non dovuta">⊘ Senza fattura</option>
               </select>
             </div>
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
@@ -3013,7 +3062,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // la esclude -- si passa alla prima che ha ancora qualcosa, invece di restare su una lista vuota
         // che nel menu non c'e' piu'.
         const attiva = visibili.find(sc => sc.chiave === gestioneTab) || visibili[0];
-        const filtriAttivi = !!(filtroPrenData || filtroPrenSettimana || filtroPrenStato || filtroPrenNome);
+        const filtriAttivi = !!(filtroPrenData || filtroPrenSettimana || filtroPrenStato || filtroPrenNome || filtroPrenFattura);
         return (
           <div className="schermata-storico no-print">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>

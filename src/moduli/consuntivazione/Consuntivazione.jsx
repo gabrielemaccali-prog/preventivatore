@@ -306,7 +306,7 @@ function Consuntivazione({ user }) {
         </div>
         <p className="descrizione-pagina">
           Le fatture emesse per le prenotazioni confermate e per i voucher. Una partita pagata tutta col voucher non si fattura; pagata in parte, si fattura il saldo.
-          La spunta blu nelle tabelle di prenotazioni e voucher compare solo quando è fatturato tutto.
+          Il pallino blu nelle tabelle di prenotazioni e voucher compare solo quando è fatturato tutto.
         </p>
 
         {schemaMancante && (
