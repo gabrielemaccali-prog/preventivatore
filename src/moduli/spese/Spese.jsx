@@ -6,6 +6,7 @@ import Icona from '../../components/Icona'
 import { caricaTutto } from './operazioni'
 import ElencoSpese from './ElencoSpese'
 import Banca from './Banca'
+import Incassi from './Incassi'
 import Regole from './Regole'
 import Configuratore from './Configuratore'
 
@@ -23,6 +24,7 @@ import Configuratore from './Configuratore'
 const SCHEDE = [
   { id: 'spese', label: 'Spese', icona: 'spese' },
   { id: 'banca', label: 'Banca', icona: 'banca' },
+  { id: 'incassi', label: 'Incassi', icona: 'cashflow' },
   { id: 'regole', label: 'Regole', icona: 'regole' },
   { id: 'configuratore', label: 'Configuratore', icona: 'configuratore' },
 ];
@@ -45,6 +47,8 @@ const leggiAnagrafiche = () => Promise.all([
 
 function Spese({ user }) {
   const [scheda, setScheda] = useState('spese');
+  // Da dove aprire il Configuratore quando ci si arriva da un'altra scheda (gli Incassi aprono le loro categorie).
+  const [sottoConfiguratore, setSottoConfiguratore] = useState(null);
   const [categorie, setCategorie] = useState([]);
   const [regole, setRegole] = useState([]);
   const [categorieAlbatros, setCategorieAlbatros] = useState([]);
@@ -86,14 +90,15 @@ function Spese({ user }) {
   const attiva = (schedeVisibili.find(s => s.id === scheda) || schedeVisibili[0]).id;
   const comuni = {
     user, categorie, regole, categorieAlbatros, controparti, spese, movimenti, caricamenti,
-    ricaricaConfigurazione, ricaricaDati, vaiA: setScheda,
+    ricaricaConfigurazione, ricaricaDati,
+    vaiA: (id, sotto = null) => { setSottoConfiguratore(sotto); setScheda(id); },
   };
 
   return (
     <>
       <nav className="modulo-subnav no-print subnav-segmented">
         {schedeVisibili.map(s => (
-          <button key={s.id} className={`nav-btn ${attiva === s.id ? 'active' : ''}`} onClick={() => setScheda(s.id)}><Icona nome={s.icona} />{s.label}</button>
+          <button key={s.id} className={`nav-btn ${attiva === s.id ? 'active' : ''}`} onClick={() => { setSottoConfiguratore(null); setScheda(s.id); }}><Icona nome={s.icona} />{s.label}</button>
         ))}
       </nav>
 
@@ -107,8 +112,9 @@ function Spese({ user }) {
         <>
           {attiva === 'spese' && <ElencoSpese {...comuni} />}
           {attiva === 'banca' && <Banca {...comuni} />}
+          {attiva === 'incassi' && <Incassi {...comuni} />}
           {attiva === 'regole' && <Regole {...comuni} />}
-          {attiva === 'configuratore' && <Configuratore {...comuni} />}
+          {attiva === 'configuratore' && <Configuratore key={sottoConfiguratore || 'spese'} {...comuni} sottoIniziale={sottoConfiguratore} />}
         </>
       )}
     </>

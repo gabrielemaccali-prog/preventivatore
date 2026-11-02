@@ -7,7 +7,7 @@ import { elaboraMovimenti } from './operazioni'
 // ============================================================
 // Banca: si controlla che i saldi tornino e si vedono i movimenti con la loro destinazione.
 // L'estratto conto si carica dalla scheda Spese (CaricaEstratto).
-// Le entrate per ora si vedono soltanto: il loro abbinamento agli incassi è il passo successivo.
+// Le entrate si abbinano ai pagamenti nella scheda Incassi.
 // ============================================================
 
 function Banca({ user, regole, controparti, spese, movimenti, caricamenti, categorie, ricaricaDati, vaiA }) {

@@ -208,7 +208,7 @@ function Voucher({ user }) {
       const righePag = pag.data || [];
       setVoucherSalvati(vc.data.map(v => ({
         ...v,
-        pagamenti: righePag.filter(x => x.riferimento === v.codice).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "" }))
+        pagamenti: righePag.filter(x => x.riferimento === v.codice).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", movimentoId: x.movimento_id ?? null }))
       })));
     }
     if (pr.data) setPrenotazioni(pr.data);
@@ -219,7 +219,11 @@ function Voucher({ user }) {
     await supabase.from('pagamenti').delete().eq('tipo', 'voucher').eq('riferimento', codice);
     const daInserire = (righe || [])
       .filter(pg => pg.data)
-      .map(pg => ({ tipo: 'voucher', riferimento: codice, data: pg.data, importo: parseFloat(pg.importo) || 0, nominativo: formaNome(pg.nominativo) || null }));
+      .map(pg => ({
+        tipo: 'voucher', riferimento: codice, data: pg.data, importo: parseFloat(pg.importo) || 0, nominativo: formaNome(pg.nominativo) || null,
+        // Il legame con l'accredito della banca (scheda Spese › Incassi) sopravvive al salvataggio.
+        ...(pg.movimentoId != null ? { movimento_id: pg.movimentoId } : {}),
+      }));
     if (daInserire.length > 0) await supabase.from('pagamenti').insert(daInserire);
   };
 

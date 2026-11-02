@@ -445,7 +445,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       setColonnaGruppo(righePag.length > 0 && 'gruppo' in righePag[0]);
       const conPagamenti = pr.data.map(p => ({
         ...p,
-        pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", contanti: !!x.contanti, ritiratoDa: x.ritirato_da ?? "", gruppo: x.gruppo || null })),
+        pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", contanti: !!x.contanti, ritiratoDa: x.ritirato_da ?? "", gruppo: x.gruppo || null, movimentoId: x.movimento_id ?? null })),
         // valore dell'eventuale voucher usato: conta come pagamento pur non essendo una riga di pagamenti
         voucherValore: parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherCodice))?.importo) || 0
       }));
@@ -1659,6 +1659,14 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       if (Math.abs(somma - totale) > 0.005) return alert(`Le quote fanno €${somma.toFixed(2)}, il bonifico €${totale.toFixed(2)}: devono tornare.`);
     } else if (!window.confirm('Eliminare il bonifico? Le sue quote spariscono da tutte le prenotazioni.')) return;
     const gruppo = b.gruppo || `BON-${Date.now()}`;
+    // Un bonifico già abbinato al suo accredito resta abbinato finché il totale è quello arrivato in
+    // banca; cambiando il totale l'abbinamento non torna più, e si toglie.
+    const vecchie = b.gruppo ? quoteDelBonifico(b.gruppo) : [];
+    const movimento = vecchie.find(q => q.pagamento.movimentoId != null)?.pagamento.movimentoId ?? null;
+    const totaleVecchio = vecchie.reduce((s, q) => s + (parseFloat(q.pagamento.importo) || 0), 0);
+    const tieniMovimento = !elimina && movimento != null && Math.abs(totaleVecchio - (parseFloat(b.totale) || 0)) <= 0.005;
+    if (!elimina && movimento != null && !tieniMovimento
+      && !window.confirm("Il bonifico è abbinato al suo accredito in banca: cambiando il totale l'abbinamento si toglie, e andrà rifatto in Spese › Incassi. Procedere?")) return;
     setSalvataggioBonifico(true);
     const prima = b.gruppo ? quoteDelBonifico(b.gruppo).map(q => q.prenotazione.id) : [];
     if (b.gruppo) {
@@ -1668,6 +1676,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const righe = quote.map(q => ({
       tipo: 'prenotazione', riferimento: q.id, data: b.data, importo: parseFloat(q.importo) || 0,
       nominativo: formaNome(b.nominativo) || null, contanti: false, ritirato_da: null, gruppo,
+      ...(tieniMovimento ? { movimento_id: movimento } : {}),
     }));
     if (righe.length > 0) {
       const { error } = await supabase.from('pagamenti').insert(righe);
@@ -1700,6 +1709,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         ritirato_da: pg.contanti && pg.ritiratoDa ? Number(pg.ritiratoDa) : null,
         // La quota di un bonifico su più prenotazioni resta legata agli altri pezzi.
         ...(colonnaGruppo ? { gruppo: pg.gruppo || null } : {}),
+        // E il legame con l'accredito della banca (scheda Spese › Incassi), che non va perso salvando.
+        ...(pg.movimentoId != null ? { movimento_id: pg.movimentoId } : {}),
       }));
     if (daInserire.length > 0) await supabase.from('pagamenti').insert(daInserire);
   };
