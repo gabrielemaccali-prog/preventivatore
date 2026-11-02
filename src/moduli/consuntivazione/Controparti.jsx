@@ -135,6 +135,8 @@ function Controparti({ tipo }) {
   const [dal, setDal] = useState('');
   const [al, setAl] = useState('');
   const [espanso, setEspanso] = useState(null);
+  const [filtroControparte, setFiltroControparte] = useState('');
+  const [filtroMese, setFiltroMese] = useState('');
   const [inCorso, setInCorso] = useState(null);
   const [formVoce, setFormVoce] = useState(null); // { controparte, riga, descrizione, importo }
   const [formConsuntivo, setFormConsuntivo] = useState(null); // { gruppo, parziale, data }
@@ -485,9 +487,16 @@ function Controparti({ tipo }) {
   const esportaPeriodo = (pe) => scaricaExcel(`${cfg.titolo}_${contropartePeriodo(pe).nome}_${pe.dal}`, [
     { nome: contropartePeriodo(pe).nome, righe: righeExcel(contropartePeriodo(pe), pe.righe || [], pe) },
   ]);
+  // I consuntivati si filtrano per controparte e per mese; l'Excel esporta quello che si vede.
+  // Un periodo sta in un mese se lo tocca: uno a cavallo di fine mese compare in tutti e due.
+  const periodiFiltrati = periodi.filter(pe => (!filtroControparte || String(pe.controparte_id) === filtroControparte)
+    && (!filtroMese || (String(pe.dal).slice(0, 7) <= filtroMese && String(pe.al).slice(0, 7) >= filtroMese)));
+  const contropartiDeiPeriodi = [...new Set(periodi.map(pe => String(pe.controparte_id)))]
+    .map(id => ({ id, nome: contropartePeriodo({ controparte_id: id }).nome }))
+    .sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'it'));
   const esportaConsuntivati = () => scaricaExcel(`${cfg.titolo}_consuntivati_${oggiIso()}`, [
-    { nome: 'Riepilogo', righe: periodi.map(riepilogoPeriodo) },
-    { nome: 'Dettaglio', righe: periodi.flatMap(pe => righeExcel(contropartePeriodo(pe), pe.righe || [], pe)) },
+    { nome: 'Riepilogo', righe: periodiFiltrati.map(riepilogoPeriodo) },
+    { nome: 'Dettaglio', righe: periodiFiltrati.flatMap(pe => righeExcel(contropartePeriodo(pe), pe.righe || [], pe)) },
   ]);
 
   const gruppiScelti = gruppi.map(soloScelte);
@@ -634,12 +643,35 @@ function Controparti({ tipo }) {
           <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '30px', textAlign: 'center', color: '#666' }}>Nessun periodo consuntivato.</div>
         ) : (
           <>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
-            <button type="button" className="btn-outline-annulla" style={{ ...btnRiga, padding: '7px 14px', fontSize: '0.8rem' }} onClick={esportaConsuntivati} title="Un foglio con i periodi chiusi e uno con tutte le loro partite">
-              <Icona nome="excel" size={16} style={{ marginRight: 0 }} aria-label="Esporta in Excel" />
-            </button>
+          <div className="filtri-storico" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div className="filtro-group" style={{ flex: '1 1 200px' }}>
+              <label>{cfg.intestazione}:</label>
+              <select value={filtroControparte} onChange={(e) => setFiltroControparte(e.target.value)}>
+                <option value="">Tutti</option>
+                {contropartiDeiPeriodi.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+              </select>
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
+              <label>Mese:</label>
+              <input type="month" value={filtroMese} onChange={(e) => setFiltroMese(e.target.value)} />
+            </div>
+            {(filtroControparte || filtroMese) && (
+              <div className="filtro-group" style={{ flex: '0 0 auto' }}>
+                <button type="button" onClick={() => { setFiltroControparte(''); setFiltroMese(''); }} className="btn-outline-annulla" style={{ ...btnRiga, padding: '7px 14px', fontSize: '0.8rem' }}>
+                  <Icona nome="annulla" size={14} style={{ marginRight: '5px' }} />Togli i filtri
+                </button>
+              </div>
+            )}
+            <div className="filtro-group" style={{ flex: '0 0 auto', marginLeft: 'auto' }}>
+              <button type="button" className="btn-outline-annulla" style={{ ...btnRiga, padding: '7px 14px', fontSize: '0.8rem' }} disabled={periodiFiltrati.length === 0} onClick={esportaConsuntivati} title="Un foglio con i periodi chiusi e uno con tutte le loro partite">
+                <Icona nome="excel" size={16} style={{ marginRight: 0 }} aria-label="Esporta in Excel" />
+              </button>
+            </div>
           </div>
-          <div className="admin-table-box-full" style={{ marginTop: '10px', overflowX: 'auto' }}>
+          {periodiFiltrati.length === 0 && (
+            <div className="admin-table-box-full" style={{ marginTop: '10px', padding: '30px', textAlign: 'center', color: '#666' }}>Nessun periodo con questi filtri.</div>
+          )}
+          <div className="admin-table-box-full" style={{ marginTop: '10px', overflowX: 'auto', display: periodiFiltrati.length ? undefined : 'none' }}>
             <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
               <thead>
                 <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
@@ -654,7 +686,7 @@ function Controparti({ tipo }) {
                 </tr>
               </thead>
               <tbody>
-                {periodi.map(pe => {
+                {periodiFiltrati.map(pe => {
                   const aperto = espanso === `per-${pe.id}`;
                   const controparte = contropartePerId[String(pe.controparte_id)] || { id: pe.controparte_id, nome: pe.controparte_id };
                   const saldo = saldoTesto(parseFloat(pe.saldo) || 0);

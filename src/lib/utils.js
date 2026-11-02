@@ -271,6 +271,13 @@ export const incassatoDi = (p, oggiIso = isoDiOggi()) =>
   + (parseFloat(p?.voucherValore) || 0)
   - contantiDaRitirareDi(p, oggiIso);
 
+// Quanto il cliente deve versare a noi. Di norma il prezzo di vendita; con lo split payment
+// (scissione dei pagamenti) un ente pubblico paga solo l'imponibile e l'IVA la versa lui
+// all'erario: da incassare resta il netto, e con quello la partita è saldata.
+export const daIncassareDi = (p) => (p?.splitPayment
+  ? (parseFloat(p.prezzoVenditaNetto) || 0)
+  : (parseFloat(p?.prezzoVendita) || 0));
+
 export const statoIncassoDi = (p, oggiIso = isoDiOggi()) => {
   if (p?.statoPagamento === 'compensazione') return p.statoPagamento;
   const daRitirare = contantiDaRitirareDi(p, oggiIso);

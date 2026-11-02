@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
-import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, statoIncassoDi, contantiDaRitirareDi, incassatoDi, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, formattaOraInput, normalizzaOra24, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
+import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, statoIncassoDi, contantiDaRitirareDi, incassatoDi, daIncassareDi, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, formattaOraInput, normalizzaOra24, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi } from '../../lib/campi'
@@ -60,7 +60,7 @@ const PREN_VUOTA = {
   fattTipo: "privato",
   fattNome: "", fattCognome: "", fattIndirizzo: "", fattCap: "", fattCitta: "", fattProvincia: "", fattCF: "",
   fattStraniero: false, fattStato: "",
-  ragioneSociale: "", aziIndirizzo: "", aziCap: "", aziCitta: "", aziProvincia: "", pIva: "", cfAzienda: "", sdi: "",
+  ragioneSociale: "", aziIndirizzo: "", aziCap: "", aziCitta: "", aziProvincia: "", pIva: "", cfAzienda: "", sdi: "", splitPayment: false,
   stato: STATO_PREN.FORSE
 };
 
@@ -156,7 +156,7 @@ const dettagliGoogleCalendar = (p, giocoNome) => {
   const pagatoTot = incassatoDi(p);
   const inContantiDaRitirare = contantiDaRitirareDi(p);
   if (inContantiDaRitirare > 0) righe.push(`DA RITIRARE €${inContantiDaRitirare.toFixed(2)} IN CONTANTI`);
-  righe.push(`Pagamento: ${statoIncassoDi(p) || 'in attesa'} — pagato €${pagatoTot.toFixed(2)} / €${(parseFloat(p.prezzoVendita) || 0).toFixed(2)}`);
+  righe.push(`Pagamento: ${statoIncassoDi(p) || 'in attesa'} — pagato €${pagatoTot.toFixed(2)} / €${daIncassareDi(p).toFixed(2)}${p.splitPayment ? ' (imponibile, split payment)' : ''}`);
   if (p.voucherCodice) righe.push(`  • voucher ${p.voucherCodice}: €${(parseFloat(p.voucherValore) || 0).toFixed(2)}`);
   (p.pagamenti || []).forEach(pg => righe.push(`  • ${pg.data}: €${(parseFloat(pg.importo) || 0).toFixed(2)}${pg.nominativo ? ` (${pg.nominativo})` : ''}`));
 
@@ -287,7 +287,7 @@ const COLONNE_PREN = [
   { chiave: 'pacchetto', label: 'Pacchetto · Gioco', valore: (p) => p.pacchettoNome || '' },
   { chiave: 'location', label: 'Location', valore: (p) => locationBreveDi(p) },
   { chiave: 'operatori', label: 'Operatori', valore: (p) => (p.operatori || []).map(o => o.nome).join(', ') || (p.senzaOperatori ? 'non richiesti' : '') },
-  { chiave: 'importo', label: 'Pagato / Totale / FT', valore: (p) => parseFloat(p.prezzoVendita) || 0 },
+  { chiave: 'importo', label: 'Pagato / Totale / FT', valore: (p) => daIncassareDi(p) },
 ];
 const VALORI_ORDINAMENTO_PREN = Object.fromEntries(COLONNE_PREN.map(c => [c.chiave, c.valore]));
 
@@ -347,6 +347,12 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   const [codicePrenInModifica, setCodicePrenInModifica] = useState(null);
   const [salvataggioPren, setSalvataggioPren] = useState(false);
   const [nuovoPagamento, setNuovoPagamento] = useState(PAGAMENTO_VUOTO);
+  // Il bonifico su più prenotazioni che si sta registrando o correggendo (vedi apriBonifico).
+  const [bonifico, setBonifico] = useState(null);
+  const [salvataggioBonifico, setSalvataggioBonifico] = useState(false);
+  // Le quote di un bonifico si legano con la colonna gruppo (sql/split_payment_multi_pagamento.sql):
+  // finché non c'è lo strumento non si apre, e i salvataggi non la scrivono.
+  const [colonnaGruppo, setColonnaGruppo] = useState(false);
   // Un pagamento digitato ma non ancora aggiunto con "+ Pagamento" è una modifica a tutti gli
   // effetti: senza contarlo il form si chiude come se fosse pulito e quei dati spariscono in silenzio.
   const pagamentoInSospeso = nuovoPagamento.importo !== "" || !!nuovoPagamento.data || !!(nuovoPagamento.nominativo || "").trim();
@@ -431,9 +437,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // qui a ogni prenotazione, così il resto del modulo continua a leggerli da p.pagamenti.
     if (pr.data) {
       const righePag = pag.data || [];
+      setColonnaGruppo(righePag.length > 0 && 'gruppo' in righePag[0]);
       const conPagamenti = pr.data.map(p => ({
         ...p,
-        pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", contanti: !!x.contanti, ritiratoDa: x.ritirato_da ?? "" })),
+        pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", contanti: !!x.contanti, ritiratoDa: x.ritirato_da ?? "", gruppo: x.gruppo || null })),
         // valore dell'eventuale voucher usato: conta come pagamento pur non essendo una riga di pagamenti
         voucherValore: parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherCodice))?.importo) || 0
       }));
@@ -496,6 +503,16 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   const colonnaClienteSede = prenotazioni.length > 0 && 'clienteSedeId' in prenotazioni[0];
   // Anche un campo può commissionarci una partita. La colonna nasce con sql/consuntivazione_campi.sql.
   const colonnaClienteCampo = prenotazioni.length > 0 && 'clienteCampoId' in prenotazioni[0];
+  // Lo split payment chiede la sua colonna (sql/split_payment_multi_pagamento.sql): fino ad allora
+  // la casella non compare e non si salva niente.
+  const colonnaSplit = prenotazioni.length > 0 && 'splitPayment' in prenotazioni[0];
+  // Lo split payment è una caratteristica del cliente, che però non ha una tabella sua: si propone
+  // quando lo stesso cliente -- stessa P.IVA o stesso codice fiscale -- l'ha già avuto altrove.
+  const splitDelCliente = (pIva, cf) => {
+    const chiavi = [pIva, cf].map(x => String(x || '').trim().toUpperCase()).filter(Boolean);
+    return chiavi.length > 0 && prenotazioni.some(p => p.splitPayment
+      && [p.pIva, p.cfAzienda].some(x => chiavi.includes(String(x || '').trim().toUpperCase())));
+  };
   // Chi ha commissionato la partita, detto in un valore solo per la tendina: "sede:id" o "campo:id".
   const clienteFornitoreDi = (f) => (f.clienteSedeId ? `sede:${f.clienteSedeId}` : f.clienteCampoId ? `campo:${f.clienteCampoId}` : '');
   const clienteFornitoreDa = (valore) => {
@@ -762,7 +779,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       fattTipo: p.fattTipo || "privato",
       fattNome: p.fattNome || "", fattCognome: p.fattCognome || "", fattIndirizzo: p.fattIndirizzo || "", fattCap: p.fattCap || "", fattCitta: p.fattCitta || "", fattProvincia: p.fattProvincia || "", fattCF: p.fattCF || "",
       fattStraniero: !!p.fattStraniero, fattStato: p.fattStato || "",
-      ragioneSociale: p.ragioneSociale || "", aziIndirizzo: p.aziIndirizzo || "", aziCap: p.aziCap || "", aziCitta: p.aziCitta || "", aziProvincia: p.aziProvincia || "", pIva: p.pIva || "", cfAzienda: p.cfAzienda || "", sdi: p.sdi || "",
+      ragioneSociale: p.ragioneSociale || "", aziIndirizzo: p.aziIndirizzo || "", aziCap: p.aziCap || "", aziCitta: p.aziCitta || "", aziProvincia: p.aziProvincia || "", pIva: p.pIva || "", cfAzienda: p.cfAzienda || "", sdi: p.sdi || "", splitPayment: !!p.splitPayment,
       stato: p.stato || STATO_PREN.FORSE
     };
     setFormPren(caricato);
@@ -814,8 +831,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // Per il cliente i contanti sono ancora da pagare: li consegnerà il giorno dell'evento.
     const totalePagatoP = incassatoDi(p);
     const daPortareInContanti = contantiDaRitirareDi(p);
-    const residuo = Math.max(prezzoVendita - totalePagatoP, 0);
-    const statoPag = statoIncassoDi(p) || statoPagamentoDi(p.pagamenti, prezzoVendita, p.voucherValore);
+    const residuo = Math.max(daIncassareDi(p) - totalePagatoP, 0);
+    const statoPag = statoIncassoDi(p) || statoPagamentoDi(p.pagamenti, daIncassareDi(p), p.voucherValore);
     const rigaPagamentoLabel = ['saldato', 'compensazione', 'omaggio'].includes(statoPag) ? t('Pagamento:', 'Payment:') : t('Modalità di pagamento:', 'Payment method:');
     const residuoElettronico = Math.max(residuo - daPortareInContanti, 0);
     const rigaPagamentoValore = daPortareInContanti > 0
@@ -1183,7 +1200,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
 
   const rigaTabellaPren = (p) => {
     const totPagato = incassatoDi(p, oggiIso);
-    const totale = parseFloat(p.prezzoVendita) || 0;
+    const totale = daIncassareDi(p);
     const coloreStatoRiga = coloreStato(p.stato).bd;
     const statoIncasso = statoIncassoDi(p);
     const pagColore = colorePagamento(statoIncasso);
@@ -1537,6 +1554,91 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
 
   // Allinea le righe della tabella pagamenti a quelle del form (cancella e reinserisce: le righe sono
   // poche per prenotazione e così non serve tracciare quali sono state aggiunte o tolte).
+  // ---- Un bonifico che salda più prenotazioni ----
+  // Ogni prenotazione tiene la sua quota, come un pagamento qualsiasi: le quote dello stesso bonifico
+  // portano lo stesso codice (gruppo) e si toccano solo tutte insieme, da qui. Così il totale resta
+  // quello arrivato in banca, che è il numero con cui la riconciliazione lo cercherà.
+  const quoteDelBonifico = (gruppo) => prenotazioni.flatMap(p => (p.pagamenti || [])
+    .filter(pg => pg.gruppo && pg.gruppo === gruppo).map(pg => ({ prenotazione: p, pagamento: pg })));
+  const bonificiRegistrati = () => {
+    const per = new Map();
+    prenotazioni.forEach(p => (p.pagamenti || []).forEach(pg => {
+      if (!pg.gruppo) return;
+      const b = per.get(pg.gruppo) || { gruppo: pg.gruppo, data: pg.data, nominativo: pg.nominativo, totale: 0, prenotazioni: [] };
+      b.totale += parseFloat(pg.importo) || 0;
+      b.prenotazioni.push(p.id);
+      per.set(pg.gruppo, b);
+    }));
+    return [...per.values()].sort((a, b) => String(b.data).localeCompare(String(a.data)));
+  };
+  // Quello che manca a una prenotazione senza contare il bonifico che si sta scrivendo: è la quota
+  // da proporre, e il numero accanto a cui decidere.
+  const residuoFuoriBonifico = (p, gruppo) => daIncassareDi(p) - (parseFloat(p.voucherValore) || 0)
+    - (p.pagamenti || []).filter(pg => !gruppo || pg.gruppo !== gruppo).reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0);
+  const apriBonifico = (gruppo = null) => {
+    const quote = gruppo ? quoteDelBonifico(gruppo) : [];
+    const primo = quote[0]?.pagamento || {};
+    setBonifico({
+      gruppo, cerca: '',
+      data: primo.data || '', nominativo: primo.nominativo || '',
+      totale: quote.length ? String(Math.round(quote.reduce((s, q) => s + (parseFloat(q.pagamento.importo) || 0), 0) * 100) / 100) : '',
+      quote: quote.map(q => ({ id: q.prenotazione.id, importo: String(q.pagamento.importo) })),
+    });
+  };
+  const aggiungiAlBonifico = (p) => setBonifico(b => {
+    const giaMesso = b.quote.reduce((s, q) => s + (parseFloat(q.importo) || 0), 0);
+    const resto = (parseFloat(b.totale) || 0) - giaMesso;
+    const residuo = Math.max(residuoFuoriBonifico(p, b.gruppo), 0);
+    // La quota proposta è quello che le manca, ma non più di quanto resta del bonifico.
+    const proposta = b.totale ? Math.max(Math.min(residuo, resto), 0) : residuo;
+    return { ...b, cerca: '', quote: [...b.quote, { id: p.id, importo: String(Math.round(proposta * 100) / 100) }] };
+  });
+  // Lo stato del pagamento di una prenotazione con le sue nuove righe, calcolato come al salvataggio.
+  const statoConPagamenti = (p, pagamenti) => statoIncassoDi({
+    statoPagamento: statoPagamentoDi(pagamenti, daIncassareDi(p), p.voucherValore, p.clienteSedeId || p.clienteCampoId),
+    pagamenti, voucherValore: p.voucherValore, prezzoVendita: p.prezzoVendita, data: p.data, giorni: p.giorni,
+  }, oggiIso);
+  const salvaBonifico = async (elimina = false) => {
+    const b = bonifico;
+    const quote = elimina ? [] : b.quote.filter(q => (parseFloat(q.importo) || 0) > 0);
+    if (!elimina) {
+      const totale = parseFloat(b.totale) || 0;
+      const somma = quote.reduce((s, q) => s + (parseFloat(q.importo) || 0), 0);
+      if (!b.data) return alert('Indica la data del bonifico.');
+      if (totale <= 0) return alert("Indica l'importo del bonifico.");
+      if (quote.length === 0) return alert('Scegli almeno una prenotazione.');
+      if (Math.abs(somma - totale) > 0.005) return alert(`Le quote fanno €${somma.toFixed(2)}, il bonifico €${totale.toFixed(2)}: devono tornare.`);
+    } else if (!window.confirm('Eliminare il bonifico? Le sue quote spariscono da tutte le prenotazioni.')) return;
+    const gruppo = b.gruppo || `BON-${Date.now()}`;
+    setSalvataggioBonifico(true);
+    const prima = b.gruppo ? quoteDelBonifico(b.gruppo).map(q => q.prenotazione.id) : [];
+    if (b.gruppo) {
+      const { error } = await supabase.from('pagamenti').delete().eq('gruppo', b.gruppo);
+      if (error) { setSalvataggioBonifico(false); return alert(`Errore nel salvataggio del bonifico: ${error.message}`); }
+    }
+    const righe = quote.map(q => ({
+      tipo: 'prenotazione', riferimento: q.id, data: b.data, importo: parseFloat(q.importo) || 0,
+      nominativo: formaNome(b.nominativo) || null, contanti: false, ritirato_da: null, gruppo,
+    }));
+    if (righe.length > 0) {
+      const { error } = await supabase.from('pagamenti').insert(righe);
+      if (error) { setSalvataggioBonifico(false); return alert(`Errore nel salvataggio del bonifico: ${error.message}`); }
+    }
+    // Lo stato del pagamento di ogni prenotazione toccata, anche di quelle tolte dal bonifico.
+    for (const id of new Set([...prima, ...quote.map(q => q.id)])) {
+      const p = prenotazioni.find(x => x.id === id);
+      if (!p) continue;
+      const pagamenti = [
+        ...(p.pagamenti || []).filter(pg => pg.gruppo !== gruppo),
+        ...righe.filter(r => r.riferimento === id).map(r => ({ data: r.data, importo: r.importo, contanti: false })),
+      ];
+      await supabase.from('prenotazioni').update({ statoPagamento: statoConPagamenti(p, pagamenti) }).eq('id', id);
+    }
+    setSalvataggioBonifico(false);
+    setBonifico(null);
+    fetchTutto();
+  };
+
   const sincronizzaPagamenti = async (riferimento, righe) => {
     await supabase.from('pagamenti').delete().eq('tipo', 'prenotazione').eq('riferimento', riferimento);
     const daInserire = (righe || [])
@@ -1547,6 +1649,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         contanti: !!pg.contanti,
         // Chi li tiene vale solo sui contanti: su un bonifico non c'è nessuno a cui chiederli.
         ritirato_da: pg.contanti && pg.ritiratoDa ? Number(pg.ritiratoDa) : null,
+        // La quota di un bonifico su più prenotazioni resta legata agli altri pezzi.
+        ...(colonnaGruppo ? { gruppo: pg.gruppo || null } : {}),
       }));
     if (daInserire.length > 0) await supabase.from('pagamenti').insert(daInserire);
   };
@@ -1694,6 +1798,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // e lo stato scelto dall'elenco.
     const privatoFatt = f.fattTipo !== 'azienda';
     const stranieroFatt = privatoFatt && !!f.fattStraniero;
+    // Lo split payment vale solo per un'azienda o un ente: un privato non ce l'ha.
+    const splitDiForm = colonnaSplit && !privatoFatt && !!f.splitPayment;
 
     const rec = {
       data: giorniEvento[0] || f.data, giorni, senzaOrario, pacchettoId: f.pacchettoId, pacchettoNome: pac.nome || "",
@@ -1724,13 +1830,14 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       costoEreditato: conVoci ? totVoci.costo : (f.ereditaCosti ? (parseFloat(f.costoEreditato) || 0) : null),
       voucherCodice: f.voucherCodice || null,
       statoPagamento: statoIncassoDi({
-        statoPagamento: statoPagamentoDi(f.pagamenti, prezzoVenditaLordo, valoreVoucherDi(f.voucherCodice), f.clienteSedeId || f.clienteCampoId),
+        statoPagamento: statoPagamentoDi(f.pagamenti, splitDiForm ? prezzoVenditaNetto : prezzoVenditaLordo, valoreVoucherDi(f.voucherCodice), f.clienteSedeId || f.clienteCampoId),
         pagamenti: f.pagamenti, voucherValore: valoreVoucherDi(f.voucherCodice),
         prezzoVendita: prezzoVenditaLordo, data: giorniEvento[0] || f.data, giorni,
       }, oggiIso),
       // Solo se la colonna c'è: prima di sql/consuntivazione_fornitori.sql scriverla farebbe fallire ogni salvataggio.
       ...(colonnaClienteSede ? { clienteSedeId: f.clienteSedeId || null } : {}),
       ...(colonnaClienteCampo ? { clienteCampoId: f.clienteCampoId || null } : {}),
+      ...(colonnaSplit ? { splitPayment: splitDiForm } : {}),
       stato: f.stato || STATO_PREN.FORSE,
       fattTipo: f.fattTipo,
       fattNome: formaNome(f.fattNome), fattCognome: formaNome(f.fattCognome), fattIndirizzo: formaLuogo(f.fattIndirizzo),
@@ -1874,6 +1981,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const contantiInseriti = contantiDi(formPren);
         const prezzoLordo = lordoConContanti(prezzoNetto, contantiInseriti, IVA);
         const prezzoVendita = prezzoLordo; // il cliente paga il lordo, meno l'IVA sulla quota in contanti
+        // Con lo split payment a noi arriva l'imponibile: l'IVA la versa l'ente all'erario.
+        const splitForm = colonnaSplit && formPren.fattTipo === 'azienda' && !!formPren.splitPayment;
+        const daIncassareForm = splitForm ? prezzoNetto : prezzoVendita;
         // Costo rinfresco (i valori sono lordi o netti a seconda del flag ivaInclusaRinfresco del campo)
         const campoIvaInclRinfresco = campoSel ? !!campoSel.ivaInclusaRinfresco : false;
         // Rinfresco
@@ -1898,11 +2008,14 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // Lo stesso stato che finirà salvato: i contanti di una partita ancora da giocare restano
         // "da ritirare", e il form non deve dire "saldato" su soldi che nessuno ha in mano.
         const statoPag = statoIncassoDi({
-          statoPagamento: statoPagamentoDi(formPren.pagamenti, prezzoVendita, valoreVoucher, formPren.clienteSedeId || formPren.clienteCampoId),
+          statoPagamento: statoPagamentoDi(formPren.pagamenti, daIncassareForm, valoreVoucher, formPren.clienteSedeId || formPren.clienteCampoId),
           pagamenti: formPren.pagamenti, voucherValore: valoreVoucher, prezzoVendita,
           data: formPren.data, giorni: formPren.piuGiorni ? [formPren.data, ...formPren.altriGiorni].filter(Boolean).sort() : null,
         }, oggiIso);
         const setF = (patch) => setFormPren(prev => ({ ...prev, ...patch }));
+        // Su una prenotazione nuova lo split payment del cliente si propone da solo; su una già
+        // salvata resta quello che si è deciso, anche se è stato tolto.
+        const propostaSplit = (pIva, cf) => (colonnaSplit && !codicePrenInModifica && !formPren.splitPayment && splitDelCliente(pIva, cf) ? { splitPayment: true } : {});
 
         // Cosa manca perché la prenotazione risulti completata, letto sui valori a schermo così
         // l'avviso sparisce mentre si compila e non solo dopo il salvataggio. Vale su ogni
@@ -2328,10 +2441,16 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                     <label style={{ flex: '1 1 80px', display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.85rem' }}>Prov<input type="text" value={formPren.aziProvincia} onChange={(e) => setF({ aziProvincia: e.target.value })} onBlur={() => setF({ aziProvincia: siglaProvincia(formPren.aziProvincia) })} style={stileProvincia('aziProvincia')} /></label>
                   </div>
                   <div className="date-grid" style={{ marginTop: '12px' }}>
-                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Partita IVA<input type="text" value={formPren.pIva} onChange={(e) => setF({ pIva: e.target.value })} onBlur={(e) => setF({ pIva: formaCodice(e.target.value) })} style={errPIva ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('pIva')} /></label>
-                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice Fiscale<input type="text" value={formPren.cfAzienda} onChange={(e) => setF({ cfAzienda: e.target.value })} onBlur={(e) => setF({ cfAzienda: formaCodice(e.target.value) })} style={evidenzia('cfAzienda')} /></label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Partita IVA<input type="text" value={formPren.pIva} onChange={(e) => setF({ pIva: e.target.value })} onBlur={(e) => setF({ pIva: formaCodice(e.target.value), ...propostaSplit(formaCodice(e.target.value), formPren.cfAzienda) })} style={errPIva ? { borderColor: '#ef4444', backgroundColor: '#fef2f2' } : evidenzia('pIva')} /></label>
+                    <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice Fiscale<input type="text" value={formPren.cfAzienda} onChange={(e) => setF({ cfAzienda: e.target.value })} onBlur={(e) => setF({ cfAzienda: formaCodice(e.target.value), ...propostaSplit(formPren.pIva, formaCodice(e.target.value)) })} style={evidenzia('cfAzienda')} /></label>
                     <label style={{ display: 'flex', flexDirection: 'column', fontWeight: 600, fontSize: '0.82rem' }}>Codice SDI<input type="text" value={formPren.sdi} onChange={(e) => setF({ sdi: e.target.value })} onBlur={(e) => setF({ sdi: formaCodice(e.target.value) })} style={evidenzia('sdi')} /></label>
                   </div>
+                  {colonnaSplit && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', marginTop: '12px' }}>
+                      <input type="checkbox" checked={!!formPren.splitPayment} onChange={(e) => setF({ splitPayment: e.target.checked })} />
+                      <strong>Split payment</strong>
+                    </label>
+                  )}
                 </>
               )}
             </div>
@@ -2576,10 +2695,16 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                                 </select>
                               )}
                         </td>
-                        <td style={{ padding: '4px', textAlign: 'right' }}><button className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => rimuoviPagamento(i)}>🗑</button></td>
+                        <td style={{ padding: '4px', textAlign: 'right' }}>
+                          {pg.gruppo ? (() => {
+                            const quote = quoteDelBonifico(pg.gruppo);
+                            const tot = quote.reduce((s, q) => s + (parseFloat(q.pagamento.importo) || 0), 0);
+                            return <span title="Si modifica da Pagamento su più prenotazioni, nello Storico o in Gestione" style={{ fontSize: '0.72rem', color: '#0369a1', whiteSpace: 'nowrap' }}>bonifico €{tot.toFixed(2)} su {quote.length} prenotazioni</span>;
+                          })() : <button className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => rimuoviPagamento(i)}>🗑</button>}
+                        </td>
                       </tr>
                     ))}
-                    <tr><td colSpan="2" style={{ padding: '4px', fontWeight: 'bold' }}>Totale versato: €{totalePagato.toFixed(2)}</td><td colSpan="2" style={{ padding: '4px', color: '#777' }}>su €{prezzoVendita.toFixed(2)}{contantiDaRitirareForm > 0 && <span style={{ color: '#b45309' }}> · €{contantiDaRitirareForm.toFixed(2)} da ritirare</span>}</td></tr>
+                    <tr><td colSpan="2" style={{ padding: '4px', fontWeight: 'bold' }}>Totale versato: €{totalePagato.toFixed(2)}</td><td colSpan="2" style={{ padding: '4px', color: '#777' }}>su €{daIncassareForm.toFixed(2)}{splitForm && <span title="Split payment: l'IVA la versa l'ente all'erario"> (imponibile, split payment)</span>}{contantiDaRitirareForm > 0 && <span style={{ color: '#b45309' }}> · €{contantiDaRitirareForm.toFixed(2)} da ritirare</span>}</td></tr>
                   </tbody>
                 </table>
               )}
@@ -2623,7 +2748,18 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                       💶 In contanti
                     </label>
                     <div style={{ display: 'flex', alignItems: 'end' }}>
-                      <button type="button" className="btn-accent-inline" style={{ padding: '8px 14px', fontSize: '0.85rem' }} onClick={aggiungiPagamento}>+ Pagamento</button>
+                      <button type="button" className="btn-accent-inline" style={{ padding: '8px 14px', fontSize: '0.85rem' }} onClick={() => {
+                        // Un pagamento più grande di quello che manca è quasi sempre un bonifico che salda
+                        // più partite: va diviso fra loro, non messo tutto qui.
+                        const versato = (formPren.pagamenti || []).reduce((s, p) => s + (parseFloat(p.importo) || 0), 0) + valoreVoucher;
+                        const daSaldare = Math.max(daIncassareForm - versato, 0);
+                        const importo = parseFloat(nuovoPagamento.importo) || 0;
+                        if (importo - daSaldare > 0.005 && !window.confirm(
+                          `Il pagamento (€${importo.toFixed(2)}) è più grande di quello che resta da saldare (€${daSaldare.toFixed(2)}). Sei sicuro?\n\n`
+                          + 'Se questo pagamento riguarda più eventi, usa la funzione "Pagamento su più prenotazioni" in Gestione › Da saldare.'
+                        )) return;
+                        aggiungiPagamento();
+                      }}>+ Pagamento</button>
                     </div>
                   </div>
                   {pagamentoInSospeso && (
@@ -2895,6 +3031,11 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
               </nav>
             )}
             {filtriPrenotazioni({ conNascondiAnnullate: false })}
+            {attiva?.chiave === 'daSaldare' && user.isAdmin && colonnaGruppo && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '10px 0' }}>
+                <button type="button" onClick={() => apriBonifico()} title="Un bonifico che salda più prenotazioni, con una quota per ognuna" style={{ padding: '7px 14px', backgroundColor: '#fff', color: '#0369a1', border: '1px solid #0369a1', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.82rem' }}>💳 Pagamento su più prenotazioni</button>
+              </div>
+            )}
             {attiva
               ? tabellaPren(attiva.lista, '')
               : <p style={{ color: '#666', padding: '20px 0' }}>{filtriAttivi ? 'Nessuna attività fra le prenotazioni filtrate.' : 'Nessuna attività da fare: tutto in ordine.'}</p>}
@@ -3226,7 +3367,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                       <><span style={{ color: '#b45309', fontWeight: 'bold' }}>💶 DA RITIRARE €{contantiDaRitirareDi(prenSelezionata, oggiIso).toFixed(2)} IN CONTANTI{nomiRitiroContanti(prenSelezionata) ? ' · ' + nomiRitiroContanti(prenSelezionata) : ''}</span><br /></>
                     )}
                     {prenSelezionata.voucherGenerato && <><span style={{ color: '#5b21b6', fontWeight: 'bold' }}>🎟️ Diventata il voucher {prenSelezionata.voucherGenerato}</span><br /></>}
-                    💶 Pagato €{incassatoDi(prenSelezionata, oggiIso).toFixed(2)} / €{(parseFloat(prenSelezionata.prezzoVendita) || 0).toFixed(2)} · <strong>{prenSelezionata.statoPagamento || 'in attesa'}</strong>{prenSelezionata.voucherCodice ? ` · 🎟️ ${prenSelezionata.voucherCodice}` : ''}<br />
+                    💶 Pagato €{incassatoDi(prenSelezionata, oggiIso).toFixed(2)} / €{daIncassareDi(prenSelezionata).toFixed(2)}{prenSelezionata.splitPayment ? ' (imponibile, split payment)' : ''} · <strong>{prenSelezionata.statoPagamento || 'in attesa'}</strong>{prenSelezionata.voucherCodice ? ` · 🎟️ ${prenSelezionata.voucherCodice}` : ''}<br />
                     📅 <button type="button" onClick={(e) => { e.stopPropagation(); toggleGoogleCalendarSync(prenSelezionata); }} title="Clic per correggere a mano lo stato di sincronizzazione" style={{ border: 'none', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', background: prenSelezionata.googleCalendarSync ? '#dcfce7' : '#fee2e2', color: prenSelezionata.googleCalendarSync ? '#166534' : '#991b1b' }}>{prenSelezionata.googleCalendarSync ? '✅ Sincronizzato con Google Calendar' : '⚠️ Non sincronizzato con Google Calendar'}</button>
                     {prenSelezionata.campoId && (
                       <label onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', cursor: 'pointer', fontWeight: 'bold', color: prenSelezionata.campoPrenotato ? '#166534' : '#9a3412' }}>
@@ -3551,6 +3692,97 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
             </div>
           </div>
         </div>
+        );
+      })()}
+
+      {bonifico && (() => {
+        const b = bonifico;
+        const setB = (patch) => setBonifico(x => ({ ...x, ...patch }));
+        const totale = parseFloat(b.totale) || 0;
+        const somma = b.quote.reduce((t, q) => t + (parseFloat(q.importo) || 0), 0);
+        const diff = Math.round((totale - somma) * 100) / 100;
+        const scelte = new Set(b.quote.map(q => q.id));
+        const testo = b.cerca.trim().toLowerCase();
+        const trovate = testo.length < 2 ? [] : prenotazioni
+          .filter(p => p.stato !== STATO_PREN.ANNULLATA && !scelte.has(p.id))
+          .filter(p => [p.id, p.nominativo, p.ragioneSociale, p.fattCognome, p.fattNome].some(x => String(x || '').toLowerCase().includes(testo)))
+          .slice(0, 6);
+        const registrati = b.gruppo ? [] : bonificiRegistrati();
+        // Tutte le caselle della finestra hanno la stessa misura: è un modulo corto, e si legge meglio in colonna.
+        const casella = { width: '100%', boxSizing: 'border-box', height: '32px', margin: 0, padding: '4px 8px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' };
+        const etichetta = { display: 'flex', flexDirection: 'column', gap: '3px', fontWeight: 600, fontSize: '0.78rem', color: '#475569' };
+        return (
+          <div className="modal-form-backdrop" onClick={() => setBonifico(null)}>
+            <div className="modal-form-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
+              <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setBonifico(null)}>✕</button>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: '1rem', color: '#0288d1' }}>{b.gruppo ? 'Bonifico su più prenotazioni' : 'Pagamento su più prenotazioni'}</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                {registrati.length > 0 && (
+                  <label style={{ ...etichetta, gridColumn: '1 / -1' }}>Correggi un bonifico registrato
+                    <select value="" onChange={(e) => e.target.value && apriBonifico(e.target.value)} style={casella}>
+                      <option value="">-- Nuovo --</option>
+                      {registrati.map(r => <option key={r.gruppo} value={r.gruppo}>{formattaDataGGMMAAAA(r.data)} · {r.nominativo || '—'} · €{r.totale.toFixed(2)}</option>)}
+                    </select>
+                  </label>
+                )}
+                <label style={etichetta}>Data
+                  <input type="date" value={b.data} onChange={(e) => setB({ data: e.target.value })} style={casella} />
+                </label>
+                <label style={etichetta}>Importo €
+                  <input type="number" step="any" value={b.totale} onChange={(e) => setB({ totale: e.target.value })} style={casella} />
+                </label>
+                <label style={{ ...etichetta, gridColumn: '1 / -1' }}>Chi ha pagato
+                  <input type="text" value={b.nominativo} onChange={(e) => setB({ nominativo: e.target.value })} onBlur={(e) => setB({ nominativo: formaNome(e.target.value) })} style={casella} />
+                </label>
+                <label style={{ ...etichetta, gridColumn: '1 / -1' }}>Aggiungi una prenotazione
+                  <input type="text" placeholder="Codice, nominativo o ragione sociale" value={b.cerca} onChange={(e) => setB({ cerca: e.target.value })} style={casella} />
+                </label>
+              </div>
+              {trovate.length > 0 && (
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: '4px', marginTop: '4px' }}>
+                  {trovate.map(p => (
+                    <button key={p.id} type="button" onClick={() => aggiungiAlBonifico(p)} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', width: '100%', padding: '5px 8px', background: 'none', border: 0, borderBottom: '1px solid #f1f5f9', cursor: 'pointer', textAlign: 'left', fontSize: '0.78rem' }}>
+                      <span><strong>{p.id}</strong> · {p.ragioneSociale || p.nominativo || '—'}</span>
+                      <span style={{ color: '#64748b', whiteSpace: 'nowrap' }}>€{Math.max(residuoFuoriBonifico(p, b.gruppo), 0).toFixed(2)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {b.quote.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '12px' }}>
+                  {b.quote.map((q, i) => {
+                    const p = prenotazioni.find(x => x.id === q.id);
+                    const residuo = p ? residuoFuoriBonifico(p, b.gruppo) : 0;
+                    const oltre = (parseFloat(q.importo) || 0) - residuo > 0.005;
+                    return (
+                      <div key={q.id} style={{ display: 'grid', gridTemplateColumns: '1fr 110px auto', gap: '8px', alignItems: 'center', fontSize: '0.78rem' }}>
+                        <span>
+                          <strong>{q.id}</strong> · {p ? (p.ragioneSociale || p.nominativo || '—') : ''}
+                          <span style={{ display: 'block', color: '#64748b' }}>mancano €{Math.max(residuo, 0).toFixed(2)}</span>
+                        </span>
+                        <input type="number" step="any" value={q.importo} title={oltre ? 'La quota supera quello che manca: la prenotazione risulterà pagata più del dovuto' : undefined}
+                          onChange={(e) => setB({ quote: b.quote.map((x, j) => (j === i ? { ...x, importo: e.target.value } : x)) })}
+                          style={{ ...casella, ...(oltre ? { borderColor: '#b45309', color: '#b45309' } : {}) }} />
+                        <button type="button" className="btn-rimuovi" style={{ fontSize: '0.72rem', padding: '3px 8px' }} onClick={() => setB({ quote: b.quote.filter((_, j) => j !== i) })}>🗑</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <p style={{ margin: '10px 0 12px', fontSize: '0.8rem', color: Math.abs(diff) > 0.005 ? '#b45309' : '#166534' }}>
+                Quote €{somma.toFixed(2)} su €{totale.toFixed(2)}
+                {Math.abs(diff) > 0.005 ? ` · ${diff > 0 ? 'mancano' : 'avanzano'} €${Math.abs(diff).toFixed(2)}` : ' · tornano'}
+              </p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button type="button" onClick={() => salvaBonifico()} style={btnSalva} disabled={salvataggioBonifico}>
+                  <Icona nome="salva" size={16} style={{ marginRight: '6px' }} />{salvataggioBonifico ? 'Salvataggio...' : 'Salva'}
+                </button>
+                {b.gruppo && (
+                  <button type="button" className="btn-rimuovi" onClick={() => salvaBonifico(true)} disabled={salvataggioBonifico} style={{ padding: '9px 14px', fontSize: '0.85rem' }}>🗑 Elimina</button>
+                )}
+              </div>
+            </div>
+          </div>
         );
       })()}
 
