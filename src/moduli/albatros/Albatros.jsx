@@ -8,6 +8,7 @@ import Listino from './Listino'
 import Configuratore from './Configuratore'
 import Cashflow from './Cashflow'
 import Incassi from './Incassi'
+import Missioni from './Missioni'
 import { giornataDiLavoro } from './calcolo'
 import { SCHEDE_ALBATROS } from './schede'
 
@@ -21,7 +22,7 @@ import { SCHEDE_ALBATROS } from './schede'
 // ============================================================
 
 
-function Albatros({ user, scheda, onScheda }) {
+function Albatros({ user, scheda, onScheda, onMissioniCambiate }) {
   const setScheda = onScheda;
   // La giornata aperta nella scheda Giornata: la sceglie anche l'elenco delle chiusure.
   const [giorno, setGiorno] = useState(giornataDiLavoro);
@@ -86,6 +87,7 @@ function Albatros({ user, scheda, onScheda }) {
           {attiva === 'configuratore' && <Configuratore {...comuni} />}
           {attiva === 'cashflow' && <Cashflow {...comuni} />}
           {attiva === 'incassi' && <Incassi {...comuni} />}
+          {attiva === 'missioni' && <Missioni {...comuni} onCambiate={onMissioniCambiate} />}
         </>
       )}
     </>

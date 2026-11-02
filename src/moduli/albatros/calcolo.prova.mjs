@@ -5,6 +5,7 @@ import {
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
   rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare,
 } from './calcolo.js';
+import { missioneAperta, missioneScaduta, confrontaMissioni, campiCambioStato, statoDopoAttivita, avanzamento, attivitaScaduta } from './regoleMissioni.js';
 
 const r2t = (n) => Math.round(n * 100) / 100;
 const esiti = [];
@@ -151,6 +152,35 @@ verifica('voce per nome, spazi e maiuscole a parte', 2, voceDiNome(listino, '  c
 verifica('frequenti: prima la più usata', 2, vociFrequenti(righe, listino)[0]?.id);
 verifica('frequenti: le archiviate no', 2, vociFrequenti([...righe, { voce_id: 3 }], listino).length);
 
+// ---------- missioni ----------
+verifica('missione in attesa: non chiusa', true, missioneAperta({ stato: 'in_attesa' }));
+verifica('missione chiusa: non conta', false, missioneAperta({ stato: 'chiusa' }));
+verifica('scaduta ieri', true, missioneScaduta({ stato: 'aperta', scadenza: '2026-10-21' }, '2026-10-22'));
+verifica('scade oggi: non ancora scaduta', false, missioneScaduta({ stato: 'aperta', scadenza: '2026-10-22' }, '2026-10-22'));
+verifica('chiusa: mai scaduta', false, missioneScaduta({ stato: 'chiusa', scadenza: '2026-01-01' }, '2026-10-22'));
+verifica('senza scadenza: mai scaduta', false, missioneScaduta({ stato: 'aperta', scadenza: null }, '2026-10-22'));
+const elenco = [
+  { id: 1, stato: 'chiusa', priorita: 'alta', chiusa_il: '2026-10-01' },
+  { id: 2, stato: 'aperta', priorita: 'bassa', scadenza: '2026-10-23' },
+  { id: 3, stato: 'in_corso', priorita: 'alta', scadenza: null, creato_il: '2026-10-02' },
+  { id: 4, stato: 'aperta', priorita: 'alta', scadenza: '2026-11-01' },
+  { id: 5, stato: 'chiusa', priorita: 'bassa', chiusa_il: '2026-10-10' },
+  { id: 6, stato: 'in_attesa', priorita: 'alta', scadenza: null, creato_il: '2026-10-01' },
+];
+verifica('ordine missioni', '4,6,3,2,5,1', [...elenco].sort(confrontaMissioni).map(m => m.id).join(','));
+const adesso = new Date('2026-10-22T10:00:00Z');
+verifica('chiudendo si segna quando', adesso.toISOString(), campiCambioStato({ stato: 'in_corso' }, 'chiusa', adesso).chiusa_il);
+verifica('richiudendo resta la data di prima', '2026-10-01', campiCambioStato({ stato: 'chiusa', chiusa_il: '2026-10-01' }, 'chiusa', adesso).chiusa_il);
+verifica('riaprendo si toglie', null, campiCambioStato({ stato: 'chiusa', chiusa_il: '2026-10-01' }, 'aperta', adesso).chiusa_il);
+
+verifica('attività: fatte tutte, la missione si chiude', 'chiusa', statoDopoAttivita({ stato: 'in_corso' }, [{ fatta_il: 'x' }, { fatta_il: 'y' }]));
+verifica("attività: una da fare, resta com'è", null, statoDopoAttivita({ stato: 'in_attesa' }, [{ fatta_il: 'x' }, { fatta_il: null }]));
+verifica('attività: una torna da fare, la chiusa si riapre', 'in_corso', statoDopoAttivita({ stato: 'chiusa' }, [{ fatta_il: 'x' }, {}]));
+verifica('attività: già chiusa e tutte fatte, niente', null, statoDopoAttivita({ stato: 'chiusa' }, [{ fatta_il: 'x' }]));
+verifica('attività: nessuna, la missione non si tocca', null, statoDopoAttivita({ stato: 'aperta' }, []));
+verifica('avanzamento', '1/3', (({ fatte, totale }) => `${fatte}/${totale}`)(avanzamento([{ fatta_il: 'x' }, {}, {}])));
+verifica('attività scaduta', true, attivitaScaduta({ scadenza: '2026-10-01' }, '2026-10-22'));
+verifica('attività fatta: mai scaduta', false, attivitaScaduta({ scadenza: '2026-10-01', fatta_il: 'x' }, '2026-10-22'));
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${e.atteso}, ottenuto ${e.ottenuto}`}`));
 console.log(`\n${esiti.length - falliti.length}/${esiti.length} verifiche passate`);

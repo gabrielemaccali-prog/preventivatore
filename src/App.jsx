@@ -72,6 +72,14 @@ function App() {
   // ricordano nel browser (comodità per chi usa sempre lo stesso: se non si può, si riparte da capo).
   const [schedaAlbatros, setSchedaAlbatros] = useState(() => { try { return localStorage.getItem('albatros_scheda') || 'chiusure'; } catch { return 'chiusure'; } });
   const [ultimoModuloBfm, setUltimoModuloBfm] = useState(null);
+  // Le missioni di Albatros non chiuse: il numero accanto a "Missioni" nel menu. Si ricontano
+  // all'accesso, a ogni cambio di modulo e dopo ogni salvataggio nella scheda Missioni.
+  const [missioniAperte, setMissioniAperte] = useState(0);
+  const contaMissioniAperte = useCallback(async () => {
+    if (!puoVedere(user, 'albatros', 'missioni')) return setMissioniAperte(0);
+    const { count, error } = await supabase.from('albatros_missioni').select('id', { count: 'exact', head: true }).neq('stato', 'chiusa');
+    setMissioniAperte(error ? 0 : count || 0);
+  }, [user]);
 
   // --- CONFIGURAZIONE MODULI (flag sperimentale, badge SP in sidebar) ---
   const [moduliConfig, setModuliConfig] = useState({});
@@ -193,6 +201,8 @@ function App() {
     });
     return () => subscription.unsubscribe();
   }, [azzeraSessione]);
+
+  useEffect(() => { contaMissioniAperte(); }, [contaMissioniAperte, currentModule]);
 
   // Tiene allineato il modulo a video, per riaprire la pagina dov'era.
   useEffect(() => {
@@ -374,6 +384,7 @@ function App() {
           {inAlbatros && schedeAlbatros.map(s => (
             <button key={s.id} className={`sidebar-voce ${schedaAlbatrosAttiva?.id === s.id ? 'active' : ''}`} onClick={() => scegliSchedaAlbatros(s.id)}>
               <span className="sidebar-icona"><Icona nome={s.icona} /></span> {s.label}
+              {s.id === 'missioni' && missioniAperte > 0 && <span className="sidebar-contatore" title="Missioni non chiuse">{missioniAperte}</span>}
             </button>
           ))}
           {!inAlbatros && GRUPPI_MODULI.map(g => {
@@ -451,7 +462,7 @@ function App() {
 
       {currentModule === "consuntivazione" && <Consuntivazione user={user} />}
 
-      {currentModule === "albatros" && <Albatros user={user} scheda={schedaAlbatrosAttiva?.id} onScheda={scegliSchedaAlbatros} />}
+      {currentModule === "albatros" && <Albatros user={user} scheda={schedaAlbatrosAttiva?.id} onScheda={scegliSchedaAlbatros} onMissioniCambiate={contaMissioniAperte} />}
 
       {currentModule === "impostazioni" && isAdmin && (
         <Impostazioni

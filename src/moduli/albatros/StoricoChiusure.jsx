@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
+import { scaricaExcel } from '../../lib/excel'
 import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, euro, r2, periodoIniziale, intervalloPeriodo } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 
@@ -11,6 +12,7 @@ import FiltroPeriodo from './FiltroPeriodo'
 // apre nella scheda Giornata; l'amministratore da qui riapre una giornata chiusa.
 // Le giornate chiuse con un residuo non spiegato sono segnate "Da specificare" e si possono
 // vedere da sole; quelle partite con un fondo diverso da quello lasciato la sera prima "Fondo diverso".
+// Il tasto Excel scarica le giornate che si stanno guardando (periodo e filtro compresi).
 // ============================================================
 
 // Il giorno della settimana di una data 'YYYY-MM-DD', a mezzogiorno per non farlo spostare dal fuso.
@@ -63,6 +65,36 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
   const incomplete = giorni.filter(g => daSpecificare(g.chiusura, g));
   const visibili = soloDaSpecificare ? incomplete : giorni;
 
+  // Una riga per giornata, con i numeri come numeri così in Excel si sommano; le date in ordine
+  // crescente, come si leggono su un foglio.
+  const esporta = () => {
+    const chiusa = (g) => !!g.chiusura.chiusa_il;
+    const righe = [...visibili].reverse().map(g => ({
+      Giorno: giornoSettimana(g.chiusura.data),
+      Data: formattaDataGGMMAAAA(g.chiusura.data),
+      POS: r2(g.pos),
+      Contanti: r2(g.contanti),
+      Incassato: r2(g.incassato),
+      Battuto: r2(g.specificato),
+      'Battuto %': chiusa(g) ? Math.round(g.quota * 100) : null,
+      'Non specificato': chiusa(g) ? r2(g.nonSpecificato) : null,
+      'Fondo partenza': g.chiusura.fondo_partenza == null ? null : r2(g.fondoPartenza),
+      'Fondo lasciato': chiusa(g) && g.chiusura.fondo_lasciato != null ? r2(g.fondoLasciato) : null,
+      Ritirati: chiusa(g) ? r2(g.ritirato) : null,
+      Stato: chiusa(g) ? 'Chiusa' : 'Aperta',
+      Avvisi: [
+        daSpecificare(g.chiusura, g) && 'Da specificare',
+        chiusa(g) && g.nonSpecificato < 0 && 'Battuto oltre',
+        fondoDaSpecificare(g.chiusura) && 'Fondo da specificare',
+        g.fondoDiverso && `Fondo diverso dal ${formattaDataGGMMAAAA(g.precedente.data)}`,
+      ].filter(Boolean).join(', '),
+      'Chiusa da': chiusa(g) ? utenti[g.chiusura.chiusa_da] || '' : '',
+      'Chiusa il': chiusa(g) ? oraDi(g.chiusura.chiusa_il) : '',
+    }));
+    const nome = periodo.tipo === 'settimana' ? `settimana_dal_${formattaDataGGMMAAAA(da).replaceAll('/', '-')}` : periodo.mese;
+    scaricaExcel(`Albatros_chiusure_${nome}${soloDaSpecificare ? '_da_specificare' : ''}`, [{ nome: 'Chiusure', righe }]);
+  };
+
   return (
     <div className="albatros-pagina no-print">
       <div className="albatros-card">
@@ -76,6 +108,10 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
             <div>Incassato {periodo.tipo === 'settimana' ? 'della settimana' : 'del mese'}: <strong>{euro(tot('incassato'))}</strong></div>
             <div className="albatros-tenue">Battuto {euro(tot('specificato'))}</div>
           </div>
+          <button type="button" className="btn-outline-annulla albatros-bottone" style={{ alignSelf: 'flex-end', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            disabled={visibili.length === 0} onClick={esporta} title="Scarica in Excel le giornate che vedi">
+            <Icona nome="excel" size={16} style={{ marginRight: 0 }} />Excel
+          </button>
         </div>
 
         {visibili.length === 0 && <p className="albatros-vuoto">{soloDaSpecificare ? 'Nessuna giornata da specificare' : 'Nessuna giornata'} in {periodo.tipo === 'settimana' ? 'questa settimana' : 'questo mese'}.</p>}

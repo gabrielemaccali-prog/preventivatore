@@ -1187,6 +1187,62 @@ input.valore-proposto {
 .mondo-albatros .sidebar-voce.active::before { background: #4ade80; }
 .mondo-albatros .sidebar-footer p { color: #a7f3d0; }
 .mondo-albatros .main-header { border-top: 4px solid #16a34a; }
+
+/* Il numero di missioni non chiuse accanto alla voce del menu. */
+.sidebar-contatore { margin-left: auto; min-width: 20px; padding: 1px 7px; border-radius: 999px; background: #f97316; color: #fff; font-size: 0.72rem; font-weight: 700; text-align: center; line-height: 18px; }
+
+/* --- ALBATROS: missioni. Una riga corta per missione; aprendola, le attività e le loro azioni. --- */
+.albatros-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+textarea.albatros-campo { height: auto; min-height: 64px; padding: 8px 10px; font-family: inherit; font-size: 16px; line-height: 1.4; resize: vertical; }
+.albatros-badge.stato-in_attesa { background: #ede9fe; color: #5b21b6; }
+.albatros-missioni { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.albatros-missione { border: 1px solid #e2e8f0; border-left: 4px solid #94a3b8; border-radius: 8px; background: #fff; }
+.albatros-missione.priorita-alta { border-left-color: #dc2626; }
+.albatros-missione.priorita-bassa { border-left-color: #cbd5e1; }
+.albatros-missione.chiusa { border-left-color: #16a34a; }
+.albatros-missione-riga { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 12px; background: none; border: 0; color: #0f172a; text-align: left; cursor: pointer; font: inherit; }
+.albatros-missione-riga:hover { background: #f8fafc; }
+.albatros-missione-riga .riga-espandibile-chevron.aperta { transform: rotate(90deg); }
+.albatros-missione-intestazione { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; flex: 1; min-width: 0; }
+.albatros-missione-titolo { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.92rem; font-weight: 600; }
+.albatros-missione-inserita { font-size: 0.72rem; color: #94a3b8; white-space: nowrap; }
+.albatros-missione.chiusa .albatros-missione-titolo { color: #64748b; font-weight: 500; }
+.albatros-missione-destra { display: flex; align-items: center; gap: 12px; flex: none; font-size: 0.8rem; color: #64748b; font-variant-numeric: tabular-nums; }
+.albatros-missione-destra .scaduta, .albatros-missione-meta .scaduta, .albatros-missione-dati .scaduta { color: #b91c1c; font-weight: 600; }
+.albatros-missione-avanzamento { display: inline-flex; align-items: center; gap: 6px; }
+.albatros-missione-avanzamento .barra { display: inline-block; width: 48px; height: 6px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+.albatros-missione-avanzamento .barra > span { display: block; height: 100%; background: #16a34a; }
+.albatros-missione-corpo { padding: 4px 14px 12px 36px; border-top: 1px solid #f1f5f9; }
+.albatros-missione-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 0.78rem; color: #64748b; }
+.albatros-attivita { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; }
+.albatros-attivita > li { border-bottom: 1px solid #f1f5f9; }
+.albatros-attivita-riga { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; }
+.albatros-attivita input[type="checkbox"] { width: 20px; height: 20px; margin: 2px 0 0 0; flex: none; accent-color: #16a34a; cursor: pointer; }
+.albatros-attivita-testo { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; padding: 0; background: none; border: 0; text-align: left; cursor: pointer; font: inherit; }
+.albatros-attivita-testo .titolo { font-size: 0.9rem; color: #0f172a; }
+.albatros-attivita li.fatta .titolo { text-decoration: line-through; color: #64748b; }
+.albatros-attivita-azioni-conta { color: #0369a1; }
+.albatros-attivita-azioni { margin: 0 0 10px 30px; padding: 8px 10px; background: #f8fafc; border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
+.albatros-azione { display: flex; align-items: baseline; gap: 10px; font-size: 0.85rem; }
+.albatros-azione strong { flex: none; font-variant-numeric: tabular-nums; color: #334155; }
+.albatros-azione .testo { flex: 1; min-width: 0; white-space: pre-wrap; color: #1e293b; }
+.albatros-azione-nuova { display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; }
+.albatros-missione-nuova-attivita { display: grid; grid-template-columns: 1fr 160px 150px auto; gap: 8px; }
+.albatros-missione-piede { display: flex; justify-content: flex-end; margin-top: 10px; }
+.albatros-missione-descrizione { margin: 0 0 10px 0; white-space: pre-wrap; font-size: 0.9rem; color: #334155; }
+.albatros-missione-dati { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-size: 0.86rem; }
+.albatros-missione-dati dt { color: #64748b; }
+.albatros-missione-dati dd { margin: 0; color: #0f172a; }
+.albatros-missione-sezione { margin: 18px 0 8px 0; font-size: 0.95rem; color: #0f172a; }
+@media (max-width: 720px) {
+  .albatros-missione-corpo { padding-left: 14px; }
+  .albatros-attivita-azioni { margin-left: 0; }
+  .albatros-azione-nuova { grid-template-columns: 1fr auto; }
+  .albatros-azione-nuova input[type="text"] { grid-column: 1 / -1; grid-row: 1; }
+  .albatros-missione-nuova-attivita { grid-template-columns: 1fr 1fr; }
+  .albatros-missione-nuova-attivita input[type="text"], .albatros-missione-nuova-attivita button { grid-column: 1 / -1; }
+  .albatros-missione-nuova-attivita button { justify-self: end; }
+}
 @media (max-width: 720px) { .marchio-testata { font-size: 1.1rem; padding-right: 8px; } }
 
 /* Campi di Albatros: la regola generale "input[type=text|date…]" (padding 12px, margin-top 5px)

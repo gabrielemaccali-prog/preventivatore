@@ -47,6 +47,7 @@ export const mondoDi = (moduloId) => MODULI_REGISTRY.find(m => m.id === moduloId
 export const SCHEDE_REGISTRY = {
   albatros: {
     schede: [
+      { id: 'missioni', label: 'Missioni' },
       // Si chiama Giornata, ma l'id resta 'chiusure': è la chiave già salvata nei permessi dei ruoli.
       { id: 'chiusure', label: 'Giornata' },
       { id: 'storico', label: 'Chiusure' },

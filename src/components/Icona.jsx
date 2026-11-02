@@ -7,7 +7,7 @@ import {
   IconEdit, IconTrash, IconPlus, IconCheck, IconX, IconFolderOpen, IconArrowBackUp,
   IconPrinter, IconGift, IconLayoutList, IconListCheck, IconCoins, IconFileInvoice, IconChecklist, IconTruck, IconNotes, IconGauge, IconCopy,
   IconBallFootball, IconCashRegister, IconReceipt, IconTags, IconArrowMerge, IconArchive, IconArrowsExchange,
-  IconAddressBook, IconUserSquareRounded, IconBuildingBank, IconWand, IconFlag, IconFileSpreadsheet
+  IconAddressBook, IconUserSquareRounded, IconBuildingBank, IconWand, IconFlag, IconFileSpreadsheet, IconTarget
 } from '@tabler/icons-react';
 
 // Registro centrale: nome semantico -> componente icona. Un solo punto da aggiornare per cambiare set di icone.
@@ -82,6 +82,7 @@ const REGISTRO_ICONE = {
   unisci: IconArrowMerge,
   archivia: IconArchive,
   cashflow: IconArrowsExchange,
+  missioni: IconTarget,
   banca: IconBuildingBank,
   regole: IconWand,
   applica: IconFlag,
