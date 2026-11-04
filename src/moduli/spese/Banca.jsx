@@ -83,40 +83,28 @@ function Banca({ user, regole, controparti, spese, movimenti, caricamenti, categ
         </div>
       )}
 
+      {/* L'elenco dei caricamenti non serve: resta il saldo, e l'avviso se un caricamento non torna,
+          che è l'unico caso in cui c'è da fare qualcosa (manca un pezzo di estratto conto). */}
       <div className="albatros-card">
-        <div className="albatros-titolo" style={{ fontWeight: 700, color: '#0f172a', marginBottom: '8px' }}>Controllo dei saldi</div>
-        {controllo.esiti.length === 0 && <p className="albatros-vuoto">Nessun estratto conto caricato.</p>}
+        {controllo.esiti.length === 0 && <p className="albatros-vuoto" style={{ margin: 0 }}>Nessun estratto conto caricato.</p>}
         {controllo.esiti.length > 0 && (
-          <>
-            <p style={{ margin: '0 0 8px 0', fontSize: '0.9rem' }}>
-              Saldo al {formattaDataGGMMAAAA(controllo.alGiorno)}: <strong>{euro(controllo.saldoAttuale)}</strong>
-              <span className="albatros-tenue"> · ricostruito dai movimenti, partendo da {euro(controllo.partenza.saldo)} del {formattaDataGGMMAAAA(controllo.partenza.data)}</span>
-            </p>
-            {nonTornano.length > 0 && <p className="albatros-avviso" style={{ marginBottom: '8px' }}>{nonTornano.length === 1 ? 'Un caricamento non torna' : `${nonTornano.length} caricamenti non tornano`}: fra quelle date manca un pezzo di estratto conto, o c'è un movimento in più. Carica il periodo mancante.</p>}
-            <div style={{ overflowX: 'auto' }}>
-              <table className="albatros-tabella tabella-schede">
-                <thead><tr><th>Caricato il</th><th>Periodo</th><th className="num">Saldo iniziale</th><th className="num">Saldo finale</th><th className="num">Righe nuove</th><th>Esito</th></tr></thead>
-                <tbody>
-                  {[...controllo.esiti].reverse().map(x => (
-                    <tr key={x.caricamento.id} style={{ cursor: 'default' }}>
-                      <td className="sk-sx" style={{ whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(x.caricamento.creato_il.slice(0, 10))}<div className="albatros-tenue" style={{ fontSize: '0.75rem' }}>{x.caricamento.file_nome}</div></td>
-                      <td data-etichetta="Periodo" style={{ whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(x.caricamento.dal)} – {formattaDataGGMMAAAA(x.caricamento.al)}</td>
-                      <td className="num sk-mezzo" data-etichetta="Saldo iniziale">{euro(x.caricamento.saldo_iniziale)}</td>
-                      <td className="num sk-mezzo" data-etichetta="Saldo finale">{euro(x.caricamento.saldo_finale)}</td>
-                      <td className="num sk-mezzo" data-etichetta="Righe nuove">{x.caricamento.righe_nuove} / {x.caricamento.righe_lette}</td>
-                      <td>
-                        {x.ok ? <span className="albatros-badge mini chiusa">Torna</span> : (
-                          <span className="albatros-badge mini oltre" title={`Atteso: iniziale ${euro(x.attesoIniziale)}, finale ${euro(x.attesoFinale)}`}>
-                            Non torna: {x.diffIniziale !== 0 ? `iniziale ${euro(x.diffIniziale)}` : ''}{x.diffIniziale !== 0 && x.diffFinale !== 0 ? ' · ' : ''}{x.diffFinale !== 0 ? `finale ${euro(x.diffFinale)}` : ''}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+          <p style={{ margin: 0, fontSize: '0.9rem' }}>
+            Saldo al {formattaDataGGMMAAAA(controllo.alGiorno)}: <strong>{euro(controllo.saldoAttuale)}</strong>
+            <span className="albatros-tenue"> · ricostruito dai movimenti, partendo da {euro(controllo.partenza.saldo)} del {formattaDataGGMMAAAA(controllo.partenza.data)}</span>
+          </p>
+        )}
+        {nonTornano.length > 0 && (
+          <div className="albatros-avviso" style={{ marginTop: '8px', marginBottom: 0 }}>
+            {nonTornano.length === 1 ? 'Un caricamento non torna' : `${nonTornano.length} caricamenti non tornano`}: fra quelle date manca un pezzo di estratto conto, o c'è un movimento in più. Carica il periodo mancante.
+            <ul style={{ margin: '6px 0 0', paddingLeft: '18px', fontSize: '0.82rem' }}>
+              {nonTornano.map(x => (
+                <li key={x.caricamento.id}>
+                  {x.caricamento.file_nome} ({formattaDataGGMMAAAA(x.caricamento.dal)} – {formattaDataGGMMAAAA(x.caricamento.al)}):
+                  {x.diffIniziale !== 0 ? ` saldo iniziale ${euro(x.diffIniziale)}` : ''}{x.diffIniziale !== 0 && x.diffFinale !== 0 ? ',' : ''}{x.diffFinale !== 0 ? ` saldo finale ${euro(x.diffFinale)}` : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
 

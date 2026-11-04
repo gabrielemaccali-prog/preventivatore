@@ -83,6 +83,15 @@ const mov2 = [...mov, { id: 99, data_contabile: '2026-09-25', importo: -50, tipo
 verifica('file sovrapposto che prosegue: torna', true, controlloSaldi([car, car2], mov2).esiti[1].ok);
 // Manca un movimento nel mezzo: il secondo caricamento lo denuncia.
 verifica('manca un pezzo: differenza segnalata', -50, controlloSaldi([car, car2], mov).esiti[1].diffFinale);
+// L'ultimo giorno esportato a metà (il file del 26/10/2026 alle 9:42): il bonifico contabilizzato più
+// tardi quel giorno arriva col file dopo. Il primo file torna lo stesso, e un movimento che manca
+// davvero si vede ancora.
+const tardivo = { id: 100, data_contabile: '2026-09-30', importo: -1165, tipo: 'DISPOSIZIONE DI BONIFICO', descrizione: '', import_id: 3 };
+const conTardivo = [...mov2.map(m => ({ ...m, import_id: m.id === 99 ? 2 : 1 })), tardivo];
+const car3 = { id: 3, dal: '2026-10-01', al: '2026-10-02', saldo_iniziale: finale - 50 - 1165, saldo_finale: finale - 50 - 1165 };
+verifica('ultimo giorno a metà: il file di mattina torna anche dopo', true, controlloSaldi([car, car2, car3], conTardivo).esiti[1].ok);
+verifica('ultimo giorno a metà: il file dopo, che ha il resto del giorno, torna', true, controlloSaldi([car, car2, car3], conTardivo).esiti[2].ok);
+verifica('un movimento che manca davvero resta segnalato', -50, controlloSaldi([car, car2], mov.map(m => ({ ...m, import_id: 1 }))).esiti[1].diffFinale);
 
 // ---------- controparti ----------
 const controparti = preparaControparti({

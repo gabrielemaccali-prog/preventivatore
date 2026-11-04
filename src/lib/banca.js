@@ -131,16 +131,24 @@ export function leggiEstrattoConto(XLSX, buffer) {
 // partenza + tutti i movimenti fino a X. Ogni caricamento dichiara un saldo all'inizio del suo primo
 // giorno e uno alla fine dell'ultimo: se uno dei due non torna, manca (o c'è in più) un pezzo di
 // estratto conto prima di quella data.
+//
+// L'ultimo giorno di un file può essere stato esportato a metà: il suo saldo finale è quello
+// dell'ora dell'export, e i movimenti contabilizzati dopo arrivano col file successivo, con la stessa
+// data. Per quel giorno contano quindi solo i movimenti che c'erano già quando il file è stato
+// caricato (import_id fino al suo); senza, un file di mattina "non tornerebbe" per sempre.
 export function controlloSaldi(caricamenti, movimenti) {
   const ordinati = [...(caricamenti || [])].sort((a, b) => a.dal.localeCompare(b.dal) || a.id - b.id);
   if (ordinati.length === 0) return { partenza: null, esiti: [] };
   const partenza = { data: ordinati[0].dal, saldo: r2(ordinati[0].saldo_iniziale) };
-  const fino = (data, compresa) => r2(partenza.saldo + (movimenti || [])
-    .filter(m => m.data_contabile >= partenza.data && (compresa ? m.data_contabile <= data : m.data_contabile < data))
+  const somma = (filtro) => r2(partenza.saldo + (movimenti || [])
+    .filter(m => m.data_contabile >= partenza.data && filtro(m))
     .reduce((t, m) => t + Number(m.importo), 0));
+  const fino = (data, compresa) => somma(m => (compresa ? m.data_contabile <= data : m.data_contabile < data));
+  // Un movimento senza caricamento (il suo è stato cancellato) c'era già: conta.
+  const giaCaricato = (m, c) => m.import_id == null || m.import_id <= c.id;
   const esiti = ordinati.map(c => {
     const attesoIniziale = fino(c.dal, false);
-    const attesoFinale = fino(c.al, true);
+    const attesoFinale = somma(m => m.data_contabile < c.al || (m.data_contabile === c.al && giaCaricato(m, c)));
     const diffIniziale = r2(r2(c.saldo_iniziale) - attesoIniziale);
     const diffFinale = r2(r2(c.saldo_finale) - attesoFinale);
     return { caricamento: c, attesoIniziale, attesoFinale, diffIniziale, diffFinale, ok: diffIniziale === 0 && diffFinale === 0 };
