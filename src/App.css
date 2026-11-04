@@ -436,6 +436,67 @@ body {
   .schermata-storico .tabella-dettaglio-gonfiabili td:nth-child(n+3) { text-align: right !important; }
 }
 
+/* --- STORICO PRENOTAZIONI SU TELEFONO: la riga diventa una scheda di quattro righe ---
+   La regola generale di .schermata-storico trasforma ogni cella in una riga a tutta larghezza:
+   con nove colonne sono nove valori senza etichetta, perche' la testata su mobile non c'e'.
+   Qui le celle vengono disposte a griglia, nell'ordine in cui si leggono -- quando e' l'evento,
+   a che punto sta, di chi e', che partita e' e dove, quanto ha pagato.
+   Restano fuori "inserito il" e gli operatori: sono a un tocco di distanza nel pannello che si
+   apre cliccando la scheda, e qui ruberebbero una riga a testa.
+   Tutto e' legato a .scheda-pren, che hanno solo le righe dati: il pannello del dettaglio e il
+   messaggio di elenco vuoto sono una cella sola, e una regola scritta per nove colonne li
+   cancellerebbe (la "prima cella nascosta" li' dentro e' tutto il contenuto). */
+@media (max-width: 768px) {
+  .schermata-storico .tabella-pren tr.scheda-pren {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "quando stato"
+      "chi chi"
+      "partita dove"
+      "soldi fattura";
+    gap: 0 8px;
+    padding: 6px 12px;
+    line-height: 1.25;
+  }
+  /* Dentro la scheda le celle non sono piu' righe di tabella: niente bordi tratteggiati,
+     niente fondo grigio sull'ultima, e il padding lo mette la scheda. */
+  .schermata-storico .tabella-pren tr.scheda-pren > td {
+    padding: 0 !important; border-bottom: none; background: none; border-radius: 0; width: auto;
+  }
+  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(1),
+  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(7) { display: none; }
+  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(2) { grid-area: stato; justify-self: end; align-self: center; }
+  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(3) { grid-area: quando; font-weight: 600; font-size: 0.84rem !important; }
+  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(4) { grid-area: chi; font-size: 0.88rem !important; }
+  /* La partita e il campo stanno sulla stessa riga: il campo a destra, cortissimo ("Milano MI",
+     "Codogno LO"), e la partita che si accorcia con i puntini se lo spazio non basta. */
+  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(5) {
+    grid-area: partita; color: #64748b !important; font-size: 0.76rem !important;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(6) {
+    grid-area: dove; color: #94a3b8 !important; font-size: 0.76rem !important; white-space: nowrap; justify-self: end;
+  }
+  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(8) { grid-area: soldi; font-size: 0.8rem !important; }
+  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(9) { grid-area: fattura; justify-self: end; text-align: right !important; }
+  .schermata-storico .tabella-pren tr.scheda-pren .badge-mini { font-size: 0.6rem !important; padding: 1px 6px !important; }
+  /* Il chevron del telefono: l'unico segno che la scheda si apre, perche' la colonna che lo
+     portava su desktop qui non c'e'. */
+  .schermata-storico .tabella-pren .chevron-telefono { display: inline-block; }
+  /* Il pannello che si apre: su desktop i dati stanno a sinistra e i pulsanti a destra, ma in
+     375 pixel quei pulsanti strozzano la colonna dei dati e ogni valore va a capo a meta'
+     ("Telefono 333 / 1234567"). Qui vanno sotto, in fila, dove si toccano anche meglio. */
+  .schermata-storico .tabella-pren tr.riga-espandibile-dettaglio > td > div {
+    flex-direction: column; align-items: stretch !important; gap: 12px !important;
+  }
+  .schermata-storico .tabella-pren tr.riga-espandibile-dettaglio > td > div > div:last-child {
+    flex-wrap: wrap;
+  }
+}
+/* Su desktop il chevron sta nella prima colonna, dove e' sempre stato: questo secondo non si vede. */
+.chevron-telefono { display: none; }
+
 .nav-btn { background-color: #e2e8f0; color: #475569; }
 .nav-btn.active { background-color: #0f172a; color: white; }
 
@@ -1030,10 +1091,9 @@ input:disabled {
   th { background-color: #f1f5f9 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .dati-noleggio-preventivo { background-color: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
-/* Una partita annullata o posticipata: rosso se non è entrato niente, giallo se un acconto c'è
-   ed è da riprogrammare. Il giallo dice "sospesa", non "persa". */
+/* Una partita annullata. Se aveva un acconto non si perde niente: quei soldi diventano un voucher,
+   e la riga lo dice con un suo segno accanto allo stato. */
 .badge-stato.annullata { background-color: #fee2e2; color: #991b1b; }
-.badge-stato.posticipata { background-color: #fef9c3; color: #854d0e; }
 /* Una partita della vecchia gestione, ricostruita: grigio, perché non c'è niente da fare. */
 .badge-stato.pregressa { background-color: #e2e8f0; color: #334155; }
 

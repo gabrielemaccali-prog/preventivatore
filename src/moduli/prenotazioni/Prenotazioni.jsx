@@ -1240,6 +1240,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     return (
       <Fragment key={p.id}>
         <tr
+          className="scheda-pren"
           onClick={() => setRigaEspansaId(prev => prev === p.id ? null : p.id)}
           title={completata ? (saldata ? 'Prenotazione completata: confermata, saldata e con fatturazione completa' : 'Dati completi: manca solo il saldo') : undefined}
           style={{ cursor: 'pointer', background: completata ? '#dcfce7' : (espansa ? '#f8fafc' : undefined), borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}
@@ -1250,6 +1251,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           </td>
           <td style={{ padding: '8px 10px' }}><span className={`badge-stato badge-mini ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+            <span className="riga-espandibile-chevron chevron-telefono" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             {formattaDataGGMMAA(p.data)}
             {giorniEventoDi(p).length > 1 && (
               <span style={{ color: '#0288d1', fontSize: '0.78rem' }} title={`Giorni dell'evento: ${giorniEventoDi(p).map(formattaDataGGMMAA).join(', ')}`}> +{giorniEventoDi(p).length - 1}g</span>
@@ -1363,7 +1365,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   // Tabella completa (intestazione + righe) condivisa da Storico e Gestione. Il pulsante "Apri" di ogni riga richiama sempre il form come overlay.
   const tabellaPren = (righe, messaggioVuoto) => (
     <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
-      <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+      <table className="storico-table tabella-pren" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
           <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
             {COLONNE_PREN.map(c => {
@@ -1378,7 +1380,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         </thead>
         <tbody>
           {righe.length === 0
-            ? <tr><td colSpan={COLONNE_PREN.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            ? <tr className="riga-vuota"><td colSpan={COLONNE_PREN.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
             : ordina(righe).map(rigaTabellaPren)}
         </tbody>
       </table>
