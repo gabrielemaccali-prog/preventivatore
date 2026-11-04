@@ -9,7 +9,7 @@
 //   costi operativi    spese operative: compensi dei bubbler, affitti dei campi, fornitori
 //   = risultato operativo
 //   altri ricavi       accrediti generali, per categoria degli incassi
-//   costi di struttura spese generali della categoria Struttura
+//   costi di struttura spese generali delle categorie Struttura, Gestione e Attrezzatura
 //   = risultato dopo la struttura
 //   altri costi        tutte le altre spese generali, e quelle di Albatros pagate da BFM
 //   = risultato finale
@@ -23,9 +23,9 @@
 
 export const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-// La categoria delle spese che fa da costi di struttura, per nome: è quella di primo livello che si
-// chiama così. Le altre vanno fra gli altri costi.
-export const CATEGORIA_STRUTTURA = /^struttura$/i;
+// Le categorie delle spese che fanno da costi di struttura, per nome: quelle di primo livello che si
+// chiamano così (deciso dall'utente il 04/11/2026). Le altre vanno fra gli altri costi.
+export const CATEGORIE_STRUTTURA = /^(struttura|gestione|attrezzatura)$/i;
 // La categoria degli incassi che è capitale e non ricavo, per nome, con tutte le sue sottocategorie.
 export const CATEGORIA_CAPITALE = /^capitale/i;
 
@@ -111,9 +111,7 @@ export function costruisciBilancio({
     }
     if (s.natura === 'generale' && s.categoria_id != null) {
       const percorso = percorsoDi(categorieSpese, s.categoria_id);
-      return CATEGORIA_STRUTTURA.test(percorso[0])
-        ? aggiungi(v.costiStruttura, percorso.slice(1), uscita)
-        : aggiungi(v.altriCosti, percorso, uscita);
+      return aggiungi(CATEGORIE_STRUTTURA.test(percorso[0]) ? v.costiStruttura : v.altriCosti, percorso, uscita);
     }
     return aggiungi(v.usciteDaClassificare, [], uscita);
   });
