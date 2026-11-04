@@ -1423,7 +1423,17 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const mData = !filtroPrenData || giorniEvento.includes(filtroPrenData);
     const mSettimana = !settimanaFiltrata || giorniEvento.some(g => g >= settimanaFiltrata.da && g <= settimanaFiltrata.a);
     const mStato = !filtroPrenStato || p.stato === filtroPrenStato;
-    const mNome = (p.nominativo || "").toLowerCase().includes(filtroPrenNome.toLowerCase());
+    // Il nome si cerca dove un nome puo' stare: quello della prenotazione, quello di chi va in
+    // fattura e la ragione sociale. Spesso sono cose diverse -- la festa e' intestata al bambino,
+    // la fattura al genitore, e l'azienda ha un nome suo -- e chi cerca ne ha in mente una sola,
+    // senza sapere quale delle tre e' finita nella casella del nominativo. Nome e cognome si
+    // provano in tutti e due gli ordini, perche' "rossi mario" e "mario rossi" sono la stessa
+    // persona per chi scrive e due stringhe diverse per il computer.
+    const cercato = filtroPrenNome.trim().toLowerCase();
+    const mNome = !cercato || [
+      p.nominativo, p.ragioneSociale,
+      `${p.fattNome || ''} ${p.fattCognome || ''}`, `${p.fattCognome || ''} ${p.fattNome || ''}`,
+    ].some(x => (x || '').toLowerCase().includes(cercato));
     // Il codice si cerca anche a pezzi: chi ha in mano "1047" non deve scrivere tutto "PRN-2026-1047".
     const mId = !filtroPrenId.trim() || String(p.id || "").toLowerCase().includes(filtroPrenId.trim().toLowerCase());
     // Se lo stato scelto e' proprio ANNULLATA la spunta non le nasconde: vorrebbe dire chiedere una
@@ -1478,7 +1488,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
             </div>
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
               <label>Nominativo:</label>
-              <input type="text" placeholder="Nome prenotazione" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} />
+              <input type="text" placeholder="Prenotazione, fatturazione o azienda" title="Cerca nel nominativo della prenotazione, in nome e cognome di fatturazione e nella ragione sociale" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} />
             </div>
             <div className="filtro-group" style={{ flex: '1 1 160px' }}>
               <label>ID prenotazione:</label>
