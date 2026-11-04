@@ -87,6 +87,20 @@ const addGiorni = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n);
 const inizioSettimana = (d) => { const x = new Date(d); const g = x.getDay(); x.setDate(x.getDate() - (g === 0 ? 6 : g - 1)); x.setHours(0, 0, 0, 0); return x; };
 const dataLocale = (iso) => { const [a, m, g] = String(iso).split('-').map(Number); return new Date(a, (m || 1) - 1, g || 1); };
 
+// Su uno schermo stretto una torta a raggio fisso, con le etichette dei nomi attorno, esce dal
+// riquadro: il raggio diventa una percentuale e delle etichette resta la sola percentuale, mentre
+// i nomi li dice la legenda sotto.
+const useSchermoStretto = (soglia = 640) => {
+  const [stretto, setStretto] = useState(() => typeof window !== 'undefined' && window.innerWidth <= soglia);
+  useEffect(() => {
+    const query = window.matchMedia(`(max-width: ${soglia}px)`);
+    const aggiorna = (e) => setStretto(e.matches);
+    query.addEventListener('change', aggiorna);
+    return () => query.removeEventListener('change', aggiorna);
+  }, [soglia]);
+  return stretto;
+};
+
 const ESITO = { VINTO: 'vinto', PERSO: 'perso', APERTO: 'aperto' };
 // null = fuori dal conto: un annullato che non era una richiesta vera, o che e' passato a un'altra
 // nostra formula, non e' ne' vinto ne' perso.
@@ -250,6 +264,7 @@ const ETICHETTA_CONSUNTIVO = { cons: 'Consuntivato', prev: 'Preventivo', misto: 
 function Cruscotto({ user }) {
   const primaSchedaCR = ['cruscotto', 'andamento', 'pergioco', 'preventivi', 'annullati'].find(s => puoVedere(user, 'costiricavi', s)) || 'cruscotto';
   const [currentView, setCurrentView] = useState(primaSchedaCR);
+  const schermoStretto = useSchermoStretto();
 
   const [prenotazioni, setPrenotazioni] = useState([]);
   // Il cruscotto le vuole tutte, annullate e posticipate comprese; le altre schede no (vedi sotto).
@@ -879,7 +894,9 @@ function Cruscotto({ user }) {
   // Una FORSE non e' ancora una partita: i suoi numeri sono un'ipotesi. Tenerla fuori serve a
   // guardare l'andamento di quello che e' stato venduto davvero; tenerla dentro serve a vedere
   // dove si sta andando. Le due domande sono diverse, quindi si sceglie.
-  const [soloConfermate, setSoloConfermate] = useState(false);
+  // Accesa all'apertura: di norma si guarda quello che e' stato venduto davvero, e una FORSE e'
+  // un'ipotesi. Chi vuole vedere anche il futuro la spegne.
+  const [soloConfermate, setSoloConfermate] = useState(true);
   const [centroCostoSel, setCentroCostoSel] = useState("");
   const [centroRicavoSel, setCentroRicavoSel] = useState("");
 
@@ -1247,15 +1264,33 @@ function Cruscotto({ user }) {
   // Insieme in una torta sola finivano dieci campi e una fetta informe: separate, ognuna risponde
   // alla sua domanda.
   const costoDiRiga = useCallback((r) => r.costo + r.compPrev, []);
+  // Ogni torta si guarda da due punti di vista, e l'interruttore passa dall'uno all'altro senza
+  // cambiare i numeri: cambia solo come si raggruppano.
+  //   campi    per centro di costo (il singolo campo) o per provincia, per vedere dove si gioca
+  //   noleggi  per sede da cui parte il gioco o per gioco, per vedere cosa costa invece di chi
+  const [campiPerProvincia, setCampiPerProvincia] = useState(false);
+  const [noleggiPerGioco, setNoleggiPerGioco] = useState(false);
+  const provinciaDelCampo = useCallback((p) => campi.find(c => c.id === p.campoId)?.provincia || 'Provincia non indicata', [campi]);
+  const nomeGiocoDiRiga = useCallback((r) => (r.giocoId != null ? giocoPerId[r.giocoId]?.nome : null) || r.nome || 'Non assegnato', [giocoPerId]);
   const datiTortaCampi = useMemo(
-    () => raggruppaPerCentro(righeAndamento.filter(r => r.pren.campoId), (r) => centroCostoDi(r.pren), costoDiRiga),
-    [righeAndamento, centroCostoDi, costoDiRiga]
+    () => raggruppaPerCentro(
+      righeAndamento.filter(r => r.pren.campoId),
+      campiPerProvincia ? (r) => provinciaDelCampo(r.pren) : (r) => centroCostoDi(r.pren),
+      costoDiRiga
+    ),
+    [righeAndamento, campiPerProvincia, provinciaDelCampo, centroCostoDi, costoDiRiga]
   );
   const datiTortaNoleggi = useMemo(
-    () => raggruppaPerCentro(righeAndamento.filter(r => !r.pren.campoId), (r) => r.sede || SEDE_NON_INDICATA_ETICHETTA, costoDiRiga),
-    [righeAndamento, costoDiRiga]
+    () => raggruppaPerCentro(
+      righeAndamento.filter(r => !r.pren.campoId),
+      noleggiPerGioco ? nomeGiocoDiRiga : (r) => r.sede || SEDE_NON_INDICATA_ETICHETTA,
+      costoDiRiga
+    ),
+    [righeAndamento, noleggiPerGioco, nomeGiocoDiRiga, costoDiRiga]
   );
   const mappaColoriSedi = useMemo(() => mappaColoriCentri(sedi.map(x => x.nome)), [sedi]);
+  const mappaColoriGiochi = useMemo(() => mappaColoriCentri(giochi.map(g => g.nome)), [giochi]);
+  const mappaColoriProvince = useMemo(() => mappaColoriCentri(campi.map(c => c.provincia)), [campi]);
 
 
   // A che gruppo appartiene una riga, secondo la dimensione scelta. Il nome arriva dal catalogo
@@ -1327,19 +1362,32 @@ function Cruscotto({ user }) {
     XLSX.writeFile(wb, `Costi_Ricavi_per_${raggruppaPer}.xlsx`);
   };
 
-  const etichettaFetta = ({ nome, percent }) => percent > 0.08 ? `${nome} ${(percent * 100).toFixed(0)}%` : '';
+  // Sullo stretto resta la sola percentuale: il nome lo dice la legenda, e attaccato alla fetta
+  // uscirebbe dal riquadro.
+  const etichettaFetta = ({ nome, percent }) => {
+    if (percent <= 0.08) return '';
+    return schermoStretto ? `${(percent * 100).toFixed(0)}%` : `${nome} ${(percent * 100).toFixed(0)}%`;
+  };
 
-  // Una torta dei costi: cambiano il titolo, la spiegazione e i colori, il resto e' lo stesso.
-  const tortaCosti = (titolo, spiegazione, dati, colori, vuoto) => (
-    <div className="admin-table-box-full" style={{ flex: '1 1 380px', padding: '16px 8px' }}>
+  // Una torta: cambiano titolo, spiegazione, colori e l'eventuale interruttore del raggruppamento.
+  // minWidth 0 e' quello che la tiene dentro il riquadro: senza, un grafico in un contenitore flex
+  // non si restringe sotto la sua larghezza di partenza e sborda a destra.
+  const torta = (titolo, spiegazione, dati, colori, vuoto, interruttore = null) => (
+    <div className="admin-table-box-full" style={{ flex: '1 1 320px', minWidth: 0, padding: '16px 8px' }}>
       <h3 style={{ margin: '0 0 2px 14px', fontSize: '1rem' }}>{titolo}</h3>
-      <p style={{ margin: '0 0 10px 14px', fontSize: '0.78rem', color: INK_MUTED }}>{spiegazione}</p>
+      <p style={{ margin: '0 0 8px 14px', fontSize: '0.78rem', color: INK_MUTED }}>{spiegazione}</p>
+      {interruttore && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 6px 14px', fontSize: '0.8rem', color: '#334155', cursor: 'pointer' }} title={interruttore.titolo}>
+          <input type="checkbox" checked={interruttore.attivo} onChange={(e) => interruttore.cambia(e.target.checked)} />
+          {interruttore.etichetta}
+        </label>
+      )}
       {dati.length === 0 ? (
         <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>{vuoto}</p>
       ) : (
-        <ResponsiveContainer width="100%" height={320}>
-          <PieChart>
-            <Pie data={dati} dataKey="valore" nameKey="nome" cx="50%" cy="50%" outerRadius={100} label={etichettaFetta}>
+        <ResponsiveContainer width="100%" height={schermoStretto ? 280 : 320}>
+          <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+            <Pie data={dati} dataKey="valore" nameKey="nome" cx="50%" cy="50%" outerRadius={schermoStretto ? '72%' : 100} label={etichettaFetta} labelLine={!schermoStretto}>
               {dati.map(v => <Cell key={v.nome} fill={coloreCentro(colori, v.nome)} />)}
             </Pie>
             <Tooltip formatter={(value) => formattaEuro(value)} />
@@ -1557,28 +1605,30 @@ function Cruscotto({ user }) {
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', marginTop: '20px' }}>
-            <div className="admin-table-box-full" style={{ flex: '1 1 380px', padding: '16px 8px' }}>
-              <h3 style={{ margin: '0 0 10px 14px', fontSize: '1rem' }}>Distribuzione ricavi per centro di ricavo</h3>
-              {datiTortaRicavi.length === 0 ? (
-                <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>Nessun dato nel periodo selezionato.</p>
-              ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  <PieChart>
-                    <Pie data={datiTortaRicavi} dataKey="valore" nameKey="nome" cx="50%" cy="50%" outerRadius={100} label={etichettaFetta}>
-                      {datiTortaRicavi.map(v => <Cell key={v.nome} fill={coloreCentro(mappaColoriRicavo, v.nome)} />)}
-                    </Pie>
-                    <Tooltip formatter={(value) => formattaEuro(value)} />
-                    <Legend wrapperStyle={{ fontSize: '0.8rem' }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </div>
+            {torta('Ricavi per centro di ricavo', 'Il centro viene dal gioco venduto, risolto a catalogo.',
+              datiTortaRicavi, mappaColoriRicavo, 'Nessun dato nel periodo selezionato.')}
 
-            {tortaCosti('Costi delle partite sui campi', 'Per centro di costo: affitto, rinfresco, fornitori e operatori delle partite giocate su un campo.',
-              datiTortaCampi, mappaColoriCosto, 'Nessuna partita su un campo nel periodo selezionato.')}
+            {torta(
+              campiPerProvincia ? 'Costi delle partite sui campi, per provincia' : 'Costi delle partite sui campi',
+              campiPerProvincia
+                ? 'Affitto, rinfresco, fornitori e operatori, raggruppati per provincia del campo.'
+                : 'Per centro di costo: affitto, rinfresco, fornitori e operatori delle partite giocate su un campo.',
+              datiTortaCampi,
+              campiPerProvincia ? mappaColoriProvince : mappaColoriCosto,
+              'Nessuna partita su un campo nel periodo selezionato.',
+              { attivo: campiPerProvincia, cambia: setCampiPerProvincia, etichetta: 'Raggruppa per provincia', titolo: 'Al posto del singolo campo, la provincia in cui si trova' }
+            )}
 
-            {tortaCosti(`Costi dei ${COSTI_NOLEGGI.toLowerCase()}`, 'Partite senza campo, giocate dal cliente: per sede da cui parte il gioco, con i compensi degli operatori.',
-              datiTortaNoleggi, mappaColoriSedi, 'Nessun noleggio nel periodo selezionato.')}
+            {torta(
+              noleggiPerGioco ? `Costi dei ${COSTI_NOLEGGI.toLowerCase()}, per gioco` : `Costi dei ${COSTI_NOLEGGI.toLowerCase()}`,
+              noleggiPerGioco
+                ? 'Partite senza campo: quanto costa ogni gioco noleggiato, compensi degli operatori compresi.'
+                : 'Partite senza campo, giocate dal cliente: per sede da cui parte il gioco, con i compensi degli operatori.',
+              datiTortaNoleggi,
+              noleggiPerGioco ? mappaColoriGiochi : mappaColoriSedi,
+              'Nessun noleggio nel periodo selezionato.',
+              { attivo: noleggiPerGioco, cambia: setNoleggiPerGioco, etichetta: 'Raggruppa per gioco', titolo: 'Al posto della sede di partenza, il gioco noleggiato' }
+            )}
           </div>
         </div>
       )}
@@ -1701,7 +1751,7 @@ function Cruscotto({ user }) {
           </div>
         );
         const tabellaGruppi = (righe, intestazione, vuoto) => (
-          <div className="admin-table-box-full" style={{ flex: '1 1 420px', overflowX: 'auto' }}>
+          <div className="admin-table-box-full" style={{ flex: '1 1 420px', minWidth: 0, overflowX: 'auto' }}>
             <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
