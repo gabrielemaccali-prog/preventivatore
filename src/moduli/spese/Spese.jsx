@@ -7,6 +7,7 @@ import { caricaTutto } from './operazioni'
 import ElencoSpese from './ElencoSpese'
 import Banca from './Banca'
 import Incassi from './Incassi'
+import Bilancio from './Bilancio'
 import Regole from './Regole'
 import Configuratore from './Configuratore'
 
@@ -25,6 +26,7 @@ const SCHEDE = [
   { id: 'spese', label: 'Spese', icona: 'spese' },
   { id: 'banca', label: 'Banca', icona: 'banca' },
   { id: 'incassi', label: 'Incassi', icona: 'cashflow' },
+  { id: 'bilancio', label: 'Bilancio', icona: 'riepilogo' },
   { id: 'regole', label: 'Regole', icona: 'regole' },
   { id: 'configuratore', label: 'Configuratore', icona: 'configuratore' },
 ];
@@ -113,6 +115,7 @@ function Spese({ user }) {
           {attiva === 'spese' && <ElencoSpese {...comuni} />}
           {attiva === 'banca' && <Banca {...comuni} />}
           {attiva === 'incassi' && <Incassi {...comuni} />}
+          {attiva === 'bilancio' && <Bilancio {...comuni} />}
           {attiva === 'regole' && <Regole {...comuni} />}
           {attiva === 'configuratore' && <Configuratore key={sottoConfiguratore || 'spese'} {...comuni} sottoIniziale={sottoConfiguratore} />}
         </>

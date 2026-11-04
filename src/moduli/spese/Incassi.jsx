@@ -39,6 +39,9 @@ function Incassi({ movimenti, ricaricaDati, vaiA }) {
   const [voucher, setVoucher] = useState([]);
   const [categorie, setCategorie] = useState([]);
   const [schemaMancante, setSchemaMancante] = useState(null);
+  // Finché i pagamenti non sono arrivati nessun accredito risulta abbinato: mostrare l'elenco vorrebbe
+  // dire farli sembrare tutti da completare per mezzo secondo.
+  const [caricato, setCaricato] = useState(false);
   const [inCorso, setInCorso] = useState(false);
   const [stato, setStato] = useState(STATI_INCASSO.DA_ABBINARE);
   const [mese, setMese] = useState('');
@@ -54,6 +57,7 @@ function Incassi({ movimenti, ricaricaDati, vaiA }) {
     setPrenotazioni(pr.data || []);
     setVoucher(vc.data || []);
     setCategorie(cat.data || []);
+    setCaricato(true);
   };
   useEffect(() => { ricarica(); }, []);
 
@@ -189,6 +193,10 @@ function Incassi({ movimenti, ricaricaDati, vaiA }) {
       .sort((a, b) => b.punti - a.punti)
       .slice(0, 12);
   };
+
+  if (!caricato) {
+    return <div className="albatros-pagina no-print"><p className="albatros-vuoto">Caricamento degli incassi…</p></div>;
+  }
 
   if (schemaMancante) {
     return (

@@ -71,6 +71,7 @@ export const SCHEDE_REGISTRY = {
       { id: 'spese', label: 'Spese' },
       { id: 'banca', label: 'Banca' },
       { id: 'incassi', label: 'Incassi' },
+      { id: 'bilancio', label: 'Bilancio' },
       { id: 'regole', label: 'Regole' },
       { id: 'configuratore', label: 'Configuratore' },
     ],
