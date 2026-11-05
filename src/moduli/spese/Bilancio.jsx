@@ -22,8 +22,9 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
   const [categorieIncassi, setCategorieIncassi] = useState([]);
   const [anno, setAnno] = useState(String(oggi.getFullYear()));
   const [mese, setMese] = useState('');
-  // Le voci aperte, per percorso ("costiOperativi/Affitto campi").
-  const [aperte, setAperte] = useState(() => new Set());
+  // Il bilancio nasce con le voci principali aperte sui loro sottogruppi, e i sottogruppi chiusi. Si
+  // tiene il conto delle voci cambiate a mano rispetto a così, per percorso ("costiOperativi/Affitto campi").
+  const [cambiate, setCambiate] = useState(() => new Set());
 
   useEffect(() => {
     leggiTutte(() => supabase.from('pagamenti').select('tipo, movimento_id').not('movimento_id', 'is', null).order('id'))
@@ -38,7 +39,7 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
     nomeControparte: (tipo, id) => nomeControparte(controparti, tipo, id), dal, al,
   }), [movimenti, spese, pagamenti, categorie, categorieIncassi, categorieAlbatros, controparti, dal, al]);
 
-  const apri = (chiave) => setAperte(prima => {
+  const apri = (chiave) => setCambiate(prima => {
     const n = new Set(prima);
     if (n.has(chiave)) n.delete(chiave); else n.add(chiave);
     return n;
@@ -47,7 +48,7 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
   // Una voce e, se è aperta, i suoi figli, rientrati di un livello. segno: +1 ricavo, -1 costo.
   const righe = (voce, chiave, livello, segno) => {
     const apribile = voce.figli.length > 0;
-    const aperta = aperte.has(chiave);
+    const aperta = cambiate.has(chiave) ? livello !== 0 : livello === 0;
     const out = [(
       <tr key={chiave} onClick={() => apribile && apri(chiave)} style={{ cursor: apribile ? 'pointer' : 'default', background: livello === 0 ? '#f8fafc' : undefined }}>
         <td style={{ padding: '7px 10px', paddingLeft: `${10 + livello * 22}px`, fontWeight: livello === 0 ? 700 : livello === 1 ? 500 : 400, fontSize: livello > 1 ? '0.82rem' : '0.88rem' }}>
@@ -62,6 +63,9 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
     if (aperta) voce.figli.forEach(f => out.push(...righe(f, `${chiave}/${f.nome}`, livello + 1, segno)));
     return out;
   };
+  // Altri ricavi, costi di struttura e altri costi non hanno una riga loro: le loro categorie (Altri
+  // Ricavi, Struttura, Gestione, Direttivo...) sono già le voci da leggere.
+  const soloCategorie = (voce, chiave, segno) => voce.figli.flatMap(f => righe(f, `${chiave}/${f.nome}`, 0, segno));
   const risultato = (nome, importo, finale = false) => (
     <tr key={nome} style={{ cursor: 'default', borderTop: '2px solid #cbd5e1', background: finale ? '#e2e8f0' : '#f1f5f9' }}>
       <td style={{ padding: '9px 10px', fontWeight: 800, textTransform: 'uppercase', fontSize: '0.82rem', letterSpacing: '0.03em' }}>{nome}</td>
@@ -84,7 +88,7 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
             <input type="month" value={mese} onChange={(e) => setMese(e.target.value)} className="albatros-campo" />
           </label>
           {mese && <button type="button" className="albatros-chip" style={{ alignSelf: 'flex-end' }} onClick={() => setMese('')}>Tutto l'anno</button>}
-          <p className="albatros-tenue" style={{ margin: '0 0 0 auto', fontSize: '0.8rem', alignSelf: 'flex-end' }}>Di cassa: quello che è entrato e uscito dal conto. Clic su una voce per i dettagli.</p>
+          <p className="albatros-tenue" style={{ margin: '0 0 0 auto', fontSize: '0.8rem', alignSelf: 'flex-end' }}>Di cassa: quello che è entrato e uscito dal conto. Clic su una voce per aprirla o chiuderla.</p>
         </div>
 
         <div style={{ overflowX: 'auto', marginTop: '12px' }}>
@@ -93,10 +97,10 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
               {righe(b.ricaviOperativi, 'ricaviOperativi', 0, 1)}
               {righe(b.costiOperativi, 'costiOperativi', 0, -1)}
               {risultato('Risultato operativo', b.risultatoOperativo)}
-              {righe(b.altriRicavi, 'altriRicavi', 0, 1)}
-              {righe(b.costiStruttura, 'costiStruttura', 0, -1)}
+              {soloCategorie(b.altriRicavi, 'altriRicavi', 1)}
+              {soloCategorie(b.costiStruttura, 'costiStruttura', -1)}
               {risultato('Risultato dopo la struttura', b.risultatoStruttura)}
-              {righe(b.altriCosti, 'altriCosti', 0, -1)}
+              {soloCategorie(b.altriCosti, 'altriCosti', -1)}
               {daClassificare && righe(b.entrateDaClassificare, 'entrateDaClassificare', 0, 1)}
               {daClassificare && righe(b.usciteDaClassificare, 'usciteDaClassificare', 0, -1)}
               {risultato('Risultato finale', b.risultatoFinale, true)}
