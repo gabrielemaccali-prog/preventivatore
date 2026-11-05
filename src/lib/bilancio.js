@@ -30,9 +30,9 @@ export const CATEGORIE_STRUTTURA = /^(struttura|gestione|attrezzatura)$/i;
 // Dove il bilancio mostra una categoria diversamente da come è classificata la spesa: la
 // classificazione non cambia, cambia solo la voce del bilancio. Per nome, categoria e sottocategoria.
 // Le deleghe F24 della segreteria sono in Tasse e imposte, ma il bilancio le legge come costo della
-// segreteria (deciso dall'utente il 05/11/2026).
+// gestione, in una voce loro accanto alla Segreteria (deciso dall'utente il 05/11/2026).
 export const VOCI_DEL_BILANCIO = [
-  { da: ['Tasse e imposte', 'Segreteria'], a: ['Gestione', 'Segreteria'] },
+  { da: ['Tasse e imposte', 'Segreteria'], a: ['Gestione', 'Segreteria (tasse e imposte)'] },
 ];
 const uguale = (a, b) => a.length === b.length && a.every((x, i) => x.toLowerCase() === String(b[i]).toLowerCase());
 const vocePer = (percorso) => VOCI_DEL_BILANCIO.find(r => uguale(percorso, r.da))?.a || percorso;

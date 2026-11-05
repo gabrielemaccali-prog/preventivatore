@@ -54,7 +54,8 @@ verifica('costi operativi per controparte', 'Quintosole', b.costiOperativi.figli
 verifica('risultato operativo', 119, b.risultatoOperativo);
 verifica('altri ricavi per categoria', ['Altri Ricavi', 'Vendita Attrezzatura'], [b.altriRicavi.figli[0].nome, b.altriRicavi.figli[0].figli[0].nome]);
 verifica('costi di struttura: Struttura e Gestione, per categoria', [['Gestione', 'Struttura'], 450], [b.costiStruttura.figli.map(f => f.nome), b.costiStruttura.importo]);
-verifica('Tasse e imposte › Segreteria si legge in Gestione › Segreteria', [330, false], [b.costiStruttura.figli.find(f => f.nome === 'Gestione').figli[0].importo, b.altriCosti.figli.some(f => f.nome === 'Tasse e imposte')]);
+verifica('Tasse e imposte › Segreteria si legge in Gestione, in una voce sua', [['Segreteria', 200], ['Segreteria (tasse e imposte)', 130], false],
+  [...b.costiStruttura.figli.find(f => f.nome === 'Gestione').figli.map(f => [f.nome, f.importo]), b.altriCosti.figli.some(f => f.nome === 'Tasse e imposte')]);
 verifica('costi di struttura: poi per sottocategoria', 'Commercialista', b.costiStruttura.figli.find(f => f.nome === 'Struttura').figli[0].nome);
 verifica('risultato dopo la struttura', 119 + 3733.2 - 450, b.risultatoStruttura);
 verifica('altri costi: le altre categorie e Albatros', 1290, b.altriCosti.importo);
