@@ -26,6 +26,16 @@ export const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // Le categorie delle spese che fanno da costi di struttura, per nome: quelle di primo livello che si
 // chiamano così (deciso dall'utente il 04/11/2026). Le altre vanno fra gli altri costi.
 export const CATEGORIE_STRUTTURA = /^(struttura|gestione|attrezzatura)$/i;
+
+// Dove il bilancio mostra una categoria diversamente da come è classificata la spesa: la
+// classificazione non cambia, cambia solo la voce del bilancio. Per nome, categoria e sottocategoria.
+// Le deleghe F24 della segreteria sono in Tasse e imposte, ma il bilancio le legge come costo della
+// segreteria (deciso dall'utente il 05/11/2026).
+export const VOCI_DEL_BILANCIO = [
+  { da: ['Tasse e imposte', 'Segreteria'], a: ['Gestione', 'Segreteria'] },
+];
+const uguale = (a, b) => a.length === b.length && a.every((x, i) => x.toLowerCase() === String(b[i]).toLowerCase());
+const vocePer = (percorso) => VOCI_DEL_BILANCIO.find(r => uguale(percorso, r.da))?.a || percorso;
 // La categoria degli incassi che è capitale e non ricavo, per nome, con tutte le sue sottocategorie.
 export const CATEGORIA_CAPITALE = /^capitale/i;
 
@@ -110,7 +120,7 @@ export function costruisciBilancio({
       return aggiungi(v.costiOperativi, [NOMI_OPERATIVE[s.operativa] || s.operativa, chi], uscita);
     }
     if (s.natura === 'generale' && s.categoria_id != null) {
-      const percorso = percorsoDi(categorieSpese, s.categoria_id);
+      const percorso = vocePer(percorsoDi(categorieSpese, s.categoria_id));
       return aggiungi(CATEGORIE_STRUTTURA.test(percorso[0]) ? v.costiStruttura : v.altriCosti, percorso, uscita);
     }
     return aggiungi(v.usciteDaClassificare, [], uscita);
