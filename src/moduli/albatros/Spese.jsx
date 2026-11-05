@@ -4,7 +4,7 @@ import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   nomeCategoria, idCategoriaScelta, ENTI, etichettaEnte, num, r2, euro, giornataDiLavoro, periodoIniziale, intervalloPeriodo,
-  dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, categorieDi, spesaDettagliabile, METODI_SPESA, spesaDaPagare, etichettaMetodoSpesa,
+  dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, categorieDi, spesaDettagliabile, spesaMulticategoria, DA_DETTAGLIARE, METODI_SPESA, spesaDaPagare, etichettaMetodoSpesa,
 } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 import SceltaCategoria from './SceltaCategoria'
@@ -16,10 +16,12 @@ import SceltaCategoria from './SceltaCategoria'
 // l'elenco la segnala. Attribuirla è riempire un campo vuoto: lo può fare chiunque.
 // I ragazzi possono solo aggiungere; modificare ed eliminare spetta all'amministratore.
 // Nuova spesa e modifica si fanno nello stesso overlay.
-// Una spesa è uno scontrino col suo totale; se la sua categoria è dettagliabile (di partenza solo
-// "Spesa bar", si cambia dal Configuratore) toccandola si apre il dettaglio, dove si scrivono le
-// voci che la compongono (anche dopo, anche in parte) senza superare il totale. Aggiungere voci lo
-// può fare chiunque, toglierle solo l'amministratore.
+// Le categorie sono un solo livello. Una spesa ha una categoria, oppure è uno scontrino con più
+// categorie: allora la testata non ne ha, e toccandola si apre il dettaglio, dove si scrivono le voci
+// che lo compongono, ognuna con la sua categoria (anche dopo, anche in parte) senza superare il
+// totale; quello che manca è "da dettagliare". Il filtro per categoria guarda la testata delle spese
+// semplici e le voci degli scontrini. Aggiungere voci lo può fare chiunque, toglierle solo
+// l'amministratore.
 // ============================================================
 
 const leggiImporto = (v) => { const n = Number(String(v ?? '').trim().replace(',', '.')); return Number.isFinite(n) ? r2(n) : NaN; };
@@ -27,14 +29,15 @@ const VOCE_VUOTA = { descrizione: '', importo: '', categoria: null };
 // BFM non si sceglie qui: le spese che BFM sostiene per Albatros si scrivono nel modulo Spese di
 // BFM e arrivano da sole (spesa_bfm_id), scriverle anche qui le conterebbe due volte.
 const ENTI_SCEGLIBILI = ENTI.filter(e => e.id !== 'bfm');
-const SPESA_VUOTA = () => ({ id: null, data: giornataDiLavoro(), importo: '', descrizione: '', categoria: null, ente: '', metodo: 'contanti' });
+const SPESA_VUOTA = () => ({ id: null, data: giornataDiLavoro(), importo: '', descrizione: '', categoria: null, multicategoria: false, ente: '', metodo: 'contanti' });
 
 function Spese({ user, categorie, utenti, puoCorreggere }) {
   const [spese, setSpese] = useState([]);
   const [periodo, setPeriodo] = useState(periodoIniziale);
   const [filtroEnte, setFiltroEnte] = useState('');
-  // filtroCategoria: '' = tutte, 'nessuna' = senza categoria, altrimenti l'id. Con un filtro attivo
-  // ogni spesa conta per la parte che va a quella categoria (vedi importoInCategoria).
+  // filtroCategoria: '' = tutte, 'nessuna' = senza categoria, DA_DETTAGLIARE = la parte non
+  // dettagliata degli scontrini, altrimenti l'id. Con un filtro attivo ogni spesa conta per la parte
+  // che va a quella categoria (vedi importoInCategoria).
   const [filtroCategoria, setFiltroCategoria] = useState('');
   // La spesa nell'overlay: null = chiuso; senza id è una spesa nuova.
   const [modulo, setModulo] = useState(null);
@@ -43,6 +46,8 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   const [vociPer, setVociPer] = useState({});
   const [espansa, setEspansa] = useState(null);
   const [nuovaVoce, setNuovaVoce] = useState(VOCE_VUOTA);
+  // La voce di cui l'amministratore sta cambiando la categoria: null = nessuna.
+  const [vocePerCategoria, setVocePerCategoria] = useState(null);
 
   const [da, al] = intervalloPeriodo(periodo);
 
@@ -64,7 +69,8 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   useEffect(() => { carica(); }, [da, al]);
 
   // filtroEnte: '' = tutte, 'nessuno' = da attribuire, altrimenti l'id dell'ente.
-  const importo = (s) => (filtroCategoria ? importoInCategoria(s, vociPer[s.id], filtroCategoria === 'nessuna' ? null : Number(filtroCategoria)) : r2(num(s.importo)));
+  const categoriaFiltro = filtroCategoria === 'nessuna' ? null : filtroCategoria === DA_DETTAGLIARE ? DA_DETTAGLIARE : Number(filtroCategoria);
+  const importo = (s) => (filtroCategoria ? importoInCategoria(s, vociPer[s.id], categoriaFiltro) : r2(num(s.importo)));
   const visibili = spese
     .filter(s => !filtroEnte || (filtroEnte === 'nessuno' ? !s.ente : filtroEnte === 'dapagare' ? spesaDaPagare(s) : s.ente === filtroEnte))
     .filter(s => importo(s) > 0);
@@ -100,14 +106,22 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
     if (!modulo.id && modulo.ente === 'bfm') return alert('Le spese pagate da BFM si registrano nel modulo Spese di BFM: da lì arrivano anche qui.');
     const giaDettagliato = modulo.id ? dettaglioSpesa({ importo }, vociPer[modulo.id]).dettagliato : 0;
     if (importo < giaDettagliato) return alert(`Il dettaglio di questa spesa arriva già a ${euro(giaDettagliato)}: il totale non può essere più basso.`);
-    const record = { data: modulo.data, importo, descrizione, categoria_id: idCategoriaScelta(modulo.categoria, categorie, 'spesa'), ente: modulo.ente || null, metodo: modulo.ente === 'albatros' ? (modulo.metodo || 'contanti') : null };
+    const multi = !!modulo.multicategoria;
+    if (!multi && giaDettagliato > 0) return alert('Questo scontrino ha già delle voci: per farne una spesa con una sola categoria toglile prima dal dettaglio.');
+    const record = {
+      data: modulo.data, importo, descrizione, multicategoria: multi,
+      categoria_id: multi ? null : idCategoriaScelta(modulo.categoria, categorie, 'spesa'),
+      ente: modulo.ente || null, metodo: modulo.ente === 'albatros' ? (modulo.metodo || 'contanti') : null,
+    };
     setInCorso(true);
     try {
-      const { error } = modulo.id
-        ? await supabase.from('albatros_spese').update(record).eq('id', modulo.id)
-        : await supabase.from('albatros_spese').insert([{ ...record, creato_da: user.id }]);
+      const { data, error } = modulo.id
+        ? await supabase.from('albatros_spese').update(record).eq('id', modulo.id).select('id').single()
+        : await supabase.from('albatros_spese').insert([{ ...record, creato_da: user.id }]).select('id').single();
       if (error) return alert(`Errore nel salvataggio: ${error.message}`);
       setModulo(null);
+      // Uno scontrino si apre subito, pronto per scriverci le voci.
+      if (multi) { setEspansa(data.id); setNuovaVoce(VOCE_VUOTA); }
       await carica();
     } finally {
       setInCorso(false);
@@ -154,11 +168,22 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
     setInCorso(true);
     const { error } = await supabase.from('albatros_spese_righe').insert([{
       spesa_id: s.id, descrizione, importo, creato_da: user.id,
-      categoria_id: nuovaVoce.categoria == null ? s.categoria_id : idCategoriaScelta(nuovaVoce.categoria, categorie, 'spesa'),
+      categoria_id: idCategoriaScelta(nuovaVoce.categoria, categorie, 'spesa'),
     }]);
     setInCorso(false);
     if (error) return alert(`Errore nel salvataggio: ${error.message}`);
-    setNuovaVoce(VOCE_VUOTA);
+    // La categoria resta quella di prima: le voci di uno scontrino vengono spesso a gruppi.
+    setNuovaVoce({ ...VOCE_VUOTA, categoria: nuovaVoce.categoria });
+    carica();
+  };
+
+  // Scegliere la categoria nella tendina la salva subito.
+  const cambiaCategoriaVoce = async (v, valore) => {
+    const categoria_id = idCategoriaScelta(valore, categorie, 'spesa');
+    setVocePerCategoria(null);
+    if ((v.categoria_id ?? null) === categoria_id) return;
+    const { error } = await supabase.from('albatros_spese_righe').update({ categoria_id }).eq('id', v.id);
+    if (error) return alert(`Errore: ${error.message}`);
     carica();
   };
 
@@ -170,7 +195,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   };
 
   const modifica = (s) => {
-    setModulo({ id: s.id, data: s.data, importo: String(r2(s.importo)).replace('.', ','), descrizione: s.descrizione, categoria: String(s.categoria_id ?? ''), ente: s.ente || '', metodo: s.metodo || 'contanti', spesaBfm: s.spesa_bfm_id ?? null });
+    setModulo({ id: s.id, data: s.data, importo: String(r2(s.importo)).replace('.', ','), descrizione: s.descrizione, categoria: String(s.categoria_id ?? ''), multicategoria: spesaMulticategoria(s), ente: s.ente || '', metodo: s.metodo || 'contanti', spesaBfm: s.spesa_bfm_id ?? null });
   };
 
   return (
@@ -190,6 +215,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
               <option value="">Tutte</option>
               {categorieDi(categorie, 'spesa', { ancheArchiviate: true }).map(c => <option key={c.id} value={String(c.id)}>{c.nome}{c.attiva ? '' : ' (archiviata)'}</option>)}
               <option value="nessuna">Senza categoria</option>
+              <option value={DA_DETTAGLIARE}>Da dettagliare (scontrini)</option>
             </select>
           </label>
           <button type="button" className={`albatros-chip albatros-chip-avviso ${filtroEnte === 'nessuno' ? 'attivo' : ''}`} style={{ alignSelf: 'flex-end' }}
@@ -221,8 +247,13 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                   const voci = vociPer[s.id] || [];
                   const det = dettaglioSpesa(s, voci);
                   const aperta = espansa === s.id;
-                  // Si apre se la categoria è dettagliabile, o se ha già delle voci da vedere.
-                  const dettagliabile = spesaDettagliabile(s, categorie);
+                  // Si apre uno scontrino, o una spesa che ha già delle voci da vedere.
+                  const dettagliabile = spesaDettagliabile(s);
+                  const categorieVoci = [...new Set(voci.map(v => nomeCategoria(categorie, v.categoria_id)))];
+                  // Con un filtro per categoria, di uno scontrino si vedono solo le voci di quella categoria.
+                  const filtraVoci = !!filtroCategoria && filtroCategoria !== DA_DETTAGLIARE && spesaMulticategoria(s);
+                  const vociMostrate = filtraVoci ? voci.filter(v => (v.categoria_id ?? null) === categoriaFiltro) : voci;
+                  const altreVoci = voci.filter(v => !vociMostrate.includes(v));
                   const apribile = dettagliabile || voci.length > 0;
                   return (
                   <Fragment key={s.id}>
@@ -234,7 +265,9 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                       {dettagliabile && voci.length === 0 && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }} title="Scontrino da dettagliare: tocca la riga e aggiungi le voci">Da dettagliare</span>}
                       {voci.length > 0 && <span className={`albatros-badge mini ${det.nonDettagliato > 0 ? 'da-specificare' : 'chiusa'}`} style={{ marginLeft: '6px' }}>{det.nonDettagliato > 0 && dettagliabile ? 'Da dettagliare · ' : ''}{voci.length} {voci.length === 1 ? 'voce' : 'voci'} · {Math.round(det.quota * 100)}%</span>}
                     </td>
-                    <td className="sk-mezzo" data-etichetta="Categoria">{nomeCategoria(categorie, s.categoria_id)}</td>
+                    <td className="sk-mezzo" data-etichetta="Categoria">{spesaMulticategoria(s)
+                      ? <span title={categorieVoci.join(', ') || 'Ancora nessuna voce'}><span className="albatros-tenue">Scontrino{categorieVoci.length ? ' · ' : ''}</span>{categorieVoci.slice(0, 2).join(', ')}{categorieVoci.length > 2 ? ` +${categorieVoci.length - 2}` : ''}</span>
+                      : nomeCategoria(categorie, s.categoria_id)}</td>
                     <td className="sk-mezzo" data-etichetta="Pagata da" onClick={(e) => e.stopPropagation()}>
                       {s.ente ? <>{etichettaEnte(s.ente)}{s.ente === 'albatros' && (spesaDaPagare(s)
                         ? <> <select value="" onChange={(e) => segnaPagata(s, e.target.value)} className="albatros-badge-select" title="Quando è pagata, scegli con cosa">
@@ -265,25 +298,41 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                     <tr className="albatros-dettaglio-riga">
                       <td colSpan={puoCorreggere ? 7 : 6}>
                         {voci.length === 0 && dettagliabile && <p className="albatros-vuoto" style={{ marginTop: 0 }}>Nessuna voce: aggiungi qui sotto cosa c'è nello scontrino.</p>}
-                        {voci.map(v => (
+                        {vociMostrate.map(v => (
                           <div key={v.id} className="albatros-riga">
-                            <div className="albatros-riga-testo">{v.descrizione} <span className="albatros-tenue">· {nomeCategoria(categorie, v.categoria_id)}</span></div>
+                            <div className="albatros-riga-testo">
+                              {v.descrizione}
+                              {vocePerCategoria === v.id
+                                ? <SceltaCategoria categorie={categorie} tipo="spesa" valore={String(v.categoria_id ?? '')} onChange={(x) => cambiaCategoriaVoce(v, x)} className="albatros-campo albatros-categoria-voce" />
+                                : <span className="albatros-tenue"> · {nomeCategoria(categorie, v.categoria_id)}</span>}
+                            </div>
                             <div className="albatros-riga-importo">{euro(v.importo)}</div>
+                            {puoCorreggere && (
+                              <button type="button" className={`btn-icon-action ${vocePerCategoria === v.id ? 'attivo' : ''}`} title={vocePerCategoria === v.id ? 'Lascia com\'è' : 'Cambia la categoria'}
+                                onClick={() => setVocePerCategoria(vocePerCategoria === v.id ? null : v.id)}>
+                                <Icona nome={vocePerCategoria === v.id ? 'annulla' : 'modifica'} size={14} style={{ marginRight: 0 }} />
+                              </button>
+                            )}
                             {puoCorreggere && <button type="button" className="btn-icon-action danger" title="Togli la voce" onClick={() => togliVoce(v)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
                           </div>
                         ))}
+                        {altreVoci.length > 0 && (
+                          <p className="albatros-nota" style={{ marginTop: '6px' }}>
+                            E {altreVoci.length} {altreVoci.length === 1 ? 'voce' : 'voci'} di altre categorie ({euro(altreVoci.reduce((t, v) => t + num(v.importo), 0))}), nascoste dal filtro.
+                          </p>
+                        )}
                         <div className="albatros-voce-q" style={{ marginTop: '6px' }}><span>Dettagliato</span><span>{euro(det.dettagliato)} di {euro(det.totale)}</span></div>
                         <div className="albatros-voce-q" style={{ fontWeight: 700, color: det.nonDettagliato > 0 ? '#b45309' : '#15803d' }}>
                           <span>{det.nonDettagliato > 0 ? 'Non dettagliato' : 'Tutto dettagliato'}</span><span>{euro(det.nonDettagliato)}</span>
                         </div>
-                        {!dettagliabile && <p className="albatros-nota">La categoria di questa spesa non si dettaglia: le voci qui sopra si possono solo vedere.</p>}
+                        {!dettagliabile && <p className="albatros-nota">Questa spesa ha una sola categoria: le voci qui sopra si possono solo vedere.</p>}
                         {dettagliabile && det.nonDettagliato > 0 && (
                           <div className="albatros-form-voce-spesa">
                             <input type="text" value={nuovaVoce.descrizione} placeholder="Cosa (es. detersivi)" autoFocus
                               onChange={(e) => setNuovaVoce({ ...nuovaVoce, descrizione: e.target.value })} className="albatros-campo" />
                             <input type="text" inputMode="decimal" value={nuovaVoce.importo} placeholder={String(det.nonDettagliato).replace('.', ',')}
                               onChange={(e) => setNuovaVoce({ ...nuovaVoce, importo: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && aggiungiVoce(s)} className="albatros-campo albatros-importo" />
-                            <SceltaCategoria categorie={categorie} tipo="spesa" valore={nuovaVoce.categoria ?? String(s.categoria_id ?? '')} onChange={(v) => setNuovaVoce({ ...nuovaVoce, categoria: v })} />
+                            <SceltaCategoria categorie={categorie} tipo="spesa" valore={nuovaVoce.categoria} onChange={(v) => setNuovaVoce({ ...nuovaVoce, categoria: v })} />
                             <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={() => aggiungiVoce(s)}>+ Voce</button>
                           </div>
                         )}
@@ -314,9 +363,19 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
               <label className="albatros-etichetta" style={{ gridColumn: '1 / -1' }}>Cosa
                 <input type="text" value={modulo.descrizione} autoFocus={!modulo.spesaBfm} disabled={!!modulo.spesaBfm} placeholder="Es. spesa Esselunga, lampadina campo 2" onChange={(e) => setModulo({ ...modulo, descrizione: e.target.value })} className="albatros-campo" />
               </label>
-              <label className="albatros-etichetta">Categoria
-                <SceltaCategoria categorie={categorie} tipo="spesa" valore={modulo.categoria} onChange={(v) => setModulo({ ...modulo, categoria: v })} />
-              </label>
+              {!modulo.spesaBfm && (
+                <label className="albatros-etichetta">Tipo
+                  <select value={modulo.multicategoria ? 'scontrino' : 'semplice'} onChange={(e) => setModulo({ ...modulo, multicategoria: e.target.value === 'scontrino' })} className="albatros-campo">
+                    <option value="semplice">Una categoria</option>
+                    <option value="scontrino">Scontrino con più categorie</option>
+                  </select>
+                </label>
+              )}
+              {!modulo.multicategoria && (
+                <label className="albatros-etichetta">Categoria
+                  <SceltaCategoria categorie={categorie} tipo="spesa" valore={modulo.categoria} onChange={(v) => setModulo({ ...modulo, categoria: v })} />
+                </label>
+              )}
               <label className="albatros-etichetta">Pagata da
                 <select value={modulo.ente} disabled={!!modulo.spesaBfm} onChange={(e) => setModulo({ ...modulo, ente: e.target.value })} className="albatros-campo">
                   <option value="">Da attribuire</option>
@@ -332,6 +391,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                 </label>
               )}
             </div>
+            {modulo.multicategoria && <p className="albatros-nota">Le categorie si danno alle voci dello scontrino: salvato, si apre il dettaglio per scriverle (anche più tardi, anche in parte).</p>}
             {modulo.spesaBfm && <p className="albatros-nota">Arriva dal modulo Spese di BFM: è un'uscita del conto corrente, oneri bancari compresi. Qui scegli la categoria di Albatros; data, importo e descrizione si cambiano nel modulo Spese.</p>}
             {!modulo.id && <p className="albatros-nota">Le spese pagate da BFM non si scrivono qui: si registrano nel modulo Spese di BFM e arrivano da sole.</p>}
             {!puoCorreggere && <p className="albatros-nota">Una spesa aggiunta non si può più cambiare né togliere: in caso di errore avvisa l'amministratore.</p>}

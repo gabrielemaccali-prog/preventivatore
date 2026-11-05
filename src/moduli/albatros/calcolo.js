@@ -102,21 +102,21 @@ export function dettaglioSpesa(spesa, righe) {
   const dettagliato = r2((righe || []).reduce((t, x) => t + num(x.importo), 0));
   return { totale, dettagliato, nonDettagliato: r2(totale - dettagliato), quota: totale > 0 ? Math.min(dettagliato / totale, 1) : 0 };
 }
-// Quanto di una spesa va a una categoria (null = senza categoria): le voci di quella categoria (una
-// voce senza categoria prende quella della spesa) più, se la spesa è di quella categoria, la parte non
-// dettagliata. Una spesa senza voci va tutta alla sua categoria.
+// Le categorie delle spese sono un solo livello. Una spesa semplice ha la sua categoria in testata;
+// uno scontrino (multicategoria) no: le categorie stanno sulle sue voci, e quello che non è ancora
+// dettagliato non ha categoria, è "da dettagliare" (vedi sql/albatros_spese_multicategoria.sql).
+export const spesaMulticategoria = (spesa) => !!spesa?.multicategoria;
+// Il filtro che raccoglie la parte non dettagliata degli scontrini.
+export const DA_DETTAGLIARE = 'da_dettagliare';
+// Quanto di una spesa va a una categoria (null = senza categoria, DA_DETTAGLIARE = la parte non
+// dettagliata degli scontrini): di una spesa semplice conta la testata, di uno scontrino le voci.
 export function importoInCategoria(spesa, voci, categoriaId) {
-  const cat = categoriaId ?? null;
-  const nelleVoci = r2((voci || []).filter(v => (v.categoria_id ?? spesa.categoria_id ?? null) === cat).reduce((t, v) => t + num(v.importo), 0));
-  const resto = (spesa.categoria_id ?? null) === cat ? dettaglioSpesa(spesa, voci).nonDettagliato : 0;
-  return r2(nelleVoci + Math.max(resto, 0));
+  if (!spesaMulticategoria(spesa)) return categoriaId !== DA_DETTAGLIARE && (spesa.categoria_id ?? null) === (categoriaId ?? null) ? r2(spesa.importo) : 0;
+  if (categoriaId === DA_DETTAGLIARE) return Math.max(dettaglioSpesa(spesa, voci).nonDettagliato, 0);
+  return r2((voci || []).filter(v => (v.categoria_id ?? null) === (categoriaId ?? null)).reduce((t, v) => t + num(v.importo), 0));
 }
-// Si può aprire il dettaglio di una spesa solo se la sua categoria è dettagliabile (Configuratore).
-// Prima di sql/albatros_categorie_dettagliabili.sql la colonna non c'è: allora lo sono tutte.
-export const spesaDettagliabile = (spesa, categorie) => {
-  const cat = (categorie || []).find(c => c.id === spesa?.categoria_id);
-  return !!cat && (cat.dettagliabile ?? true);
-};
+// Si apre per scriverci le voci solo uno scontrino.
+export const spesaDettagliabile = (spesa) => spesaMulticategoria(spesa);
 export const rigaSpesaConsentita = (spesa, righe, importo) => r2(dettaglioSpesa(spesa, righe).dettagliato + num(importo)) <= r2(spesa?.importo);
 
 // Il periodo dei filtri di Chiusure e Spese: si parte dal mese corrente.

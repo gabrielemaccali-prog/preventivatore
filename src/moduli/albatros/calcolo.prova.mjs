@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
-  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare,
+  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, DA_DETTAGLIARE, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare,
 } from './calcolo.js';
 import { missioneAperta, missioneScaduta, confrontaMissioni, campiCambioStato, statoDopoAttivita, avanzamento, attivitaScaduta } from './regoleMissioni.js';
 
@@ -62,16 +62,20 @@ verifica('spesa: non dettagliato', 149.5, dettaglioSpesa(scontrino, vociScontrin
 verifica('spesa: voce dentro il totale', true, rigaSpesaConsentita(scontrino, vociScontrino, 149.5));
 verifica('spesa: voce oltre il totale', false, rigaSpesaConsentita(scontrino, vociScontrino, 149.51));
 verifica('spesa senza voci', 0, dettaglioSpesa(scontrino, []).quota);
-const misto = { importo: 100, categoria_id: 4 };
-const vociMiste = [{ importo: 30, categoria_id: 5 }, { importo: 50, categoria_id: null }];
-verifica('categoria: voci della spesa e parte non dettagliata', 70, importoInCategoria(misto, vociMiste, 4));
-verifica("categoria: solo la voce di un'altra categoria", 30, importoInCategoria(misto, vociMiste, 5));
-verifica('categoria: spesa senza voci, tutta', 100, importoInCategoria(misto, [], 4));
-verifica("categoria: non c'entra", 0, importoInCategoria(misto, [], 6));
-const catSpese = [{ id: 4, dettagliabile: true }, { id: 5, dettagliabile: false }];
-verifica('dettaglio: spesa bar sì', true, spesaDettagliabile({ categoria_id: 4 }, catSpese));
-verifica('dettaglio: pulizia no', false, spesaDettagliabile({ categoria_id: 5 }, catSpese));
-verifica('dettaglio: senza categoria no', false, spesaDettagliabile({ categoria_id: null }, catSpese));
+const semplice = { importo: 100, categoria_id: 4 };
+verifica('spesa semplice: tutta alla sua categoria', 100, importoInCategoria(semplice, [], 4));
+verifica("spesa semplice: un'altra categoria no", 0, importoInCategoria(semplice, [], 6));
+verifica('spesa semplice: mai da dettagliare', 0, importoInCategoria(semplice, [], DA_DETTAGLIARE));
+const scontrinoMisto = { importo: 100, categoria_id: null, multicategoria: true };
+const vociMiste = [{ importo: 30, categoria_id: 5 }, { importo: 50, categoria_id: 4 }];
+verifica('scontrino: la voce di una categoria', 30, importoInCategoria(scontrinoMisto, vociMiste, 5));
+verifica("scontrino: l'altra voce", 50, importoInCategoria(scontrinoMisto, vociMiste, 4));
+verifica('scontrino: la parte non dettagliata è da dettagliare', 20, importoInCategoria(scontrinoMisto, vociMiste, DA_DETTAGLIARE));
+verifica('scontrino: la testata vuota non è "senza categoria"', 0, importoInCategoria(scontrinoMisto, vociMiste, null));
+verifica('scontrino: una voce senza categoria sì', 10, importoInCategoria(scontrinoMisto, [{ importo: 10, categoria_id: null }], null));
+verifica('scontrino senza voci: tutto da dettagliare', 100, importoInCategoria(scontrinoMisto, [], DA_DETTAGLIARE));
+verifica('dettaglio: lo scontrino sì', true, spesaDettagliabile(scontrinoMisto));
+verifica('dettaglio: la spesa semplice no', false, spesaDettagliabile(semplice));
 
 // ---------- pagamenti a Lama e BFM ----------
 const speseEnti = [{ ente: 'lama', importo: 661 }, { ente: 'albatros', importo: 100 }, { ente: 'bfm', importo: 50 }];

@@ -25,11 +25,18 @@ function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere })
   // La categoria del listino di cui si sta scegliendo l'icona.
   const [sceltaIcona, setSceltaIcona] = useState(null);
 
+  // Una categoria di spesa è usata dalle spese semplici (in testata) e dalle voci degli scontrini:
+  // si conta ogni spesa una volta sola.
   const caricaUsi = async () => {
-    const { data } = await leggiTutte(() => supabase.from('albatros_spese').select('id, categoria_id').order('id'));
-    const conta = {};
-    (data || []).forEach(s => { if (s.categoria_id != null) conta[s.categoria_id] = (conta[s.categoria_id] || 0) + 1; });
-    setUsiSpese(conta);
+    const [{ data: spese }, { data: voci }] = await Promise.all([
+      leggiTutte(() => supabase.from('albatros_spese').select('id, categoria_id').order('id')),
+      leggiTutte(() => supabase.from('albatros_spese_righe').select('id, spesa_id, categoria_id').order('id')),
+    ]);
+    const usi = {};
+    [...(spese || []).map(s => [s.categoria_id, s.id]), ...(voci || []).map(v => [v.categoria_id, v.spesa_id])].forEach(([cat, spesa]) => {
+      if (cat != null) (usi[cat] = usi[cat] || new Set()).add(spesa);
+    });
+    setUsiSpese(Object.fromEntries(Object.entries(usi).map(([cat, ids]) => [cat, ids.size])));
   };
   useEffect(() => { caricaUsi(); }, []);
 
@@ -91,7 +98,6 @@ function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere })
     if (await scrivi(() => supabase.from('albatros_categorie').update({ icona }).eq('id', c.id))) setSceltaIcona(null);
   };
 
-  const cambiaDettagliabile = (c) => scrivi(() => supabase.from('albatros_categorie').update({ dettagliabile: !c.dettagliabile }).eq('id', c.id));
 
   const cambiaAttiva = (c) => scrivi(() => supabase.from('albatros_categorie').update({ attiva: !c.attiva }).eq('id', c.id));
 
@@ -129,15 +135,6 @@ function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere })
                     onBlur={() => rinomina(c)} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />
                 </div>
                 <span className="albatros-tenue" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{descriviUsi(c)}{c.attiva ? '' : ' · archiviata'}</span>
-                {tipo === 'spesa' && c.dettagliabile !== undefined && (
-                  <label className="albatros-con-icona" style={{ gap: '6px', fontSize: '0.78rem', color: '#475569', whiteSpace: 'nowrap' }} title="Le spese di questa categoria si possono aprire per scrivere le voci dello scontrino">
-                    Dettaglio
-                    <span className="albatros-interruttore">
-                      <input type="checkbox" checked={!!c.dettagliabile} disabled={!puoCorreggere || inCorso} onChange={() => cambiaDettagliabile(c)} />
-                      <span />
-                    </span>
-                  </label>
-                )}
                 {puoCorreggere && <button type="button" className="btn-icon-action" title={c.attiva ? 'Archivia' : 'Rimetti fra le scelte'} disabled={inCorso} onClick={() => cambiaAttiva(c)}><Icona nome={c.attiva ? 'archivia' : 'riporta'} size={14} style={{ marginRight: 0 }} /></button>}
                 {puoCorreggere && <button type="button" className="btn-icon-action danger" title="Cancella" disabled={inCorso} onClick={() => elimina(c)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
               </div>

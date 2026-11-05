@@ -188,7 +188,7 @@ function Cashflow({ user, categorie, puoCorreggere }) {
                 {mov.map((m, i) => (
                   <tr key={i} style={{ cursor: 'default' }}>
                     <td style={{ whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(m.data)}</td>
-                    <td>{m.descrizione}{m.spesa && <span className="albatros-tenue"> · {nomeCategoria(categorie, m.spesa.categoria_id)}</span>}</td>
+                    <td>{m.descrizione}{m.spesa && <span className="albatros-tenue"> · {m.spesa.multicategoria ? 'scontrino' : nomeCategoria(categorie, m.spesa.categoria_id)}</span>}</td>
                     <td className="num" style={{ color: '#15803d' }}>{m.importo > 0 ? euro(m.importo) : ''}</td>
                     <td className="num" style={{ color: '#b91c1c' }}>{m.importo < 0 ? euro(-m.importo) : ''}</td>
                     {puoCorreggere && (
