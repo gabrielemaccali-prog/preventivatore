@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Giornata from './Giornata'
@@ -26,6 +26,8 @@ function Albatros({ user, scheda, onScheda, onMissioniCambiate }) {
   const setScheda = onScheda;
   // La giornata aperta nella scheda Giornata: la sceglie anche l'elenco delle chiusure.
   const [giorno, setGiorno] = useState(giornataDiLavoro);
+  // Vero quando la Giornata si apre da una riga dell'elenco delle chiusure: allora resta su quella.
+  const apertaDallElenco = useRef(false);
   const [listino, setListino] = useState([]);
   const [categorie, setCategorie] = useState([]);
   const [utenti, setUtenti] = useState({});
@@ -59,8 +61,21 @@ function Albatros({ user, scheda, onScheda, onMissioniCambiate }) {
   }, []);
 
   const schedeVisibili = SCHEDE_ALBATROS.filter(s => puoVedere(user, 'albatros', s.id));
+  const attiva = (schedeVisibili.find(s => s.id === scheda) || schedeVisibili[0])?.id;
+
+  // La Giornata si apre sull'ultima giornata non chiusa: se l'ultima giornata lavorata prima di oggi
+  // è rimasta aperta (chi chiude la mattina dopo, o il giorno dopo) si va lì, altrimenti su oggi.
+  // Non quando la si apre toccando una giornata nell'elenco delle chiusure.
+  useEffect(() => {
+    if (attiva !== 'chiusure') return;
+    if (apertaDallElenco.current) { apertaDallElenco.current = false; return; }
+    const oggi = giornataDiLavoro();
+    supabase.from('albatros_chiusure').select('data, chiusa_il').lt('data', oggi)
+      .order('data', { ascending: false }).limit(1).maybeSingle()
+      .then(({ data: ultima }) => setGiorno(ultima && !ultima.chiusa_il ? ultima.data : oggi));
+  }, [attiva]);
+
   if (schedeVisibili.length === 0) return null;
-  const attiva = (schedeVisibili.find(s => s.id === scheda) || schedeVisibili[0]).id;
   const puoCorreggere = !!user.isAdmin;
   const comuni = { user, listino, ricaricaListino, categorie, ricaricaCategorie, utenti, puoCorreggere };
 
@@ -81,7 +96,7 @@ function Albatros({ user, scheda, onScheda, onMissioniCambiate }) {
       {!schemaMancante && !categorieMancanti && (
         <>
           {attiva === 'chiusure' && <Giornata {...comuni} data={giorno} setData={setGiorno} />}
-          {attiva === 'storico' && <StoricoChiusure {...comuni} onApri={(d) => { setGiorno(d); setScheda('chiusure'); }} />}
+          {attiva === 'storico' && <StoricoChiusure {...comuni} onApri={(d) => { apertaDallElenco.current = true; setGiorno(d); setScheda('chiusure'); }} />}
           {attiva === 'spese' && <Spese {...comuni} />}
           {attiva === 'listino' && <Listino {...comuni} />}
           {attiva === 'configuratore' && <Configuratore {...comuni} />}
