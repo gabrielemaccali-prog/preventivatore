@@ -6,7 +6,7 @@ import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   quadratura, euro, r2, num, nomeCategoria, giornataDiLavoro, etichettaEnte,
   CAUSALI_PAGAMENTO, METODI_PAGAMENTO, etichettaCausale, etichettaMetodo, posizioneEnte, contantiAlbatros, contoAlbatros,
-  spesaDaPagare, TASCHE, etichettaTasca,
+  spesaDaPagare, TASCHE, etichettaTasca, movimentiAcconti, etichettaMetodoAcconto,
 } from './calcolo'
 
 // ============================================================
@@ -22,6 +22,8 @@ import {
 // Le spese ancora da attribuire non sono di nessuno: si segnalano e basta.
 // Nella pagina di Albatros l'amministratore registra anche i trasferimenti fra contanti in mano e
 // conto (versamenti e prelievi): spostano i soldi da una tasca all'altra, il saldo non cambia.
+// Gli acconti dei clienti (scheda Chiusure) entrano il giorno in cui sono versati, nei contanti o
+// sul conto; se rimborsati, il rimborso esce il giorno in cui è fatto.
 // ============================================================
 
 const SOTTOSCHEDE = [
@@ -38,13 +40,18 @@ const BENEFICIARI = { albatros: ['lama', 'bfm'], bfm: ['lama'] };
 // I movimenti di un ente: entrate positive, uscite negative, dal più recente.
 // Un trasferimento non è né entrata né uscita: ha importo 0 per il saldo, e la cifra spostata in
 // "trasferito".
-function movimentiDi(ente, chiusure, spese, pagamenti, trasferimenti) {
+function movimentiDi(ente, chiusure, spese, pagamenti, trasferimenti, acconti, nomeVoce) {
   const righe = [];
   if (ente === 'albatros') {
     chiusure.filter(c => c.chiusa_il).forEach(c => {
       const q = quadratura(c, []);
       if (q.pos > 0) righe.push({ data: c.data, importo: q.pos, descrizione: 'Incasso POS', tipo: 'pos' });
       if (q.ritirato > 0) righe.push({ data: c.data, importo: q.ritirato, descrizione: 'Contanti ritirati alla chiusura', tipo: 'contanti' });
+    });
+    acconti.forEach(a => {
+      const cosa = `${nomeVoce(a.voce_id)} del ${formattaDataGGMMAAAA(a.data_riferimento)}, ${a.cliente}`;
+      righe.push({ data: a.data_versamento, importo: r2(num(a.importo)), descrizione: `Acconto: ${cosa} · ${etichettaMetodoAcconto(a.metodo).toLowerCase()}`, tipo: 'acconto' });
+      if (a.stato === 'rimborsato') righe.push({ data: a.rimborso_data, importo: -r2(num(a.importo)), descrizione: `Rimborso acconto: ${cosa} · ${a.rimborso_metodo === 'contanti' ? 'contanti' : 'dal conto'}`, tipo: 'rimborso_acconto' });
     });
     trasferimenti.forEach(t => righe.push({
       data: t.data, importo: 0, trasferito: r2(num(t.importo)), tipo: 'trasferimento', trasferimento: t,
@@ -59,7 +66,7 @@ function movimentiDi(ente, chiusure, spese, pagamenti, trasferimenti) {
 }
 const sommaTipo = (mov, tipo) => r2(mov.filter(m => m.tipo === tipo).reduce((t, m) => t + m.importo, 0));
 
-function Cashflow({ user, categorie, puoCorreggere }) {
+function Cashflow({ user, categorie, listino, puoCorreggere }) {
   const visibili = SOTTOSCHEDE.filter(s => puoVedere(user, 'albatros', 'cashflow', s.id));
   const [scelta, setScelta] = useState(null);
   const [chiusure, setChiusure] = useState([]);
@@ -70,6 +77,7 @@ function Cashflow({ user, categorie, puoCorreggere }) {
   // Il pagamento nell'overlay: null = chiuso.
   const [modulo, setModulo] = useState(null);
   const [trasferimenti, setTrasferimenti] = useState([]);
+  const [acconti, setAcconti] = useState([]);
   // Finché sql/albatros_trasferimenti.sql non è stato eseguito la tabella non c'è.
   const [trasferimentiMancanti, setTrasferimentiMancanti] = useState(null);
   // Il trasferimento nell'overlay: null = chiuso.
@@ -78,12 +86,15 @@ function Cashflow({ user, categorie, puoCorreggere }) {
 
   // Si leggono tutte: il saldo parte dalla prima chiusura. Sono poche righe al giorno.
   const carica = async () => {
-    const [ch, sp, pg, tr] = await Promise.all([
+    const [ch, sp, pg, tr, ac] = await Promise.all([
       leggiTutte(() => supabase.from('albatros_chiusure').select('*').order('id')),
       leggiTutte(() => supabase.from('albatros_spese').select('*').order('id')),
       leggiTutte(() => supabase.from('albatros_pagamenti').select('*').order('id')),
       leggiTutte(() => supabase.from('albatros_trasferimenti').select('*').order('id')),
+      // Senza sql/albatros_acconti.sql la tabella non c'è: si conta senza acconti.
+      leggiTutte(() => supabase.from('albatros_acconti').select('*').order('id')),
     ]);
+    setAcconti(ac.data || []);
     setTrasferimenti(tr.data || []);
     setTrasferimentiMancanti(tr.error ? tr.error.message : null);
     setChiusure(ch.data || []);
@@ -95,11 +106,13 @@ function Cashflow({ user, categorie, puoCorreggere }) {
 
   if (visibili.length === 0) return null;
   const attiva = visibili.find(s => s.id === scelta) || visibili[0];
-  const mov = movimentiDi(attiva.ente, chiusure, spese, pagamenti, trasferimenti);
+  const nomeVoce = (id) => listino.find(v => v.id === id)?.nome || 'voce';
+  const mov = movimentiDi(attiva.ente, chiusure, spese, pagamenti, trasferimenti, acconti, nomeVoce);
+  const accontiInAttesa = movimentiAcconti(acconti).inAttesa;
   const daAttribuire = spese.filter(s => !s.ente);
   const ultimaConFondo = [...chiusure].filter(c => c.chiusa_il && c.fondo_lasciato != null).sort((a, b) => b.data.localeCompare(a.data))[0];
-  const cassa = contantiAlbatros(chiusure, spese, pagamenti, trasferimenti);
-  const conto = contoAlbatros(chiusure, spese, pagamenti, trasferimenti);
+  const cassa = contantiAlbatros(chiusure, spese, pagamenti, trasferimenti, acconti);
+  const conto = contoAlbatros(chiusure, spese, pagamenti, trasferimenti, acconti);
   const posizione = attiva.ente === 'albatros' ? null : posizioneEnte(attiva.ente, spese, pagamenti);
   const beneficiari = BENEFICIARI[attiva.ente] || [];
   // La posizione di chi riceve il pagamento in corso: serve a proporre il rimborso.
@@ -201,11 +214,17 @@ function Cashflow({ user, categorie, puoCorreggere }) {
           {attiva.ente === 'albatros' ? (
             <>
               <div className="albatros-cifra-saldo"><span>Saldo attuale</span><strong>{euro(mov.reduce((t, m) => t + m.importo, 0))}</strong><small>contanti in mano + conto</small></div>
-              <div><span>Contanti in mano</span><strong>{euro(cassa.inMano)}</strong><small>ritirati − spese e pagamenti in contanti ± trasferimenti</small></div>
-              <div><span>Conto (carta e POS)</span><strong>{euro(conto.saldo)}</strong><small>POS − spese con carta − pagamenti non in contanti ± trasferimenti</small></div>
+              <div><span>Contanti in mano</span><strong>{euro(cassa.inMano)}</strong><small>ritirati − spese e pagamenti in contanti ± trasferimenti e acconti</small></div>
+              <div><span>Conto (carta e POS)</span><strong>{euro(conto.saldo)}</strong><small>POS − spese con carta − pagamenti non in contanti ± trasferimenti e acconti</small></div>
               {spese.some(spesaDaPagare) && (
                 <div><span>Da pagare</span><strong style={{ color: '#b45309' }}>{euro(spese.filter(spesaDaPagare).reduce((t, s) => t + num(s.importo), 0))}</strong>
                   <small>{spese.filter(spesaDaPagare).length} spese non ancora pagate, fuori dal saldo</small></div>
+              )}
+              {accontiInAttesa > 0 && (
+                <div><span>Acconti da confermare</span><strong style={{ color: '#b45309' }}>{euro(accontiInAttesa)}</strong><small>già nel saldo, l'evento deve ancora arrivare</small></div>
+              )}
+              {acconti.length > 0 && (
+                <div><span>Acconti</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo(mov, 'acconto') + sommaTipo(mov, 'rimborso_acconto'))}</strong><small>versati − rimborsati</small></div>
               )}
               <div><span>Incassi POS</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo(mov, 'pos'))}</strong><small>entrate</small></div>
               <div><span>Contanti ritirati</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo(mov, 'contanti'))}</strong><small>entrate, dalle chiusure</small></div>

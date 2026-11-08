@@ -3,8 +3,9 @@ import { supabase } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import { scaricaExcel } from '../../lib/excel'
-import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, euro, r2, periodoIniziale, intervalloPeriodo } from './calcolo'
+import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, euro, r2, periodoIniziale, intervalloPeriodo, accontiConfermati, accontoConfermabile, giornataDiLavoro } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
+import Acconti from './Acconti'
 
 // ============================================================
 // Scheda Chiusure: le giornate di un mese o di una settimana (da lunedì a domenica), con
@@ -13,24 +14,36 @@ import FiltroPeriodo from './FiltroPeriodo'
 // Le giornate chiuse con un residuo non spiegato sono segnate "Da specificare" e si possono
 // vedere da sole; quelle partite con un fondo diverso da quello lasciato la sera prima "Fondo diverso".
 // Il tasto Excel scarica le giornate che si stanno guardando (periodo e filtro compresi).
+// Sopra l'elenco gli acconti: tutti quelli da confermare, più quelli del periodo. Confermato, un
+// acconto entra nell'incassato della sua giornata (vedi quadratura).
 // ============================================================
 
 // Il giorno della settimana di una data 'YYYY-MM-DD', a mezzogiorno per non farlo spostare dal fuso.
 const giornoSettimana = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('it-IT', { weekday: 'short' });
 const oraDi = (ts) => new Date(ts).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
-function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
+function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onApri }) {
   const [periodo, setPeriodo] = useState(periodoIniziale);
   const [giorni, setGiorni] = useState([]);
+  const [acconti, setAcconti] = useState([]);
+  // Finché sql/albatros_acconti.sql non è stato eseguito la tabella non c'è.
+  const [accontiMancanti, setAccontiMancanti] = useState(null);
   const [inCorso, setInCorso] = useState(false);
   const [soloDaSpecificare, setSoloDaSpecificare] = useState(false);
 
   const [da, al] = intervalloPeriodo(periodo);
+  const oggi = giornataDiLavoro();
 
   const carica = async () => {
-    const { data: ch } = await supabase.from('albatros_chiusure').select('*')
-      .gte('data', da).lte('data', al).order('data', { ascending: false });
+    const [{ data: ch }, attesi, delPeriodo] = await Promise.all([
+      supabase.from('albatros_chiusure').select('*').gte('data', da).lte('data', al).order('data', { ascending: false }),
+      supabase.from('albatros_acconti').select('*').eq('stato', 'atteso'),
+      supabase.from('albatros_acconti').select('*').gte('data_riferimento', da).lte('data_riferimento', al),
+    ]);
     const elenco = ch || [];
+    const tuttiAcconti = [...new Map([...(attesi.data || []), ...(delPeriodo.data || [])].map(a => [a.id, a])).values()];
+    setAcconti(tuttiAcconti);
+    setAccontiMancanti(attesi.error?.message || null);
     const [{ data: rg }, { data: prima }] = await Promise.all([
       elenco.length
         ? supabase.from('albatros_righe').select('chiusura_id, quantita, prezzo').in('chiusura_id', elenco.map(c => c.id))
@@ -45,7 +58,7 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
       chiusura: c,
       fondoDiverso: fondoDiverso(c, precedenteDi(c)),
       precedente: precedenteDi(c),
-      ...quadratura(c, (rg || []).filter(r => r.chiusura_id === c.id)),
+      ...quadratura(c, (rg || []).filter(r => r.chiusura_id === c.id), accontiConfermati(tuttiAcconti, c.data)),
     })));
   };
 
@@ -74,6 +87,7 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
       Data: formattaDataGGMMAAAA(g.chiusura.data),
       POS: r2(g.pos),
       Contanti: r2(g.contanti),
+      Acconti: r2(g.acconti),
       Incassato: r2(g.incassato),
       Battuto: r2(g.specificato),
       'Battuto %': chiusa(g) ? Math.round(g.quota * 100) : null,
@@ -98,6 +112,15 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
   return (
     <div className="albatros-pagina no-print">
       <div className="albatros-card">
+        {accontiMancanti ? (
+          <p className="albatros-avviso" style={{ margin: 0 }}>Per registrare gli acconti esegui <strong>sql/albatros_acconti.sql</strong> nell'SQL Editor di Supabase.</p>
+        ) : (
+          <Acconti user={user} listino={listino} categorie={categorie} utenti={utenti} puoCorreggere={puoCorreggere} acconti={acconti} onCambiati={carica}
+            conNuovo={false} titolo="Acconti" vuoto="Nessun acconto da confermare né in questo periodo. Un acconto nuovo si registra dalla Giornata." />
+        )}
+      </div>
+
+      <div className="albatros-card">
         <div className="albatros-testata">
           <FiltroPeriodo periodo={periodo} onChange={setPeriodo} />
           <button type="button" className={`albatros-chip albatros-chip-avviso ${soloDaSpecificare ? 'attivo' : ''}`} style={{ alignSelf: 'flex-end' }}
@@ -119,7 +142,7 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
             <table className="albatros-tabella">
               <thead>
-                <tr><th>Giornata</th><th className="num">POS</th><th className="num" title="Contanti incassati, senza il fondo cassa">Contanti</th><th className="num">Incassato</th><th className="num">Battuto</th><th className="num" title="Lasciato in cassa per il giorno dopo">Fondo</th><th className="num">Ritirati</th><th>Stato</th><th>Chiusa da</th>{puoCorreggere && <th></th>}</tr>
+                <tr><th>Giornata</th><th className="num">POS</th><th className="num" title="Contanti incassati, senza il fondo cassa">Contanti</th><th className="num" title="POS + contanti + acconti confermati per la giornata">Incassato</th><th className="num">Battuto</th><th className="num" title="Lasciato in cassa per il giorno dopo">Fondo</th><th className="num">Ritirati</th><th>Stato</th><th>Chiusa da</th>{puoCorreggere && <th></th>}</tr>
               </thead>
               <tbody>
                 {visibili.map(g => (
@@ -127,7 +150,7 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
                     <td style={{ whiteSpace: 'nowrap' }}><span className="albatros-giorno">{giornoSettimana(g.chiusura.data)}</span> {formattaDataGGMMAAAA(g.chiusura.data)}</td>
                     <td className="num">{euro(g.pos)}</td>
                     <td className="num">{euro(g.contanti)}</td>
-                    <td className="num"><strong>{euro(g.incassato)}</strong></td>
+                    <td className="num"><strong>{euro(g.incassato)}</strong>{g.acconti > 0 && <div className="albatros-tenue" style={{ fontSize: '0.72rem' }}>di cui acconti {euro(g.acconti)}</div>}</td>
                     <td className="num">{euro(g.specificato)}{g.chiusura.chiusa_il && <span className="albatros-tenue"> ({Math.round(g.quota * 100)}%)</span>}</td>
                     <td className="num"><span className="albatros-tenue">{g.chiusura.chiusa_il ? euro(g.fondoLasciato) : '—'}</span></td>
                     <td className="num">{g.chiusura.chiusa_il && g.ritirato > 0
@@ -135,6 +158,7 @@ function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
                       : <span className="albatros-tenue">—</span>}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {g.chiusura.chiusa_il ? <span className="albatros-badge chiusa mini">Chiusa</span> : <span className="albatros-badge aperta mini">Aperta</span>}
+                      {acconti.some(a => a.data_riferimento === g.chiusura.data && accontoConfermabile(a, oggi)) && <span className="albatros-badge da-specificare mini" title="C'è un acconto per questa giornata da confermare (sopra)">Acconto da confermare</span>}
                       {daSpecificare(g.chiusura, g) && <span className="albatros-badge da-specificare mini" title={`Residuo non spiegato: ${euro(g.nonSpecificato)}`}>Da specificare {euro(g.nonSpecificato)}</span>}
                       {g.chiusura.chiusa_il && g.nonSpecificato < 0 && <span className="albatros-badge oltre mini" title="Il battuto supera l'incassato">Battuto oltre {euro(-g.nonSpecificato)}</span>}
                       {fondoDaSpecificare(g.chiusura) && <span className="albatros-badge da-specificare mini" title="Fondo di partenza e fondo lasciato non sono ancora scritti">Fondo da specificare</span>}

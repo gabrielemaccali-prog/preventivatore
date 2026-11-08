@@ -100,6 +100,10 @@ function Listino({ user, listino, ricaricaListino, categorie, puoCorreggere }) {
     try {
       const { error: e1 } = await supabase.from('albatros_righe').update({ voce_id: destinazione.id }).eq('voce_id', unione.voce.id);
       if (e1) return alert(`Errore nello spostare le righe: ${e1.message}`);
+      // Anche gli acconti: senza, cancellando il doppione perderebbero la voce. Se la tabella non
+      // c'è ancora non c'è niente da spostare.
+      const { error: e3 } = await supabase.from('albatros_acconti').update({ voce_id: destinazione.id }).eq('voce_id', unione.voce.id);
+      if (e3 && e3.code !== '42P01') return alert(`Errore nello spostare gli acconti: ${e3.message}`);
       const { error: e2 } = await supabase.from('albatros_listino').delete().eq('id', unione.voce.id);
       if (e2) return alert(`Righe spostate, ma la voce non si è cancellata: ${e2.message}`);
       setUnione(null);

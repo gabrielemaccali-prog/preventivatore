@@ -68,28 +68,69 @@ export const TASCHE = [
 export const etichettaTasca = (id) => TASCHE.find(t => t.id === id)?.label || id;
 const trasferiti = (trasferimenti, da) => r2((trasferimenti || []).filter(t => t.da === da).reduce((s, t) => s + num(t.importo), 0));
 
+// --- Acconti (albatros_acconti) ---
+// Un acconto è versato su una voce del listino per un giorno che deve venire. I soldi entrano il
+// giorno del versamento, qualunque cosa succeda dopo; il giorno di riferimento si conferma, ed è
+// incasso di quella giornata. Disdetto, si rimborsa (esce dalla cassa o dal conto) o si trattiene.
+export const METODI_ACCONTO = [
+  { id: 'contanti', label: 'Contanti' },
+  { id: 'pos', label: 'POS' },
+  { id: 'bonifico', label: 'Bonifico' },
+];
+export const STATI_ACCONTO = [
+  { id: 'atteso', label: 'Da confermare' },
+  { id: 'confermato', label: 'Confermato' },
+  { id: 'rimborsato', label: 'Rimborsato' },
+  { id: 'trattenuto', label: 'Trattenuto' },
+];
+export const etichettaMetodoAcconto = (id) => METODI_ACCONTO.find(m => m.id === id)?.label || id;
+export const etichettaStatoAcconto = (id) => STATI_ACCONTO.find(x => x.id === id)?.label || id;
+const sommaImporti = (elenco) => r2((elenco || []).reduce((t, a) => t + num(a.importo), 0));
+// Gli acconti confermati per una giornata: entrano nella sua quadratura.
+export const accontiConfermati = (acconti, data) => sommaImporti((acconti || []).filter(a => a.stato === 'confermato' && a.data_riferimento === data));
+// Si conferma solo quando il giorno è arrivato (oggi = giornataDiLavoro).
+// Su una voce si prende un acconto se la sua categoria lo consente (albatros_categorie.acconti,
+// dal Configuratore: il bar no). Prima di sql/albatros_acconti.sql la colonna non c'è: allora sì.
+export const accontoSullaVoce = (voce, categorie) => (categorie || []).find(c => c.id === voce?.categoria_id)?.acconti ?? true;
+export const accontoConfermabile = (acconto, oggi) => acconto?.stato === 'atteso' && acconto.data_riferimento <= oggi;
+// Dove sono finiti i soldi degli acconti: versati in contanti o sul conto, rimborsati dall'uno o dall'altro.
+export function movimentiAcconti(acconti) {
+  const elenco = acconti || [];
+  const rimborsati = elenco.filter(a => a.stato === 'rimborsato');
+  return {
+    versatiContanti: sommaImporti(elenco.filter(a => a.metodo === 'contanti')),
+    versatiConto: sommaImporti(elenco.filter(a => a.metodo !== 'contanti')),
+    rimborsatiContanti: sommaImporti(rimborsati.filter(a => a.rimborso_metodo === 'contanti')),
+    rimborsatiConto: sommaImporti(rimborsati.filter(a => a.rimborso_metodo !== 'contanti')),
+    inAttesa: sommaImporti(elenco.filter(a => a.stato === 'atteso')),
+  };
+}
+
 // I contanti di Albatros in mano: ritirati alle chiusure, meno le spese pagate da Albatros in
 // contanti, meno i pagamenti che Albatros ha fatto in contanti, meno i versamenti sul conto, più i
-// prelievi dal conto.
-export function contantiAlbatros(chiusure, spese, pagamenti, trasferimenti = []) {
+// prelievi dal conto, più gli acconti presi in contanti, meno quelli rimborsati in contanti.
+export function contantiAlbatros(chiusure, spese, pagamenti, trasferimenti = [], acconti = []) {
   const ritirati = r2((chiusure || []).filter(c => c.chiusa_il).reduce((t, c) => t + Math.max(quadratura(c, []).ritirato, 0), 0));
   const speseAlbatros = r2((spese || []).filter(s => s.ente === 'albatros' && !pagataConCarta(s) && !spesaDaPagare(s)).reduce((t, s) => t + num(s.importo), 0));
   const pagatiInContanti = r2((pagamenti || []).filter(p => p.pagante === 'albatros' && p.metodo === 'contanti').reduce((t, p) => t + num(p.importo), 0));
   const versati = trasferiti(trasferimenti, 'contanti');
   const prelevati = trasferiti(trasferimenti, 'conto');
-  return { ritirati, speseAlbatros, pagatiInContanti, versati, prelevati, inMano: r2(ritirati - speseAlbatros - pagatiInContanti - versati + prelevati) };
+  const { versatiContanti: accontiIn, rimborsatiContanti: accontiOut } = movimentiAcconti(acconti);
+  return { ritirati, speseAlbatros, pagatiInContanti, versati, prelevati, accontiIn, accontiOut, inMano: r2(ritirati - speseAlbatros - pagatiInContanti - versati + prelevati + accontiIn - accontiOut) };
 }
 
 // Il conto di Albatros, dove arrivano gli incassi POS: meno le spese pagate con carta e i pagamenti
 // che Albatros non ha fatto in contanti (bonifico, altro), più i contanti versati, meno i prelievi.
+// Più gli acconti presi con POS o bonifico, meno quelli rimborsati dal conto.
 // Contanti in mano + conto = saldo.
-export function contoAlbatros(chiusure, spese, pagamenti, trasferimenti = []) {
+export function contoAlbatros(chiusure, spese, pagamenti, trasferimenti = [], acconti = []) {
   const pos = r2((chiusure || []).filter(c => c.chiusa_il).reduce((t, c) => t + quadratura(c, []).pos, 0));
   const speseCarta = r2((spese || []).filter(s => s.ente === 'albatros' && pagataConCarta(s)).reduce((t, s) => t + num(s.importo), 0));
   const pagati = r2((pagamenti || []).filter(p => p.pagante === 'albatros' && p.metodo !== 'contanti').reduce((t, p) => t + num(p.importo), 0));
   const versati = trasferiti(trasferimenti, 'contanti');
   const prelevati = trasferiti(trasferimenti, 'conto');
-  return { pos, speseCarta, pagati, versati, prelevati, saldo: r2(pos - speseCarta - pagati + versati - prelevati) };
+  const { versatiConto: accontiIn, rimborsatiConto: accontiOut } = movimentiAcconti(acconti);
+  return { pos, speseCarta, pagati, versati, prelevati, accontiIn, accontiOut, saldo: r2(pos - speseCarta - pagati + versati - prelevati + accontiIn - accontiOut) };
 }
 
 export const num = (n) => Number(n) || 0;
@@ -152,20 +193,24 @@ export const sommaRighe = (righe) => r2((righe || []).reduce((s, r) => s + total
 // c'è in cassa e quanto si ritira: in cassa ci sono contanti + fondo di partenza, si lascia
 // fondo_lasciato, il resto lo ritirano i ragazzi: sono contanti di Albatros.
 // Le spese non c'entrano: si registrano a parte, nella scheda Spese.
+// Gli acconti confermati per la giornata (acconti, un importo: vedi accontiConfermati) sono soldi
+// già entrati nei giorni prima: non stanno nel POS né nei contanti della sera, ma sono incasso di
+// questa giornata, e chiudono la differenza fra la voce battuta per intero e il saldo incassato.
 //   nonSpecificato > 0  parte dell'incassato non ancora spiegata dalle righe (normale)
 //   nonSpecificato < 0  le righe superano l'incassato: qualcosa è contato due volte, o manca un incasso
-export function quadratura(chiusura, righe) {
+export function quadratura(chiusura, righe, acconti = 0) {
   const pos = r2(chiusura?.pos);
   const contanti = r2(chiusura?.contanti);
+  const accontiGiorno = r2(acconti);
   const fondoPartenza = r2(chiusura?.fondo_partenza);
   const fondoLasciato = r2(chiusura?.fondo_lasciato);
   const contantiInCassa = r2(contanti + fondoPartenza);
   const ritirato = r2(contantiInCassa - fondoLasciato);
-  const incassato = r2(pos + contanti);
+  const incassato = r2(pos + contanti + accontiGiorno);
   const specificato = sommaRighe(righe);
   const nonSpecificato = r2(incassato - specificato);
   const quota = incassato > 0 ? Math.min(specificato / incassato, 1) : (specificato > 0 ? 1 : 0);
-  return { pos, contanti, fondoPartenza, contantiInCassa, fondoLasciato, ritirato, incassato, specificato, nonSpecificato, quota };
+  return { pos, contanti, acconti: accontiGiorno, fondoPartenza, contantiInCassa, fondoLasciato, ritirato, incassato, specificato, nonSpecificato, quota };
 }
 
 // Il fondo di partenza proposto: quello lasciato all'ultima chiusura prima di questa giornata.
@@ -204,10 +249,10 @@ export const cassaScrivibile = (chiusura, valoreSalvato, puoCorreggere) =>
 // solo aggiungere; togliere righe resta all'amministratore.
 export const composizioneCorreggibile = (chiusura, puoCorreggere) => puoCorreggere || chiusuraModificabile(chiusura);
 
-// Su una giornata chiusa il totale è fissato da POS e contanti: le voci aggiunte spiegano il
-// residuo, ma il battuto non può superare l'incassato.
-export const aggiuntaConsentita = (chiusura, battuto, aggiunta) =>
-  chiusuraModificabile(chiusura) || r2(num(battuto) + num(aggiunta)) <= quadratura(chiusura, []).incassato;
+// Su una giornata chiusa il totale è fissato da POS, contanti e acconti confermati: le voci
+// aggiunte spiegano il residuo, ma il battuto non può superare l'incassato.
+export const aggiuntaConsentita = (chiusura, battuto, aggiunta, acconti = 0) =>
+  chiusuraModificabile(chiusura) || r2(num(battuto) + num(aggiunta)) <= quadratura(chiusura, [], acconti).incassato;
 
 // Toccare una voce frequente aggiunge 1 alla riga uguale già presente (stessa voce, stesso
 // prezzo) invece di accumulare righe da una unità.

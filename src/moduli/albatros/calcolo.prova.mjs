@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
-  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, DA_DETTAGLIARE, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare,
+  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, DA_DETTAGLIARE, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare, accontiConfermati, accontoConfermabile, movimentiAcconti, accontoSullaVoce,
 } from './calcolo.js';
 import { missioneAperta, missioneScaduta, confrontaMissioni, campiCambioStato, statoDopoAttivita, avanzamento, attivitaScaduta } from './regoleMissioni.js';
 
@@ -189,6 +189,29 @@ verifica('attività: nessuna, la missione non si tocca', null, statoDopoAttivita
 verifica('avanzamento', '1/3', (({ fatte, totale }) => `${fatte}/${totale}`)(avanzamento([{ fatta_il: 'x' }, {}, {}])));
 verifica('attività scaduta', true, attivitaScaduta({ scadenza: '2026-10-01' }, '2026-10-22'));
 verifica('attività fatta: mai scaduta', false, attivitaScaduta({ scadenza: '2026-10-01', fatta_il: 'x' }, '2026-10-22'));
+// ---------- acconti ----------
+const acconti = [
+  { importo: 50, metodo: 'contanti', stato: 'confermato', data_riferimento: '2026-11-15' },
+  { importo: 30, metodo: 'pos', stato: 'atteso', data_riferimento: '2026-11-15' },
+  { importo: 20, metodo: 'bonifico', stato: 'rimborsato', rimborso_metodo: 'contanti', data_riferimento: '2026-11-16' },
+  { importo: 40, metodo: 'contanti', stato: 'trattenuto', data_riferimento: '2026-11-15' },
+];
+verifica('acconti: solo i confermati del giorno', 50, accontiConfermati(acconti, '2026-11-15'));
+verifica('quadratura: festa 200 battuta, 150 la sera + 50 di acconto = tutto specificato', 0, quadratura({ pos: 100, contanti: 50 }, [{ quantita: 1, prezzo: 200 }], 50).nonSpecificato);
+verifica("quadratura: l'acconto non tocca i contanti da ritirare", 50, quadratura({ pos: 100, contanti: 50 }, [], 50).ritirato);
+verifica('acconti: si conferma il giorno stesso', true, accontoConfermabile({ stato: 'atteso', data_riferimento: '2026-11-15' }, '2026-11-15'));
+verifica('acconti: non prima del giorno', false, accontoConfermabile({ stato: 'atteso', data_riferimento: '2026-11-16' }, '2026-11-15'));
+verifica('acconti: in contanti entrano nei contanti, qualunque esito', 90, movimentiAcconti(acconti).versatiContanti);
+verifica('acconti: POS e bonifico sul conto', 50, movimentiAcconti(acconti).versatiConto);
+verifica('acconti: il rimborso esce da dove si dice', 20, movimentiAcconti(acconti).rimborsatiContanti);
+verifica('acconti: in attesa', 30, movimentiAcconti(acconti).inAttesa);
+verifica('cassa: + acconti in contanti − rimborsi in contanti', r2t(contantiAlbatros(chiuseCF, speseMetodo, pagati).inMano + 90 - 20), contantiAlbatros(chiuseCF, speseMetodo, pagati, [], acconti).inMano);
+verifica('conto: + acconti con POS e bonifico', r2t(contoAlbatros(chiuseCF, speseMetodo, pagati).saldo + 50), contoAlbatros(chiuseCF, speseMetodo, pagati, [], acconti).saldo);
+
+verifica('acconti: non sulle voci del bar', false, accontoSullaVoce({ categoria_id: 3 }, [{ id: 3, acconti: false }]));
+verifica('acconti: sulle feste sì', true, accontoSullaVoce({ categoria_id: 2 }, [{ id: 2, acconti: true }]));
+verifica('acconti: prima della colonna, sì', true, accontoSullaVoce({ categoria_id: 2 }, [{ id: 2 }]));
+
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${e.atteso}, ottenuto ${e.ottenuto}`}`));
 console.log(`\n${esiti.length - falliti.length}/${esiti.length} verifiche passate`);

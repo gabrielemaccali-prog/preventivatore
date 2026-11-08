@@ -99,6 +99,9 @@ function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere })
   };
 
 
+  // Le voci di una categoria del listino con gli acconti spenti non si offrono per un acconto.
+  const cambiaAcconti = (c) => scrivi(() => supabase.from('albatros_categorie').update({ acconti: !c.acconti }).eq('id', c.id));
+
   const cambiaAttiva = (c) => scrivi(() => supabase.from('albatros_categorie').update({ attiva: !c.attiva }).eq('id', c.id));
 
   const elimina = async (c) => {
@@ -135,6 +138,15 @@ function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere })
                     onBlur={() => rinomina(c)} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />
                 </div>
                 <span className="albatros-tenue" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{descriviUsi(c)}{c.attiva ? '' : ' · archiviata'}</span>
+                {tipo === 'listino' && c.acconti !== undefined && (
+                  <label className="albatros-con-icona" style={{ gap: '6px', fontSize: '0.78rem', color: '#475569', whiteSpace: 'nowrap' }} title="Sulle voci di questa categoria si può prendere un acconto">
+                    Acconti
+                    <span className="albatros-interruttore">
+                      <input type="checkbox" checked={!!c.acconti} disabled={!puoCorreggere || inCorso} onChange={() => cambiaAcconti(c)} />
+                      <span />
+                    </span>
+                  </label>
+                )}
                 {puoCorreggere && <button type="button" className="btn-icon-action" title={c.attiva ? 'Archivia' : 'Rimetti fra le scelte'} disabled={inCorso} onClick={() => cambiaAttiva(c)}><Icona nome={c.attiva ? 'archivia' : 'riporta'} size={14} style={{ marginRight: 0 }} /></button>}
                 {puoCorreggere && <button type="button" className="btn-icon-action danger" title="Cancella" disabled={inCorso} onClick={() => elimina(c)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
               </div>

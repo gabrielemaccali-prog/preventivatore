@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import { supabase } from '../../lib/supabaseClient'
-import { quadratura, totaleRiga, euro, r2, num, categorieDi, periodoIniziale, intervalloPeriodo } from './calcolo'
+import { quadratura, totaleRiga, euro, r2, num, categorieDi, periodoIniziale, intervalloPeriodo, accontiConfermati } from './calcolo'
 import { ICONE_CATEGORIA } from './iconeCategoria'
 import IconaCategoria from './IconaCategoria'
 import FiltroPeriodo from './FiltroPeriodo'
@@ -10,15 +10,19 @@ import FiltroPeriodo from './FiltroPeriodo'
 // quelle aperte non hanno ancora un incassato. La parte di incassato che nessuna voce spiega sta
 // in "Non specificato", così le righe sommano all'incassato. Toccando una categoria si vedono le
 // sue voci.
+// Gli acconti confermati sono incasso della giornata per cui erano stati versati; quelli trattenuti
+// dopo una disdetta sono incasso senza evento, e hanno una riga loro.
 // ============================================================
 
 const NON_SPECIFICATO = 'non-specificato';
 const SENZA_CATEGORIA = 'senza-categoria';
+const TRATTENUTI = 'acconti-trattenuti';
 
 function Incassi({ listino, categorie }) {
   const [periodo, setPeriodo] = useState(periodoIniziale);
   const [chiusure, setChiusure] = useState([]);
   const [righe, setRighe] = useState([]);
+  const [acconti, setAcconti] = useState([]);
   const [aperta, setAperta] = useState(null);
   const [da, al] = intervalloPeriodo(periodo);
 
@@ -29,15 +33,24 @@ function Incassi({ listino, categorie }) {
     const { data: rg } = elenco.length
       ? await supabase.from('albatros_righe').select('chiusura_id, voce_id, quantita, prezzo').in('chiusura_id', elenco.map(c => c.id))
       : { data: [] };
+    // Senza sql/albatros_acconti.sql la tabella non c'è: si conta senza acconti.
+    const { data: ac } = await supabase.from('albatros_acconti').select('*')
+      .gte('data_riferimento', da).lte('data_riferimento', al).in('stato', ['confermato', 'trattenuto']);
     setChiusure(elenco);
     setRighe(rg || []);
+    setAcconti(ac || []);
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { carica(); }, [da, al]);
 
   const conti = useMemo(() => {
     const voci = new Map(listino.map(v => [v.id, v]));
-    const incassato = r2(chiusure.reduce((t, c) => t + quadratura(c, []).incassato, 0));
+    // Un acconto confermato per un giorno senza giornata chiusa conta lo stesso: è un incasso.
+    const giorniChiusi = new Set(chiusure.map(c => c.data));
+    const accontiSenzaGiornata = r2(acconti.filter(a => a.stato === 'confermato' && !giorniChiusi.has(a.data_riferimento)).reduce((t, a) => t + num(a.importo), 0));
+    const trattenuti = r2(acconti.filter(a => a.stato === 'trattenuto').reduce((t, a) => t + num(a.importo), 0));
+    const incassatoGiornate = r2(chiusure.reduce((t, c) => t + quadratura(c, [], accontiConfermati(acconti, c.data)).incassato, 0) + accontiSenzaGiornata);
+    const incassato = r2(incassatoGiornate + trattenuti);
     const perCategoria = new Map();
     righe.forEach(r => {
       const voce = voci.get(r.voce_id);
@@ -56,10 +69,11 @@ function Incassi({ listino, categorie }) {
       .map(c => ({ chiave: c.id, categoria: c, nome: c.nome, ...(perCategoria.get(c.id) || { totale: 0, voci: new Map() }) }));
     if (perCategoria.has(SENZA_CATEGORIA)) elenco.push({ chiave: SENZA_CATEGORIA, nome: 'Senza categoria', ...perCategoria.get(SENZA_CATEGORIA) });
     const battuto = r2(elenco.reduce((t, x) => t + x.totale, 0));
-    const residuo = r2(incassato - battuto);
+    const residuo = r2(incassatoGiornate - battuto);
     if (residuo > 0) elenco.push({ chiave: NON_SPECIFICATO, nome: 'Non specificato', totale: residuo, voci: new Map() });
+    if (trattenuti > 0) elenco.push({ chiave: TRATTENUTI, nome: 'Acconti trattenuti (disdette)', totale: trattenuti, voci: new Map() });
     return { incassato, battuto, residuo, elenco, massimo: Math.max(...elenco.map(x => x.totale), 0) };
-  }, [chiusure, righe, listino, categorie]);
+  }, [chiusure, righe, acconti, listino, categorie]);
 
   const giorni = chiusure.length;
   const periodoTesto = periodo.tipo === 'settimana' ? 'della settimana' : 'del mese';
@@ -72,7 +86,7 @@ function Incassi({ listino, categorie }) {
         </div>
 
         <div className="albatros-cifre">
-          <div className="albatros-cifra-saldo"><span>Incassato {periodoTesto}</span><strong>{euro(conti.incassato)}</strong><small>POS + contanti, giornate chiuse</small></div>
+          <div className="albatros-cifra-saldo"><span>Incassato {periodoTesto}</span><strong>{euro(conti.incassato)}</strong><small>POS, contanti e acconti, giornate chiuse</small></div>
           <div><span>Giornate chiuse</span><strong>{giorni}</strong><small>nel periodo</small></div>
           <div><span>Media per giornata</span><strong>{euro(giorni ? conti.incassato / giorni : 0)}</strong><small>incassato ÷ giornate</small></div>
         </div>
@@ -83,8 +97,8 @@ function Incassi({ listino, categorie }) {
           </p>
         )}
 
-        {giorni === 0 && <p className="albatros-vuoto">Nessuna giornata chiusa {periodo.tipo === 'settimana' ? 'in questa settimana' : 'in questo mese'}.</p>}
-        {giorni > 0 && (
+        {giorni === 0 && conti.incassato === 0 && <p className="albatros-vuoto">Nessuna giornata chiusa {periodo.tipo === 'settimana' ? 'in questa settimana' : 'in questo mese'}.</p>}
+        {(giorni > 0 || conti.incassato > 0) && (
           <div style={{ overflowX: 'auto', marginTop: '14px' }}>
             <table className="albatros-tabella albatros-incassi">
               <thead>
@@ -93,7 +107,7 @@ function Incassi({ listino, categorie }) {
               <tbody>
                 {conti.elenco.map(x => {
                   const quota = conti.incassato > 0 ? x.totale / conti.incassato : 0;
-                  const colore = x.chiave === NON_SPECIFICATO ? '#cbd5e1' : (ICONE_CATEGORIA[x.categoria?.icona]?.colore || '#94a3b8');
+                  const colore = x.chiave === NON_SPECIFICATO || x.chiave === TRATTENUTI ? '#cbd5e1' : (ICONE_CATEGORIA[x.categoria?.icona]?.colore || '#94a3b8');
                   const espandibile = x.voci.size > 0;
                   const vociOrdinate = [...x.voci.values()].sort((a, b) => b.totale - a.totale);
                   return (
@@ -103,8 +117,8 @@ function Incassi({ listino, categorie }) {
                         <td style={{ whiteSpace: 'nowrap' }}>
                           {espandibile ? <span className={`riga-espandibile-chevron ${aperta === x.chiave ? 'aperta' : ''}`}>▸</span> : <span className="riga-espandibile-chevron" />}
                           <span className="albatros-con-icona">
-                            {x.chiave !== NON_SPECIFICATO && <IconaCategoria categoria={x.categoria} size={13} titolo={false} />}
-                            <span className={x.chiave === NON_SPECIFICATO ? 'albatros-tenue' : ''}>{x.nome}</span>
+                            {x.chiave !== NON_SPECIFICATO && x.chiave !== TRATTENUTI && <IconaCategoria categoria={x.categoria} size={13} titolo={false} />}
+                            <span className={x.chiave === NON_SPECIFICATO || x.chiave === TRATTENUTI ? 'albatros-tenue' : ''}>{x.nome}</span>
                           </span>
                         </td>
                         <td>

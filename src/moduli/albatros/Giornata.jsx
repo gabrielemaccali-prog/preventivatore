@@ -5,8 +5,10 @@ import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   categorieDi, idCategoriaScelta, num, r2, euro, giornataDiLavoro, aggiungiGiorni,
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDaSpecificare, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita, sommaRighe, totaleRiga, rigaDaIncrementare, vociFrequenti, voceDiNome,
+  accontiConfermati,
 } from './calcolo'
 import SceltaCategoria from './SceltaCategoria'
+import Acconti from './Acconti'
 import IconaCategoria from './IconaCategoria'
 
 // ============================================================
@@ -21,6 +23,10 @@ import IconaCategoria from './IconaCategoria'
 // da POS e contanti: si possono ancora aggiungere voci per spiegare il residuo, senza superarlo,
 // ma togliere righe, correggere POS e contanti e riaprire (dalla scheda Chiusure) spetta
 // all'amministratore.
+//
+// Gli acconti versati per questa giornata compaiono sotto il battuto: la voce si batte per intero,
+// la sera si incassa il saldo, e l'acconto confermato chiude la differenza (entra nell'incassato,
+// non nel POS né nei contanti).
 // ============================================================
 
 // I campi in euro sono testo con tastiera numerica: sul telefono la virgola è il separatore
@@ -92,14 +98,22 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
   // Il fondo cassa di una giornata già chiusa che non ce l'ha: null = finestra chiusa.
   const [inFondo, setInFondo] = useState(null);
   const [inCorso, setInCorso] = useState(false);
+  // Gli acconti per questa giornata (vedi Acconti.jsx).
+  const [accontiGiorno, setAccontiGiorno] = useState([]);
+  // Finché sql/albatros_acconti.sql non è stato eseguito la tabella non c'è: niente riquadro.
+  const [accontiMancanti, setAccontiMancanti] = useState(false);
 
   const caricaGiorno = async (giorno) => {
     const { data: ch } = await supabase.from('albatros_chiusure').select('*').eq('data', giorno).maybeSingle();
-    const [rg, pr] = await Promise.all([
+    const [rg, pr, ac] = await Promise.all([
       ch ? supabase.from('albatros_righe').select('*').eq('chiusura_id', ch.id).order('id') : Promise.resolve({ data: [] }),
       supabase.from('albatros_chiusure').select('*').lt('data', giorno).not('fondo_lasciato', 'is', null)
         .order('data', { ascending: false }).limit(1).maybeSingle(),
+      // Senza sql/albatros_acconti.sql la tabella non c'è: niente acconti, la giornata funziona lo stesso.
+      supabase.from('albatros_acconti').select('*').eq('data_riferimento', giorno).order('id'),
     ]);
+    setAccontiGiorno(ac.data || []);
+    setAccontiMancanti(!!ac.error);
     setChiusura(ch || null);
     setRighe(rg.data || []);
     setPrecedente(pr.data || null);
@@ -123,7 +137,9 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
 
   const aperta = chiusuraModificabile(chiusura);
   const correggibile = composizioneCorreggibile(chiusura, puoCorreggere);
-  const q = quadratura(chiusura, righe);
+  const accontiDelGiorno = accontiConfermati(accontiGiorno, data);
+  const accontiDaConfermare = accontiGiorno.filter(a => a.stato === 'atteso');
+  const q = quadratura(chiusura, righe, accontiDelGiorno);
   const voci = useMemo(() => new Map(listino.map(v => [v.id, v])), [listino]);
   const frequenti = useMemo(() => vociFrequenti(righeRecenti, listino, 16), [righeRecenti, listino]);
   const giornateAperte = recenti.filter(g => !g.chiusura.chiusa_il && g.chiusura.data < giornataDiLavoro());
@@ -172,8 +188,8 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
   // --- Battuto ---
   const oltreIlResiduo = (aggiunta) => {
     const battuto = sommaRighe(righeAttuali.current);
-    if (aggiuntaConsentita(chiusura, battuto, aggiunta)) return false;
-    alert(`La giornata è chiusa: si può specificare solo il residuo (${euro(Math.max(r2(quadratura(chiusura, []).incassato - battuto), 0))}), senza superarlo.`);
+    if (aggiuntaConsentita(chiusura, battuto, aggiunta, accontiDelGiorno)) return false;
+    alert(`La giornata è chiusa: si può specificare solo il residuo (${euro(Math.max(r2(quadratura(chiusura, [], accontiDelGiorno).incassato - battuto), 0))}), senza superarlo.`);
     return true;
   };
 
@@ -315,10 +331,10 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
   });
 
   // I conti del fondo in corso di scrittura, sulla chiusura già fatta.
-  const qf = inFondo ? quadratura({ ...chiusura, fondo_partenza: leggiImporto(inFondo.fondo_partenza) || 0, fondo_lasciato: leggiImporto(inFondo.fondo_lasciato) || 0 }, righe) : null;
+  const qf = inFondo ? quadratura({ ...chiusura, fondo_partenza: leggiImporto(inFondo.fondo_partenza) || 0, fondo_lasciato: leggiImporto(inFondo.fondo_lasciato) || 0 }, righe, accontiDelGiorno) : null;
 
   // I conti della chiusura in corso, con i numeri scritti finora.
-  const qc = inChiusura ? quadratura(Object.fromEntries(['pos', 'contanti', 'fondo_partenza', 'fondo_lasciato'].map(k => [k, leggiImporto(inChiusura[k]) || 0])), righe) : null;
+  const qc = inChiusura ? quadratura(Object.fromEntries(['pos', 'contanti', 'fondo_partenza', 'fondo_lasciato'].map(k => [k, leggiImporto(inChiusura[k]) || 0])), righe, accontiDelGiorno) : null;
   const fondoIeri = fondoProposto(precedente);
   const campoCassa = (campo, etichetta) => (
     <label className="albatros-etichetta">{etichetta}
@@ -422,6 +438,7 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
           <div className="albatros-riepilogo-chiusura">
             <div className="albatros-voce-q"><span>POS</span><span>{euro(q.pos)}</span></div>
             <div className="albatros-voce-q"><span>Contanti incassati</span><span>{euro(q.contanti)}</span></div>
+            {q.acconti > 0 && <div className="albatros-voce-q"><span>Acconti confermati</span><span>{euro(q.acconti)}</span></div>}
             <div className="albatros-voce-q totale"><span>Incassato</span><span>{euro(q.incassato)}</span></div>
             <div className="albatros-voce-q"><span>Battuto</span><span>{euro(q.specificato)}</span></div>
             <div className="albatros-voce-q" style={{ fontWeight: 700, color: q.nonSpecificato < 0 ? '#b91c1c' : q.nonSpecificato > 0 ? '#b45309' : '#15803d' }}>
@@ -439,6 +456,14 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
           </div>
         )}
       </div>
+
+      {!accontiMancanti && (
+        <div className="albatros-card">
+          <Acconti user={user} listino={listino} categorie={categorie} utenti={utenti} puoCorreggere={puoCorreggere} acconti={accontiGiorno} onCambiati={() => caricaGiorno(data)}
+            giorno={data} titolo="Acconti" vuoto="Nessun acconto per questa giornata." />
+          {accontiGiorno.length > 0 && <p className="albatros-nota">Batti la voce per intero: l'acconto confermato copre la parte già pagata.</p>}
+        </div>
+      )}
 
       {inFondo && (
         <div className="modal-form-backdrop" onClick={() => setInFondo(null)}>
@@ -495,6 +520,11 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
               </div>
             )}
 
+            {accontiDaConfermare.length > 0 && (
+              <p className="albatros-avviso" style={{ marginTop: '10px' }}>
+                Per oggi c'è un acconto da confermare ({accontiDaConfermare.map(a => `${a.cliente} ${euro(a.importo)}`).join(', ')}): confermalo sotto il battuto, se no la voce battuta per intero supera l'incassato.
+              </p>
+            )}
             <div className="albatros-griglia-2" style={{ marginTop: '12px' }}>
               {campoCassa('pos', 'POS €')}
               {campoCassa('contanti', 'Contanti incassati € (senza il fondo)')}
@@ -520,7 +550,8 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
             </div>
 
             <div className="albatros-riepilogo-chiusura">
-              <div className="albatros-voce-q totale"><span>Incassato (POS + contanti)</span><span>{euro(qc.incassato)}</span></div>
+              {qc.acconti > 0 && <div className="albatros-voce-q"><span>Acconti confermati</span><span>{euro(qc.acconti)}</span></div>}
+              <div className="albatros-voce-q totale"><span>Incassato (POS + contanti{qc.acconti > 0 ? ' + acconti' : ''})</span><span>{euro(qc.incassato)}</span></div>
               <div className="albatros-voce-q"><span>Battuto</span><span>{euro(qc.specificato)}</span></div>
               <div className="albatros-voce-q" style={{ fontWeight: 700, color: qc.nonSpecificato < 0 ? '#b91c1c' : qc.nonSpecificato > 0 ? '#b45309' : '#15803d' }}>
                 <span>{qc.nonSpecificato < 0 ? 'Battuto oltre l\'incassato' : qc.nonSpecificato > 0 ? 'Residuo non specificato' : 'Tutto specificato'}</span>
