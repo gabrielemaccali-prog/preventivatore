@@ -59,22 +59,37 @@ const pagataConCarta = (s) => s.metodo === 'carta';
 export const spesaDaPagare = (s) => s.ente === 'albatros' && s.metodo === 'da_pagare';
 export const etichettaMetodoSpesa = (s) => (s.metodo === 'carta' ? 'carta' : s.metodo === 'da_pagare' ? 'da pagare' : 'contanti');
 
+// I trasferimenti fra le due tasche di Albatros (albatros_trasferimenti): versati = dai contanti al
+// conto, prelevati = dal conto ai contanti. Non cambiano il saldo, solo dove stanno i soldi.
+export const TASCHE = [
+  { id: 'contanti', label: 'Contanti in mano' },
+  { id: 'conto', label: 'Conto' },
+];
+export const etichettaTasca = (id) => TASCHE.find(t => t.id === id)?.label || id;
+const trasferiti = (trasferimenti, da) => r2((trasferimenti || []).filter(t => t.da === da).reduce((s, t) => s + num(t.importo), 0));
+
 // I contanti di Albatros in mano: ritirati alle chiusure, meno le spese pagate da Albatros in
-// contanti, meno i pagamenti che Albatros ha fatto in contanti.
-export function contantiAlbatros(chiusure, spese, pagamenti) {
+// contanti, meno i pagamenti che Albatros ha fatto in contanti, meno i versamenti sul conto, più i
+// prelievi dal conto.
+export function contantiAlbatros(chiusure, spese, pagamenti, trasferimenti = []) {
   const ritirati = r2((chiusure || []).filter(c => c.chiusa_il).reduce((t, c) => t + Math.max(quadratura(c, []).ritirato, 0), 0));
   const speseAlbatros = r2((spese || []).filter(s => s.ente === 'albatros' && !pagataConCarta(s) && !spesaDaPagare(s)).reduce((t, s) => t + num(s.importo), 0));
   const pagatiInContanti = r2((pagamenti || []).filter(p => p.pagante === 'albatros' && p.metodo === 'contanti').reduce((t, p) => t + num(p.importo), 0));
-  return { ritirati, speseAlbatros, pagatiInContanti, inMano: r2(ritirati - speseAlbatros - pagatiInContanti) };
+  const versati = trasferiti(trasferimenti, 'contanti');
+  const prelevati = trasferiti(trasferimenti, 'conto');
+  return { ritirati, speseAlbatros, pagatiInContanti, versati, prelevati, inMano: r2(ritirati - speseAlbatros - pagatiInContanti - versati + prelevati) };
 }
 
 // Il conto di Albatros, dove arrivano gli incassi POS: meno le spese pagate con carta e i pagamenti
-// che Albatros non ha fatto in contanti (bonifico, altro). Contanti in mano + conto = saldo.
-export function contoAlbatros(chiusure, spese, pagamenti) {
+// che Albatros non ha fatto in contanti (bonifico, altro), più i contanti versati, meno i prelievi.
+// Contanti in mano + conto = saldo.
+export function contoAlbatros(chiusure, spese, pagamenti, trasferimenti = []) {
   const pos = r2((chiusure || []).filter(c => c.chiusa_il).reduce((t, c) => t + quadratura(c, []).pos, 0));
   const speseCarta = r2((spese || []).filter(s => s.ente === 'albatros' && pagataConCarta(s)).reduce((t, s) => t + num(s.importo), 0));
   const pagati = r2((pagamenti || []).filter(p => p.pagante === 'albatros' && p.metodo !== 'contanti').reduce((t, p) => t + num(p.importo), 0));
-  return { pos, speseCarta, pagati, saldo: r2(pos - speseCarta - pagati) };
+  const versati = trasferiti(trasferimenti, 'contanti');
+  const prelevati = trasferiti(trasferimenti, 'conto');
+  return { pos, speseCarta, pagati, versati, prelevati, saldo: r2(pos - speseCarta - pagati + versati - prelevati) };
 }
 
 export const num = (n) => Number(n) || 0;

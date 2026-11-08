@@ -99,6 +99,10 @@ verifica('da pagare: non tocca i contanti', 110, contantiAlbatros(chiuseCF, conD
 verifica('da pagare: non tocca il conto', 40, contoAlbatros(chiuseCF, conDaPagare, []).speseCarta);
 verifica('da pagare: riconosciuta', true, spesaDaPagare(conDaPagare[3]));
 verifica('contanti + conto = saldo', r2t(500 + 100 - 150 - 1400), r2t(contantiAlbatros(chiuseCF, speseMetodo, pagati).inMano + contoAlbatros(chiuseCF, speseMetodo, pagati).saldo));
+const trasf = [{ da: 'contanti', importo: 300 }, { da: 'conto', importo: 50 }];
+verifica('trasferimenti: versare toglie dai contanti, prelevare aggiunge', r2t(contantiAlbatros(chiuseCF, speseMetodo, pagati).inMano - 300 + 50), contantiAlbatros(chiuseCF, speseMetodo, pagati, trasf).inMano);
+verifica('trasferimenti: il conto fa il contrario', r2t(contoAlbatros(chiuseCF, speseMetodo, pagati).saldo + 300 - 50), contoAlbatros(chiuseCF, speseMetodo, pagati, trasf).saldo);
+verifica('trasferimenti: il saldo non cambia', r2t(500 + 100 - 150 - 1400), r2t(contantiAlbatros(chiuseCF, speseMetodo, pagati, trasf).inMano + contoAlbatros(chiuseCF, speseMetodo, pagati, trasf).saldo));
 
 // ---------- chiusura di ieri fatta oggi ----------
 verifica('le 14 di oggi, ieri non chiusa: avvisa', true, forseChiusuraDiIeri('2026-10-18', '2026-10-18', 14, false));
