@@ -258,6 +258,23 @@ export const nettoRinfrescoDi = (p) => (p.costoRinfrescoNetto != null ? (parseFl
 // pacchetto. Stessa lettura dei compensi.
 const oreDi = (p) => (p.oraFine ? (oreDaOrari(p.oraInizio, p.oraFine) || 0) : (parseFloat(p.durataOre) || 0));
 
+// Ore e paganti del rinfresco: spiegano affitto e rinfresco, sono i numeri su cui il campo fa il
+// conto e quelli che si confrontano con la sua richiesta. Non sono importi: si possono rileggere
+// dalla prenotazione anche per un periodo chiuso prima che si salvassero nelle righe.
+// Le ore sono quelle che il centro mette in fattura: un'ora su due campi affiancati sono due ore.
+// I paganti contano quando il rinfresco è dovuto -- di un'annullata solo se è stato segnato --
+// anche se costa zero: un aperitivo su un campo senza prezzo dell'aperitivo va visto, non nascosto.
+export const quantitaCampoDi = (p) => {
+  const dovuto = p.stato !== STATO_PREN.ANNULLATA || costiAnnullamentoDi(p).has(COSTO_ANNULLAMENTO.RINFRESCO);
+  const tipo = String(p.tipoRinfresco || '').trim().toLowerCase();
+  const paganti = dovuto ? (parseFloat(p.numeroPartecipanti) || 0) : 0;
+  return {
+    ore: oreDi(p) * Math.max(parseInt(p.campiOccupati, 10) || 1, 1),
+    merende: tipo === 'merenda' ? paganti : 0,
+    aperitivi: tipo === 'aperitivo' ? paganti : 0,
+  };
+};
+
 // ---- Campi col bar di un'altra società ----
 // In alcuni centri il bar (merende e aperitivi) è un'azienda diversa da chi affitta i campi: si
 // pagano a parte, e in consuntivazione diventano due controparti, "Comasina campi" e "Comasina
@@ -303,18 +320,7 @@ export const daConsuntivareCampi = ({ prenotazioni = [], campi = [], voci = [], 
       if (annullata && !segnati.has(COSTO_ANNULLAMENTO.CAMPO) && !segnati.has(COSTO_ANNULLAMENTO.RINFRESCO)) return [];
       const affitto = !annullata || segnati.has(COSTO_ANNULLAMENTO.CAMPO) ? arrotonda2(nettoAffittoDi(p)) : 0;
       const rinfresco = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO) ? arrotonda2(nettoRinfrescoDi(p)) : 0;
-      // Ore e paganti del rinfresco spiegano affitto e rinfresco: sono i numeri su cui il campo fa il
-      // conto, e quelli che si confrontano con la sua richiesta. I paganti contano quando il rinfresco
-      // è dovuto -- di un'annullata solo se è stato segnato -- anche se costa zero: un aperitivo su un
-      // campo senza prezzo dell'aperitivo va visto, non nascosto.
-      const tipo = String(p.tipoRinfresco || '').trim().toLowerCase();
-      const dovuto = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO);
-      const paganti = dovuto ? (parseFloat(p.numeroPartecipanti) || 0) : 0;
-      // Le ore sono quelle che il centro mette in fattura: una partita di un'ora su due campi
-      // affiancati sono due ore di campo, ed è il numero con cui si confronta la sua richiesta.
-      const ore = oreDi(p) * Math.max(parseInt(p.campiOccupati, 10) || 1, 1);
-      const merende = tipo === 'merenda' ? paganti : 0;
-      const aperitivi = tipo === 'aperitivo' ? paganti : 0;
+      const { ore, merende, aperitivi } = quantitaCampoDi(p);
       const nome = p.campoNome || p.campoId;
       // Col bar separato l'affitto resta al campo e il rinfresco va al bar, ognuno con i suoi numeri.
       if (barSeparato(perId[String(p.campoId)])) {

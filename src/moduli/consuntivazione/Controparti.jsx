@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
-import { supabase } from '../../lib/supabaseClient'
+import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { scaricaExcel } from '../../lib/excel'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
-import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, arrotonda2, totaliDi, contropartiCampi, barSeparato, idBar } from '../../lib/fornitori'
+import { STATO_PREN, COSTO_ANNULLAMENTO, costiAnnullamentoDi, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
+import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, arrotonda2, totaliDi, contropartiCampi, barSeparato, idBar, quantitaCampoDi, nettoAffittoDi, nettoRinfrescoDi } from '../../lib/fornitori'
 
 // ============================================================
 // Consuntivazione di chi paghiamo: i fornitori che ci noleggiano i giochi e i campi dove si gioca.
@@ -151,8 +151,11 @@ function Controparti({ tipo }) {
     setCaricamento(true);
     const [pr, se, ca, li, pv, gi, vc, pe, sel] = await Promise.all([
       // Solo il passato: il futuro non si consuntiva, come nei compensi.
-      // Anche le annullate: quelle con costi segnati entrano, le altre le scarta il calcolo.
-      supabase.from('prenotazioni').select('*').in('stato', [STATO_PREN.CONFERMATO, STATO_PREN.ANNULLATA]).lte('data', oggiIso()).order('data'),
+      // Tutti gli stati: quali partite si consuntivano lo decide il calcolo (confermate, e annullate
+      // con costi segnati); le altre servono a rileggere ore e paganti dei periodi già chiusi, anche
+      // di partite diventate pregresse dopo.
+      // Paginata: con tutti gli stati le righe passano il migliaio, e Supabase tronca in silenzio.
+      leggiTutte(() => supabase.from('prenotazioni').select('*').lte('data', oggiIso()).order('data').order('id')),
       supabase.from('sedi').select('*'),
       supabase.from('pren_campi').select('*').order('nome'),
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
@@ -180,6 +183,22 @@ function Controparti({ tipo }) {
   useEffect(() => { fetchTutto(); }, [tipo]);
 
   const nomeGiocoPerId = useMemo(() => Object.fromEntries(giochi.map(g => [g.id, g.nome])), [giochi]);
+  const prenotazionePerId = useMemo(() => Object.fromEntries(prenotazioni.map(p => [String(p.id), p])), [prenotazioni]);
+
+  // Ore e paganti di una riga di costo. Le righe congelate li portano dal 22 ottobre 2026; un
+  // periodo chiuso prima ha salvato solo gli importi, e allora si rileggono dalla prenotazione:
+  // non sono soldi, sono il conto su cui il campo ha fatto la sua richiesta. Ai rinfreschi di un bar
+  // separato non spettano le ore, all'affitto senza rinfresco non spettano i paganti.
+  // null = non si sa (riga senza dettaglio, prenotazione non più leggibile).
+  const quantitaDellaRiga = (controparte, r, campo) => {
+    if (!r) return null;
+    if (r.dettaglio && r.dettaglio[campo] !== undefined) return parseFloat(r.dettaglio[campo]) || 0;
+    const p = tipo === 'campo' ? prenotazionePerId[String(r.riferimento)] : null;
+    if (!p) return null;
+    if (campo === 'ore' && controparte?.bar) return 0;
+    if (campo !== 'ore' && r.dettaglio && !controparte?.bar && (parseFloat(r.dettaglio.rinfresco) || 0) <= 0.005) return 0;
+    return quantitaCampoDi(p)[campo] ?? null;
+  };
   // Un campo col bar di un'altra società vale due controparti: i campi e i rinfreschi. I periodi
   // dei rinfreschi si riconoscono per nome anche se la spunta è stata tolta dopo.
   const anagrafica = useMemo(() => (tipo === 'campo'
@@ -220,6 +239,26 @@ function Controparti({ tipo }) {
     const p = r.prenotazione;
     const nomi = r.giochi?.length ? r.giochi : (p?.giocoId != null && nomeGiocoPerId[p.giocoId] ? [nomeGiocoPerId[p.giocoId]] : []);
     return etichettaPartita(p?.pacchettoNome, nomi) || '—';
+  };
+  // In una riga congelata: i giochi salvati, e se non ci sono (le righe dei campi non li salvano)
+  // pacchetto e gioco della prenotazione.
+  const etichettaCongelata = (r) => (r.giochi?.length
+    ? r.giochi.join(' + ')
+    : etichettaRiga({ ...r, prenotazione: prenotazionePerId[String(r.riferimento)] }));
+
+  // Affitto e rinfresco di una riga di costo dei campi. Una riga congelata senza dettaglio (i
+  // periodi più vecchi) li riprende dalla prenotazione, ma solo se tornano con il costo salvato:
+  // se la prenotazione è cambiata dopo, quelle cifre non sono quelle pagate, e resta "—".
+  const dettaglioDellaRiga = (controparte, r) => {
+    if (!r || r.dettaglio || tipo !== 'campo') return r?.dettaglio || null;
+    const p = prenotazionePerId[String(r.riferimento)];
+    if (!p) return null;
+    const segnati = costiAnnullamentoDi(p);
+    const annullata = p.stato === STATO_PREN.ANNULLATA;
+    const separato = barSeparato(campi.find(c => String(c.id) === String(p.campoId)));
+    const affitto = controparte?.bar || (annullata && !segnati.has(COSTO_ANNULLAMENTO.CAMPO)) ? 0 : arrotonda2(nettoAffittoDi(p));
+    const rinfresco = (!controparte?.bar && separato) || (annullata && !segnati.has(COSTO_ANNULLAMENTO.RINFRESCO)) ? 0 : arrotonda2(nettoRinfrescoDi(p));
+    return Math.abs(affitto + rinfresco - (parseFloat(r.preventivato) || 0)) < 0.01 ? { affitto, rinfresco } : null;
   };
 
   // ---- rettifiche ----
@@ -327,8 +366,8 @@ function Controparti({ tipo }) {
     const sceltaRiga = (x) => soloLettura || scelta(controparte, x.riferimento);
     const nScelte = elenco.filter(sceltaRiga).length;
     const righe = soloLettura ? tutte : tutte.filter(r => scelta(controparte, r.riferimento));
-    const conteggio = (x, campo) => (x.costo?.dettaglio ? quantitaOVuoto(x.costo.dettaglio[campo]) : nessuno);
-    const sommaConteggio = (campo) => righe.filter(r => r.lato === 'costo' && r.dettaglio).reduce((t, r) => t + (parseFloat(r.dettaglio[campo]) || 0), 0);
+    const conteggio = (x, campo) => { const v = quantitaDellaRiga(controparte, x.costo, campo); return v == null ? nessuno : quantitaOVuoto(v); };
+    const sommaConteggio = (campo) => righe.filter(r => r.lato === 'costo').reduce((t, r) => t + (quantitaDellaRiga(controparte, r, campo) || 0), 0);
 
     const somma = (lato, campo) => righe.filter(r => r.lato === lato).reduce((t, r) => t + (parseFloat(r[campo]) || 0), 0);
     const tot = {
@@ -338,13 +377,14 @@ function Controparti({ tipo }) {
     const saldoTotale = saldoTesto(arrotonda2(somma('costo', 'consuntivato') - somma('ricavo', 'consuntivato')));
     const conCrediti = righe.some(r => r.lato === 'ricavo');
     const conCosti = righe.some(r => r.lato === 'costo');
-    const conDettaglio = righe.some(r => r.lato === 'costo' && r.dettaglio);
-    const sommaParte = (campo) => righe.filter(r => r.lato === 'costo' && r.dettaglio).reduce((t, r) => t + (parseFloat(r.dettaglio[campo]) || 0), 0);
+    const dett = (r) => dettaglioDellaRiga(controparte, r);
+    const conDettaglio = righe.some(r => r.lato === 'costo' && dett(r));
+    const sommaParte = (campo) => righe.filter(r => r.lato === 'costo').reduce((t, r) => t + (parseFloat(dett(r)?.[campo]) || 0), 0);
 
     const importo = (r) => (r ? euroOVuoto(r.preventivato) : nessuno);
-    const parte = (r, campo) => (r?.dettaglio ? <span style={{ color: '#64748b' }}>{euroOVuoto(r.dettaglio[campo])}</span> : nessuno);
+    const parte = (r, campo) => (dett(r) ? <span style={{ color: '#64748b' }}>{euroOVuoto(dett(r)[campo])}</span> : nessuno);
     const titoloCosto = (r) => {
-      const d = r?.dettaglio;
+      const d = dett(r);
       if (!d) return r ? cfg.senzaDettaglio : undefined;
       const parti = arrotonda2(cfg.parti.reduce((t, p) => t + (parseFloat(d[p.campo]) || 0), 0));
       const testo = [`${cfg.spiegaCosto(d)} = ${euro(parti)}`];
@@ -410,7 +450,7 @@ function Controparti({ tipo }) {
                   {/* Un costo su una partita che non si è giocata va riconosciuto a colpo d'occhio:
                       di solito è da rettificare fino a quanto concordato. */}
                   <td style={cella}>{x.nominativo || '—'}{x.annullata && <span style={{ color: '#dc2626', fontSize: '0.75rem', fontWeight: 600, marginLeft: '6px' }} title="Partita annullata con costi da sostenere">annullata</span>}</td>
-                  <td style={{ ...cella, color: '#475569' }}>{soloLettura ? (x.esempio.giochi?.join(' + ') || '—') : etichettaRiga(x.esempio)}</td>
+                  <td style={{ ...cella, color: '#475569' }}>{soloLettura ? etichettaCongelata(x.esempio) : etichettaRiga(x.esempio)}</td>
                   {cfg.conteggi.map(c => <td key={c.campo} style={{ ...destra, color: '#475569' }}>{conteggio(x, c.campo)}</td>)}
                   {cfg.parti.map(p => (
                     <td key={p.campo} style={destra} title={x.costo?.dettaglio && p.dettaglio ? p.dettaglio(x.costo.dettaglio) : undefined}>{parte(x.costo, p.campo)}</td>
@@ -448,7 +488,7 @@ function Controparti({ tipo }) {
   // ---- excel ----
   // Le stesse colonne della tabella, una riga per partita, con gli importi come numeri.
   const righeExcel = (controparte, righe, periodo = null) => perPrenotazione(righe).map(x => {
-    const d = x.costo?.dettaglio;
+    const d = dettaglioDellaRiga(controparte, x.costo);
     return {
       [cfg.intestazione]: controparte.nome,
       ...(periodo ? { Periodo: periodoTesto(periodo.dal, periodo.al), 'Pagato il': eOld(periodo) ? ETICHETTA_OLD : formattaDataGGMMAAAA(periodo.data_consuntivo) } : {}),
@@ -456,8 +496,8 @@ function Controparti({ tipo }) {
       Partita: x.riferimento,
       Nominativo: x.nominativo || '',
       Annullata: x.annullata ? 'sì' : '',
-      'Pacchetto · Gioco': periodo ? (x.esempio.giochi?.join(' + ') || '') : etichettaRiga(x.esempio),
-      ...Object.fromEntries(cfg.conteggi.map(c => [c.label, d ? r2(d[c.campo]) : ''])),
+      'Pacchetto · Gioco': (periodo ? etichettaCongelata(x.esempio) : etichettaRiga(x.esempio)).replace(/^—$/, ''),
+      ...Object.fromEntries(cfg.conteggi.map(c => { const v = quantitaDellaRiga(controparte, x.costo, c.campo); return [c.label, v == null ? '' : r2(v)]; })),
       ...Object.fromEntries(cfg.parti.map(p => [p.label, d ? r2(d[p.campo]) : ''])),
       Costo: x.costo ? r2(x.costo.preventivato) : '',
       'Rettifica costo': x.costo ? r2(x.costo.rettifiche) : '',

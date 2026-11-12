@@ -4,7 +4,8 @@ import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, partitaInCompensazione, statoIncassoDi, contantiDaRitirareDi, incassatoDi, daIncassareDi, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, formattaOraInput, normalizzaOra24, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import { puoVedere } from '../../lib/permessi'
-import { fracIva, costiCampoDi } from '../../lib/campi'
+import { fracIva, costiCampoDi, allestimentoDi, costiCampoPrenotazione, partiChiuse, minutiAllestimentoDi } from '../../lib/campi'
+import { idBar } from '../../lib/fornitori'
 import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, classeBadgeStato, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO, categoriaAnnullamentoDi, ETICHETTA_OLD, giocata } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { formaNome, formaLuogo, formaRagioneSociale, formaEmail, formaCodice, formaTelefono } from '../../lib/maiuscole'
@@ -1020,6 +1021,30 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   const senzaIncasso = (p) => { const stato = statoIncassoDi(p); return !stato || stato === 'in attesa'; };
   const puoConfermareSenzaIncasso = user.isAdmin;
 
+  // L'allestimento si paga una volta per blocco di partite attaccate: aggiungere, spostare,
+  // annullare o togliere una partita cambia l'affitto delle vicine. Qui si riallineano quelle dello
+  // stesso campo e giorno ancora in programma, fuori dai periodi già consuntivati; si tocca solo
+  // l'affitto. Su un campo senza allestimento non c'è niente da riallineare.
+  const riallineaAllestimento = async (campoId, data) => {
+    const campo = campi.find(c => c.id === campoId);
+    if (!campo || !data || minutiAllestimentoDi(campo) === 0) return;
+    const [pr, pe] = await Promise.all([
+      supabase.from('prenotazioni').select('*').eq('campoId', campoId).eq('data', data),
+      supabase.from('cons_periodi').select('*').eq('controparte', 'campo').in('controparte_id', [campoId, idBar(campoId)]),
+    ]);
+    // Senza sapere cosa è già consuntivato non si tocca niente: meglio un affitto da ricalcolare
+    // a mano che uno già pagato riscritto da sotto.
+    if (pr.error || pe.error) { console.error(pr.error || pe.error); return; }
+    const tutte = pr.data || [];
+    await Promise.all(tutte
+      .filter(p => [STATO_PREN.CONFERMATO, STATO_PREN.FORSE].includes(p.stato) && !partiChiuse(pe.data || [], campo, p).affitto)
+      .map(p => {
+        const { costoCampoNetto, costoCampoLordo } = costiCampoPrenotazione(p, { campo, tariffe, altre: tutte });
+        if (Math.abs((parseFloat(p.costoCampoNetto) || 0) - costoCampoNetto) < 0.005) return null;
+        return supabase.from('prenotazioni').update({ costoCampo: costoCampoLordo, costoCampoNetto, costoCampoLordo }).eq('id', p.id);
+      }));
+  };
+
   const cambiaStatoPren = async (p, nuovoStato) => {
     if (nuovoStato === STATO_PREN.CONFERMATO && senzaIncasso(p)) {
       if (!puoConfermareSenzaIncasso) return alert("Non è possibile confermare: serve almeno un acconto o il saldo.");
@@ -1033,6 +1058,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         ? { stato: nuovoStato, motivoAnnullamento: null, ...(p.categoriaAnnullamento ? { categoriaAnnullamento: null } : {}), ...(p.costiAnnullamento ? { costiAnnullamento: null } : {}) }
         : { stato: nuovoStato })
       .eq('id', p.id);
+    await riallineaAllestimento(p.campoId, p.data);
     fetchTutto();
     if (nuovoStato === STATO_PREN.CONFERMATO) { setPrenConferma(p); setConfermaInglese(false); }
   };
@@ -1117,6 +1143,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     }
     setDialogoAnnullamento(null);
     setPrenSelezionata(prev => (prev && prev.id === p.id) ? { ...prev, ...modifiche } : prev);
+    await riallineaAllestimento(p.campoId, p.data);
     fetchTutto();
     // Il ricavo non c'e' (o se n'e' andato nel voucher), ma un costo puo' esserci lo stesso: il
     // campo che chiede l'affitto, il rinfresco gia' pronto, gli operatori gia' sul posto. E' raro,
@@ -1183,6 +1210,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     await supabase.from('pagamenti').delete().eq('tipo', 'prenotazione').eq('riferimento', id);
     if (pren?.voucherCodice) await supabase.from('voucher').update({ stato: STATO_VOUCHER.EMESSO }).eq('codice', pren.voucherCodice);
     if (pren?.preventivoCollegato) await supabase.from('preventivi').update({ stato: STATO_PREVENTIVO.CONFERMATO }).eq('codice', pren.preventivoCollegato);
+    await riallineaAllestimento(pren?.campoId, pren?.data);
     fetchTutto();
   };
 
@@ -1852,8 +1880,13 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // Il lordo dipende da come si paga: la quota in contanti resta senza IVA.
     const prezzoVenditaLordo = lordoConContanti(prezzoVenditaNetto, contantiDi(f), IVA);
     const numPart = numOrNull(f.numeroPartecipanti);
+    // L'affitto è a ore, più l'allestimento se il campo lo fa pagare: per sapere se questa partita
+    // apre o chiude un blocco servono le altre dello stesso campo e giorno.
+    const comeSarà = { id: codicePrenInModifica || '~nuova', campoId: campo?.id, data: f.data, oraInizio, oraFine: oraFine || null, durataOre, stato: f.stato || STATO_PREN.FORSE };
     const costiDelCampo = costiCampoDi({
-      campo, tariffe, data: f.data, oraInizio, tipoRinfresco: pac.prevedeRinfresco ? f.tipoRinfresco : null, numeroPartecipanti: numPart,
+      campo, tariffe, data: f.data, oraInizio, oraFine: oraFine || null, durataOre,
+      allestimento: campo ? allestimentoDi(comeSarà, prenotazioni, campo) : undefined,
+      tipoRinfresco: pac.prevedeRinfresco ? f.tipoRinfresco : null, numeroPartecipanti: numPart,
       campiOccupati: campo ? campiDelPacchetto(pac) : 1,
     });
     // Una partita commissionata dal campo stesso si gioca a casa sua: l'affitto non si paga.
@@ -1927,6 +1960,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const eraNuova = !codice;
     const voucherPrecedente = codice ? (prenotazioni.find(p => p.id === codice)?.voucherCodice || "") : "";
     const preventivoPrecedente = codice ? (prenotazioni.find(p => p.id === codice)?.preventivoCollegato || "") : "";
+    const primaDelSalvataggio = codice ? prenotazioni.find(p => p.id === codice) : null;
     if (!codice) {
       codice = await generaCodicePren();
       const { error } = await supabase.from('prenotazioni').insert([{ id: codice, ...rec }]);
@@ -1937,6 +1971,11 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       if (error) { console.error(error); setSalvataggioPren(false); return alert("Errore durante l'aggiornamento della prenotazione."); }
     }
     await sincronizzaPagamenti(codice, f.pagamenti);
+    // Le vicine dello stesso campo e giorno, e quelle di dove la partita stava prima se è stata spostata.
+    await riallineaAllestimento(rec.campoId, rec.data);
+    if (primaDelSalvataggio && (primaDelSalvataggio.campoId !== rec.campoId || primaDelSalvataggio.data !== rec.data)) {
+      await riallineaAllestimento(primaDelSalvataggio.campoId, primaDelSalvataggio.data);
+    }
     await aggiornaVoucherCollegato(voucherPrecedente, f.voucherCodice);
     await aggiornaPreventivoCollegato(preventivoPrecedente, f.preventivoCollegato);
     setSalvataggioPren(false);

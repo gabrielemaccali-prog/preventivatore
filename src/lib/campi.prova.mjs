@@ -1,7 +1,7 @@
 // Banco di prova del costo dei campi e del loro ricalcolo. Non fa parte dell'app: si esegue con
 //   npm run prova:campi
 // Gira in Node senza dev server né browser, perché campi.js è fatto di sole funzioni pure.
-import { costiCampoDi, ricalcoloCampo } from './campi.js';
+import { costiCampoDi, ricalcoloCampo, allestimentoDi, costiCampoPrenotazione } from './campi.js';
 
 const esiti = [];
 const verifica = (caso, atteso, ottenuto) => {
@@ -48,6 +48,28 @@ verifica('prima e dopo in netto', { prima: { affitto: 80, rinfresco: 0 }, dopo: 
 verifica('scrive netto e lordo, e il lordo anche nella colonna storica', [100, 122, 122], [righe[0].rec.costoCampoNetto, righe[0].rec.costoCampoLordo, righe[0].rec.costoCampo]);
 verifica('un periodo di un fornitore con lo stesso id non chiude il campo', 1,
   ricalcoloCampo({ campo, tariffe, prenotazioni: [prenotazioni[2]], periodi: [{ controparte: 'fornitore', controparte_id: 'cmp_1', dal: '2026-09-01', al: '2026-09-15' }] }).length);
+
+// ---------- affitto a ore ----------
+const comasina = { id: 'cmp_c', costoFlat: 55, ivaCampo: 22, ivaInclusaCampo: false };
+verifica('a ore: due ore a 55 €/ora fanno 110', 110, costiCampoDi({ campo: comasina, data: '2026-09-26', oraInizio: '15:00', durataOre: 2 }).costoCampoNetto);
+verifica("a ore: dall'ora di fine", 82.5, costiCampoDi({ campo: comasina, data: '2026-09-26', oraInizio: '15:00', oraFine: '16:30' }).costoCampoNetto);
+verifica('a ore: a cavallo di due fasce ogni ora paga la sua', 250, costiCampoDi({ campo, tariffe, data: '2026-09-25', oraInizio: '18:00', durataOre: 2 }).costoCampoNetto);
+verifica('a ore: senza durata vale un\'ora', 55, costiCampoDi({ campo: comasina, data: '2026-09-26', oraInizio: '15:00' }).costoCampoNetto);
+
+// ---------- allestimento: una volta per blocco di partite continue ----------
+const bergamo = { id: 'cmp_b', costoFlat: 60, ivaCampo: 22, ivaInclusaCampo: false, minutiAllestimento: 60 };
+const pb = (id, oraInizio, durataOre, extra = {}) => ({ id, campoId: 'cmp_b', data: '2026-09-26', stato: 'CONFERMATO', oraInizio, durataOre, ...extra });
+const blocco = [pb('B1', '15:00', 2), pb('B2', '17:00', 2), pb('B3', '21:00', 1)];
+verifica('allestimento: la prima del blocco porta la mezz\'ora prima', { prima: 30, dopo: 0 }, allestimentoDi(blocco[0], blocco, bergamo));
+verifica('allestimento: l\'ultima porta quella dopo', { prima: 0, dopo: 30 }, allestimentoDi(blocco[1], blocco, bergamo));
+verifica('allestimento: una partita da sola le porta tutte e due', { prima: 30, dopo: 30 }, allestimentoDi(blocco[2], blocco, bergamo));
+verifica('allestimento: B1 = 2 ore + mezz\'ora', 150, costiCampoPrenotazione(blocco[0], { campo: bergamo, altre: blocco }).costoCampoNetto);
+verifica('allestimento: stacco più corto dell\'allestimento, stesso blocco', { prima: 0, dopo: 30 },
+  allestimentoDi(pb('B5', '17:30', 1), [pb('B4', '15:00', 2), pb('B5', '17:30', 1)], bergamo));
+verifica('allestimento: le annullate non fanno blocco', { prima: 30, dopo: 30 },
+  allestimentoDi(blocco[1], [blocco[0], blocco[1]].map((x, i) => (i === 0 ? { ...x, stato: 'ANNULLATA' } : x)), bergamo));
+verifica('allestimento: senza minuti nel configuratore niente', { prima: 0, dopo: 0 }, allestimentoDi(blocco[2], blocco, comasina));
+verifica('allestimento: due campi, doppio anche il montaggio', 300, costiCampoPrenotazione({ ...blocco[0], campiOccupati: 2 }, { campo: bergamo, altre: blocco }).costoCampoNetto);
 
 // ---------- bar di un'altra società: affitto e rinfresco si chiudono a parte ----------
 // Affitto salvato 80 (le tariffe dicono 100), merenda per 10 salvata 40 (le tariffe dicono 50).

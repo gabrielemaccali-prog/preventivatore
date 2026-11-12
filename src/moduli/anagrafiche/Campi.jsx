@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { formattaDataGGMMAAAA, siglaProvincia, provinciaValida, formattaOraInput, normalizzaOra24 } from '../../lib/utils'
-import { ricalcoloCampo } from '../../lib/campi'
+import { ricalcoloCampo, minutiAllestimentoDi } from '../../lib/campi'
 import { idBar } from '../../lib/fornitori'
 import { etichettaStatoPren, classeBadgeStato } from '../../lib/costanti'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
@@ -16,7 +16,7 @@ const GIORNI = [
   { n: 5, l: 'Ven' }, { n: 6, l: 'Sab' }, { n: 7, l: 'Dom' }
 ];
 
-const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusaCampo: false, ivaInclusaRinfresco: false, costoMerenda: "", costoAperitivo: "", ivaCampo: "22", ivaRinfresco: "22", noRinfresco: false, barSeparato: false, barSocieta: "" };
+const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusaCampo: false, ivaInclusaRinfresco: false, costoMerenda: "", costoAperitivo: "", ivaCampo: "22", ivaRinfresco: "22", noRinfresco: false, barSeparato: false, barSocieta: "", minutiAllestimento: "" };
 
 const ivaLabel = (incl) => incl ? 'IVA inclusa' : 'IVA esclusa';
 
@@ -45,8 +45,12 @@ const CampoFormFields = ({ formCampo, setFormCampo }) => (
       <Campo label="Prov"><input type="text" value={formCampo.provincia} onChange={(e) => setFormCampo({ ...formCampo, provincia: e.target.value })} onBlur={() => setFormCampo(prev => ({ ...prev, provincia: siglaProvincia(prev.provincia) }))} style={inputStyle} /></Campo>
     </div>
     <Campo label="Centro di costo"><input type="text" value={formCampo.centroCosto} onChange={(e) => setFormCampo({ ...formCampo, centroCosto: e.target.value })} style={inputStyle} /></Campo>
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-      <Campo label="Costo base flat €"><input type="number" step="any" value={formCampo.costoFlat} onChange={(e) => setFormCampo({ ...formCampo, costoFlat: e.target.value })} style={inputStyle} /></Campo>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '8px' }}>
+      <Campo label="Allestimento (min per blocco)">
+        <input type="number" step="1" min="0" value={formCampo.minutiAllestimento} onChange={(e) => setFormCampo({ ...formCampo, minutiAllestimento: e.target.value })} style={inputStyle} placeholder="es. 60"
+          title="Tempo di montaggio e smontaggio che il campo fa pagare: metà prima della prima partita di un blocco di partite attaccate, metà dopo l'ultima, a tariffa oraria" />
+      </Campo>
+      <Campo label="Tariffa base €/ora"><input type="number" step="any" value={formCampo.costoFlat} onChange={(e) => setFormCampo({ ...formCampo, costoFlat: e.target.value })} style={inputStyle} /></Campo>
       <Campo label="% IVA affitto campo"><input type="number" step="any" value={formCampo.ivaCampo} onChange={(e) => setFormCampo({ ...formCampo, ivaCampo: e.target.value })} style={inputStyle} /></Campo>
       <Campo label=" "><label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', height: '36px' }}><input type="checkbox" checked={formCampo.ivaInclusaCampo} onChange={(e) => setFormCampo({ ...formCampo, ivaInclusaCampo: e.target.checked })} /> Costo campo IVA inclusa</label></Campo>
     </div>
@@ -140,14 +144,20 @@ function Campi({ user }) {
       barSeparato: !formCampo.noRinfresco && !!formCampo.barSeparato,
       barSocieta: !formCampo.noRinfresco && formCampo.barSeparato ? (formCampo.barSocieta || '').trim() || null : null,
     };
+    // L'allestimento si scrive solo se la colonna c'è (sql/campi_allestimento.sql), o se è stato
+    // compilato: in quel caso, senza colonna, l'errore spiega cosa manca.
+    const minuti = Math.max(parseInt(formCampo.minutiAllestimento, 10) || 0, 0);
+    if (minuti > 0 || campi.some(c => 'minutiAllestimento' in c)) rec.minutiAllestimento = minuti;
     let error;
     if (editCampo) ({ error } = await supabase.from('pren_campi').update(rec).eq('id', editCampo));
     else ({ error } = await supabase.from('pren_campi').insert([{ id: "cmp_" + Date.now(), ...rec }]));
     if (error) {
       console.error(error);
-      return alert(/barSeparato|barSocieta/.test(error.message || '')
-        ? "Per il bar separato esegui prima sql/campi_bar_separato.sql nell'SQL Editor di Supabase."
-        : "Errore salvataggio campo");
+      return alert(/minutiAllestimento/.test(error.message || '')
+        ? "Per l'allestimento esegui prima sql/campi_allestimento.sql nell'SQL Editor di Supabase."
+        : /barSeparato|barSocieta/.test(error.message || '')
+          ? "Per il bar separato esegui prima sql/campi_bar_separato.sql nell'SQL Editor di Supabase."
+          : "Errore salvataggio campo");
     }
     setFormCampo(CAMPO_VUOTO); setEditCampo(null); setShowFormCampo(false); fetchTutto();
   };
@@ -162,6 +172,7 @@ function Campi({ user }) {
       ivaCampo: c.ivaCampo ?? "22", ivaRinfresco: c.ivaRinfresco ?? "22",
       noRinfresco: !!c.noRinfresco,
       barSeparato: !!c.barSeparato, barSocieta: c.barSocieta || "",
+      minutiAllestimento: c.minutiAllestimento ? String(c.minutiAllestimento) : "",
     });
   };
   const rimuoviCampo = async (id) => {
@@ -199,10 +210,10 @@ function Campi({ user }) {
     const righe = ricalcoloCampo({ campo, tariffe, prenotazioni: pr.data || [], periodi: pe.data || [] });
     const rettifiche = {};
     (vo.data || []).forEach(v => { rettifiche[v.riferimento] = (rettifiche[v.riferimento] || 0) + (parseFloat(v.importo) || 0); });
-    setRicalcolo({ campo, righe, rettifiche, scelte: righe.map(r => r.prenotazione.id), inCorso: false });
+    setRicalcolo({ campo, righe, rettifiche, tutte: pr.data || [], scelte: righe.map(r => r.prenotazione.id), inCorso: false });
   };
   const applicaRicalcolo = async () => {
-    const { campo, righe, scelte } = ricalcolo;
+    const { campo, righe, scelte, tutte } = ricalcolo;
     if (scelte.length === 0) return;
     setRicalcolo(r => ({ ...r, inCorso: true }));
     // Un periodo può essere stato chiuso mentre l'anteprima era aperta: si ricontrolla ora.
@@ -210,7 +221,7 @@ function Campi({ user }) {
     if (errPe) { console.error(errPe); setRicalcolo(r => ({ ...r, inCorso: false })); return alert("Impossibile leggere i periodi consuntivati: ricalcolo annullato."); }
     // Si rifà il conto sulle scelte con i periodi di adesso: una parte chiusa nel frattempo esce dal
     // record, e una partita che non ha più niente da cambiare si salta.
-    const daScrivere = ricalcoloCampo({ campo, tariffe, prenotazioni: righe.filter(r => scelte.includes(r.prenotazione.id)).map(r => r.prenotazione), periodi: periodi || [] });
+    const daScrivere = ricalcoloCampo({ campo, tariffe, prenotazioni: righe.filter(r => scelte.includes(r.prenotazione.id)).map(r => r.prenotazione), periodi: periodi || [], altre: tutte });
     const esiti = await Promise.all(daScrivere.map(r => supabase.from('prenotazioni').update(r.rec).eq('id', r.prenotazione.id)));
     const falliti = esiti.filter(e => e.error);
     falliti.forEach(e => console.error(e.error));
@@ -298,7 +309,7 @@ function Campi({ user }) {
                 <div style={{ marginTop: '8px' }}>
                   <div style={{ fontSize: '0.85rem', color: '#555' }}>{[c.indirizzo, c.cap, c.citta, c.provincia].filter(Boolean).join(', ')}</div>
                   <div style={{ fontSize: '0.8rem', color: '#777' }}>
-                    Centro di costo: {c.centroCosto || '—'} · Base €{parseFloat(c.costoFlat || 0).toFixed(2)}
+                    Centro di costo: {c.centroCosto || '—'} · Base €{parseFloat(c.costoFlat || 0).toFixed(2)}/ora{minutiAllestimentoDi(c) > 0 && ` · Allestimento ${minutiAllestimentoDi(c)} min per blocco`}
                     {c.costoMerenda != null && ` · Merenda €${parseFloat(c.costoMerenda).toFixed(2)}/p`}
                     {c.costoAperitivo != null && ` · Aperitivo €${parseFloat(c.costoAperitivo).toFixed(2)}/p`}
                   </div>
@@ -314,7 +325,7 @@ function Campi({ user }) {
                     <div style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#555', marginBottom: '6px' }}>Tariffe variabili (sovrascrivono la flat)</div>
                     <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', minWidth: '360px', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-                      <thead><tr style={{ color: '#666' }}><th style={{ textAlign: 'left', padding: '4px' }}>Giorni</th><th style={{ textAlign: 'left', padding: '4px' }}>Fascia</th><th style={{ textAlign: 'left', padding: '4px' }}>Costo</th><th style={{ textAlign: 'right', padding: '4px' }}>Azioni</th></tr></thead>
+                      <thead><tr style={{ color: '#666' }}><th style={{ textAlign: 'left', padding: '4px' }}>Giorni</th><th style={{ textAlign: 'left', padding: '4px' }}>Fascia</th><th style={{ textAlign: 'left', padding: '4px' }}>€/ora</th><th style={{ textAlign: 'right', padding: '4px' }}>Azioni</th></tr></thead>
                       <tbody>
                         {tarCampo.map(t => (
                           <tr key={t.id}>
@@ -342,7 +353,7 @@ function Campi({ user }) {
                     </div>
                     <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} title="Formato 24h, es. 19:00" value={nuovaTariffa.campoId === c.id ? nuovaTariffa.oraInizio : ""} onChange={(e) => setNuovaTariffa(prev => ({ ...prev, campoId: c.id, oraInizio: formattaOraInput(e.target.value) }))} onBlur={() => setNuovaTariffa(prev => ({ ...prev, oraInizio: normalizzaOra24(prev.oraInizio) ?? prev.oraInizio }))} style={{ ...inputStyle, width: '80px', height: '32px' }} />
                     <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} title="Formato 24h, es. 00:00" value={nuovaTariffa.campoId === c.id ? nuovaTariffa.oraFine : ""} onChange={(e) => setNuovaTariffa(prev => ({ ...prev, campoId: c.id, oraFine: formattaOraInput(e.target.value) }))} onBlur={() => setNuovaTariffa(prev => ({ ...prev, oraFine: normalizzaOra24(prev.oraFine) ?? prev.oraFine }))} style={{ ...inputStyle, width: '80px', height: '32px' }} />
-                    <input type="number" step="any" placeholder="€" value={nuovaTariffa.campoId === c.id ? nuovaTariffa.costo : ""} onChange={(e) => setNuovaTariffa(prev => ({ ...prev, campoId: c.id, costo: e.target.value }))} style={{ ...inputStyle, width: '80px', height: '32px' }} />
+                    <input type="number" step="any" placeholder="€/ora" value={nuovaTariffa.campoId === c.id ? nuovaTariffa.costo : ""} onChange={(e) => setNuovaTariffa(prev => ({ ...prev, campoId: c.id, costo: e.target.value }))} style={{ ...inputStyle, width: '80px', height: '32px' }} />
                     <button type="button" className="btn-conferma" style={{ padding: '6px 12px' }} onClick={() => addTariffa(c.id)}>+ Tariffa</button>
                   </div>
                 )}
@@ -377,7 +388,7 @@ function Campi({ user }) {
               <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={chiudi}>✕</button>
               <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>Ricalcola prenotazioni · {campo.nome}</h3>
               <p style={{ margin: '0 0 14px 0', fontSize: '0.8rem', color: '#777' }}>
-                Affitto e rinfresco (netti) ricalcolati con le tariffe attuali del campo. Sono escluse le partite che cadono in un periodo già consuntivato:
+                Affitto e rinfresco (netti) ricalcolati con le tariffe attuali del campo: l&apos;affitto è tariffa oraria per le ore della partita, più l&apos;allestimento se il campo lo fa pagare. Sono escluse le partite che cadono in un periodo già consuntivato:
                 quelle sono state pagate e non cambiano. Col bar di un'altra società affitto e rinfresco si pagano a parte: la parte già pagata resta com'è, l'altra si ricalcola. Le rettifiche già scritte in consuntivazione restano: controlla che non correggano proprio la differenza che il ricalcolo sistema.
               </p>
               {righe.length === 0 ? (
