@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { formattaDataGGMMAAAA, siglaProvincia, provinciaValida, formattaOraInput, normalizzaOra24 } from '../../lib/utils'
-import { ricalcoloCampo, giornataChiusa } from '../../lib/campi'
+import { ricalcoloCampo } from '../../lib/campi'
+import { idBar } from '../../lib/fornitori'
 import { etichettaStatoPren, classeBadgeStato } from '../../lib/costanti'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
@@ -15,7 +16,7 @@ const GIORNI = [
   { n: 5, l: 'Ven' }, { n: 6, l: 'Sab' }, { n: 7, l: 'Dom' }
 ];
 
-const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusaCampo: false, ivaInclusaRinfresco: false, costoMerenda: "", costoAperitivo: "", ivaCampo: "22", ivaRinfresco: "22", noRinfresco: false };
+const CAMPO_VUOTO = { nome: "", nomeCompleto: "", indirizzo: "", cap: "", citta: "", provincia: "", centroCosto: "", costoFlat: "", ivaInclusaCampo: false, ivaInclusaRinfresco: false, costoMerenda: "", costoAperitivo: "", ivaCampo: "22", ivaRinfresco: "22", noRinfresco: false, barSeparato: false, barSocieta: "" };
 
 const ivaLabel = (incl) => incl ? 'IVA inclusa' : 'IVA esclusa';
 
@@ -58,6 +59,18 @@ const CampoFormFields = ({ formCampo, setFormCampo }) => (
         <Campo label="Costo aperitivo €/pers"><input type="number" step="any" value={formCampo.costoAperitivo} onChange={(e) => setFormCampo({ ...formCampo, costoAperitivo: e.target.value })} style={inputStyle} /></Campo>
         <Campo label="% IVA rinfreschi"><input type="number" step="any" value={formCampo.ivaRinfresco} onChange={(e) => setFormCampo({ ...formCampo, ivaRinfresco: e.target.value })} style={inputStyle} /></Campo>
         <Campo label=" "><label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', height: '36px' }}><input type="checkbox" checked={formCampo.ivaInclusaRinfresco} onChange={(e) => setFormCampo({ ...formCampo, ivaInclusaRinfresco: e.target.checked })} /> Costo rinfresco IVA inclusa</label></Campo>
+      </div>
+    )}
+    {/* Cambia solo la consuntivazione: affitto e rinfreschi diventano due controparti da pagare
+        a parte. Prenotazioni e prezzi restano gli stessi. */}
+    {!formCampo.noRinfresco && (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', alignItems: 'end' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', height: '36px' }} title="In consuntivazione affitto e rinfreschi compaiono come due voci separate">
+          <input type="checkbox" checked={!!formCampo.barSeparato} onChange={(e) => setFormCampo({ ...formCampo, barSeparato: e.target.checked })} /> Bar/rinfreschi di un'altra società
+        </label>
+        {formCampo.barSeparato && (
+          <Campo label="Società del bar"><input type="text" value={formCampo.barSocieta} onChange={(e) => setFormCampo({ ...formCampo, barSocieta: e.target.value })} style={inputStyle} placeholder="Es. Bar Sport Srl" /></Campo>
+        )}
       </div>
     )}
   </>
@@ -122,12 +135,20 @@ function Campi({ user }) {
       ivaInclusaCampo: formCampo.ivaInclusaCampo, ivaInclusaRinfresco: formCampo.ivaInclusaRinfresco,
       costoMerenda: numOrNull(formCampo.costoMerenda), costoAperitivo: numOrNull(formCampo.costoAperitivo),
       ivaCampo: numOrNull(formCampo.ivaCampo), ivaRinfresco: numOrNull(formCampo.ivaRinfresco),
-      noRinfresco: formCampo.noRinfresco
+      noRinfresco: formCampo.noRinfresco,
+      // Senza rinfresco non c'è un bar da pagare a parte.
+      barSeparato: !formCampo.noRinfresco && !!formCampo.barSeparato,
+      barSocieta: !formCampo.noRinfresco && formCampo.barSeparato ? (formCampo.barSocieta || '').trim() || null : null,
     };
     let error;
     if (editCampo) ({ error } = await supabase.from('pren_campi').update(rec).eq('id', editCampo));
     else ({ error } = await supabase.from('pren_campi').insert([{ id: "cmp_" + Date.now(), ...rec }]));
-    if (error) { console.error(error); return alert("Errore salvataggio campo"); }
+    if (error) {
+      console.error(error);
+      return alert(/barSeparato|barSocieta/.test(error.message || '')
+        ? "Per il bar separato esegui prima sql/campi_bar_separato.sql nell'SQL Editor di Supabase."
+        : "Errore salvataggio campo");
+    }
     setFormCampo(CAMPO_VUOTO); setEditCampo(null); setShowFormCampo(false); fetchTutto();
   };
   const nuovoCampo = () => { setEditCampo(null); setFormCampo(CAMPO_VUOTO); setShowFormCampo(true); };
@@ -139,7 +160,8 @@ function Campi({ user }) {
       ivaInclusaCampo: !!c.ivaInclusaCampo, ivaInclusaRinfresco: !!c.ivaInclusaRinfresco,
       costoMerenda: c.costoMerenda ?? "", costoAperitivo: c.costoAperitivo ?? "",
       ivaCampo: c.ivaCampo ?? "22", ivaRinfresco: c.ivaRinfresco ?? "22",
-      noRinfresco: !!c.noRinfresco
+      noRinfresco: !!c.noRinfresco,
+      barSeparato: !!c.barSeparato, barSocieta: c.barSocieta || "",
     });
   };
   const rimuoviCampo = async (id) => {
@@ -168,8 +190,8 @@ function Campi({ user }) {
   const apriRicalcolo = async (campo) => {
     const [pr, pe, vo] = await Promise.all([
       supabase.from('prenotazioni').select('*').eq('campoId', campo.id),
-      supabase.from('cons_periodi').select('*').eq('controparte', 'campo').eq('controparte_id', campo.id),
-      supabase.from('cons_voci').select('riferimento, importo').eq('controparte', 'campo').eq('controparte_id', campo.id).eq('lato', 'costo'),
+      supabase.from('cons_periodi').select('*').eq('controparte', 'campo').in('controparte_id', [campo.id, idBar(campo.id)]),
+      supabase.from('cons_voci').select('riferimento, importo').eq('controparte', 'campo').in('controparte_id', [campo.id, idBar(campo.id)]).eq('lato', 'costo'),
     ]);
     if (pr.error) { console.error(pr.error); return alert("Errore nel leggere le prenotazioni del campo"); }
     // Senza le tabelle della consuntivazione non si sa cosa è già chiuso: meglio non toccare niente.
@@ -184,9 +206,11 @@ function Campi({ user }) {
     if (scelte.length === 0) return;
     setRicalcolo(r => ({ ...r, inCorso: true }));
     // Un periodo può essere stato chiuso mentre l'anteprima era aperta: si ricontrolla ora.
-    const { data: periodi, error: errPe } = await supabase.from('cons_periodi').select('*').eq('controparte', 'campo').eq('controparte_id', campo.id);
+    const { data: periodi, error: errPe } = await supabase.from('cons_periodi').select('*').eq('controparte', 'campo').in('controparte_id', [campo.id, idBar(campo.id)]);
     if (errPe) { console.error(errPe); setRicalcolo(r => ({ ...r, inCorso: false })); return alert("Impossibile leggere i periodi consuntivati: ricalcolo annullato."); }
-    const daScrivere = righe.filter(r => scelte.includes(r.prenotazione.id) && !giornataChiusa(periodi || [], campo.id, r.prenotazione));
+    // Si rifà il conto sulle scelte con i periodi di adesso: una parte chiusa nel frattempo esce dal
+    // record, e una partita che non ha più niente da cambiare si salta.
+    const daScrivere = ricalcoloCampo({ campo, tariffe, prenotazioni: righe.filter(r => scelte.includes(r.prenotazione.id)).map(r => r.prenotazione), periodi: periodi || [] });
     const esiti = await Promise.all(daScrivere.map(r => supabase.from('prenotazioni').update(r.rec).eq('id', r.prenotazione.id)));
     const falliti = esiti.filter(e => e.error);
     falliti.forEach(e => console.error(e.error));
@@ -250,6 +274,7 @@ function Campi({ user }) {
                       <strong style={{ fontSize: '1rem' }}>{c.nome}</strong>
                       {c.nomeCompleto && <span style={{ marginLeft: '8px', fontSize: '0.82rem', color: '#0288d1', fontStyle: 'italic' }}>{c.nomeCompleto}</span>}
                       {c.noRinfresco && <span title="Non è possibile fare rinfresco in questo campo" style={{ marginLeft: '6px', fontSize: '0.7rem', fontWeight: 'bold', padding: '2px 7px', borderRadius: '10px', background: '#fee2e2', color: '#991b1b' }}>🚫 No rinfresco</span>}
+                      {c.barSeparato && <span title="In consuntivazione affitto e rinfreschi si pagano separatamente" style={{ marginLeft: '6px', fontSize: '0.7rem', fontWeight: 'bold', padding: '2px 7px', borderRadius: '10px', background: '#ede9fe', color: '#5b21b6' }}>Bar separato{c.barSocieta ? `: ${c.barSocieta}` : ''}</span>}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '5px' }}>
@@ -343,6 +368,8 @@ function Campi({ user }) {
           ? <><span style={{ color: '#94a3b8', textDecoration: 'line-through' }}>{eur(prima)}</span> → <strong>{eur(dopo)}</strong></>
           : eur(dopo);
         const cella = { padding: '6px', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' };
+        // Col bar separato una parte può essere già pagata mentre l'altra si ricalcola: resta com'è.
+        const pagato = <span title="Già consuntivato: non cambia" style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#64748b' }}>pagato</span>;
         const chiudi = () => { if (!inCorso) setRicalcolo(null); };
         return (
           <div className="modal-form-backdrop" onClick={chiudi}>
@@ -351,7 +378,7 @@ function Campi({ user }) {
               <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0288d1' }}>Ricalcola prenotazioni · {campo.nome}</h3>
               <p style={{ margin: '0 0 14px 0', fontSize: '0.8rem', color: '#777' }}>
                 Affitto e rinfresco (netti) ricalcolati con le tariffe attuali del campo. Sono escluse le partite che cadono in un periodo già consuntivato:
-                quelle sono state pagate e non cambiano. Le rettifiche già scritte in consuntivazione restano: controlla che non correggano proprio la differenza che il ricalcolo sistema.
+                quelle sono state pagate e non cambiano. Col bar di un'altra società affitto e rinfresco si pagano a parte: la parte già pagata resta com'è, l'altra si ricalcola. Le rettifiche già scritte in consuntivazione restano: controlla che non correggano proprio la differenza che il ricalcolo sistema.
               </p>
               {righe.length === 0 ? (
                 <p style={{ fontSize: '0.9rem' }}>Nessuna prenotazione da aggiornare: gli importi salvati corrispondono già alle tariffe attuali.</p>
@@ -364,14 +391,14 @@ function Campi({ user }) {
                       <th style={cella}>Affitto</th><th style={cella}>Rinfresco</th><th style={cella}>Rettifiche</th>
                     </tr></thead>
                     <tbody>
-                      {righe.map(({ prenotazione: p, prima, dopo }) => (
+                      {righe.map(({ prenotazione: p, prima, dopo, chiuse }) => (
                         <tr key={p.id}>
                           <td style={cella}><input type="checkbox" checked={scelte.includes(p.id)} onChange={() => cambia(p.id)} /></td>
                           <td style={cella}>{p.id}{p.nominativo ? <span style={{ color: '#64748b' }}> · {p.nominativo}</span> : ''}</td>
                           <td style={cella}>{formattaDataGGMMAAAA(p.data)}{p.oraInizio ? ` ${p.oraInizio}` : ''}</td>
                           <td style={cella}><span className={`badge-stato ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
-                          <td style={cella}>{importo(prima.affitto, dopo.affitto)}</td>
-                          <td style={cella}>{importo(prima.rinfresco, dopo.rinfresco)}</td>
+                          <td style={cella}>{importo(prima.affitto, dopo.affitto)}{chiuse?.affitto && pagato}</td>
+                          <td style={cella}>{importo(prima.rinfresco, dopo.rinfresco)}{chiuse?.rinfresco && pagato}</td>
                           <td style={{ ...cella, color: rettifiche[p.id] ? '#b45309' : '#94a3b8' }}>{rettifiche[p.id] ? eur(rettifiche[p.id]) : '—'}</td>
                         </tr>
                       ))}

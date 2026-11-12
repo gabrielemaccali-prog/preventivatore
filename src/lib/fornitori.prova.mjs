@@ -1,7 +1,7 @@
 // Banco di prova della consuntivazione di fornitori e campi. Non fa parte dell'app: si esegue con
 //   npm run prova:fornitori
 // Gira in Node senza dev server né browser, perché fornitori.js è fatto di sole funzioni pure.
-import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, SEDE_NON_INDICATA } from './fornitori.js';
+import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, SEDE_NON_INDICATA, arrotonda2 } from './fornitori.js';
 import { STATO_PREN } from './costanti.js';
 
 const esiti = [];
@@ -197,6 +197,23 @@ verifica('il dettaglio del costo segue lo stesso id', 600,
     listino,
     preventivi: [{ codice: 'PRV-AQ', gonfiabili: [{ sedeId: 'loc_aq', sedePartenza: 'Laquilone', costoNoleggio: 600 }] }],
   }).dettaglioCostoDi({ preventivoCollegato: 'PRV-AQ' }, 'Laquilone Noleggi').tariffa);
+
+// ---------- campo col bar di un'altra società ----------
+const campiBar = [{ id: 'cmp_q', nome: 'Quintosole', barSeparato: true, barSocieta: 'Bar Sport Srl' }, { id: 'cmp_c', nome: 'Comasina' }];
+const separati = daConsuntivareCampi({ ...campiBase, campi: campiBar }).controparti;
+const gruppoCampi = separati.find(c => c.controparte.id === 'cmp_q');
+const gruppoBar = separati.find(c => c.controparte.id === 'cmp_q:bar');
+verifica('bar separato: due gruppi coi loro nomi', ['Quintosole campi', 'Quintosole rinfreschi: Bar Sport Srl'],
+  separati.map(c => c.controparte.nome));
+verifica("bar separato: al campo l'affitto e il credito", [95.08, 150], [gruppoCampi.costo, gruppoCampi.ricavo]);
+verifica('bar separato: al bar il rinfresco, coi paganti', [98.36, 15], [gruppoBar.costo, gruppoBar.righe[0].dettaglio.merende]);
+verifica('bar separato: la somma non cambia', quintosole.costo, arrotonda2(gruppoCampi.costo + gruppoBar.costo));
+verifica('bar separato: il periodo del campo chiude solo il campo', ['Quintosole rinfreschi: Bar Sport Srl'],
+  daConsuntivareCampi({ ...campiBase, campi: campiBar, periodi: [{ controparte: 'campo', controparte_id: 'cmp_q', per_righe: true, dal: '2026-09-12', al: '2026-09-14',
+    righe: [{ riferimento: 'PRN-C1', lato: 'costo', dettaglio: { affitto: 45.08, rinfresco: 0 } }, { riferimento: 'PRN-C2', lato: 'costo', dettaglio: { affitto: 50, rinfresco: 0 } }, { riferimento: 'PRN-C3', lato: 'ricavo' }] }] })
+    .controparti.map(c => c.controparte.nome));
+verifica('bar separato: un periodo di prima della separazione ha già pagato anche il rinfresco', 0,
+  daConsuntivareCampi({ ...campiBase, campi: campiBar, periodi: [{ controparte: 'campo', controparte_id: 'cmp_q', dal: '2026-09-01', al: '2026-09-30' }] }).controparti.length);
 
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${JSON.stringify(e.atteso)}, ottenuto ${JSON.stringify(e.ottenuto)}`}`));

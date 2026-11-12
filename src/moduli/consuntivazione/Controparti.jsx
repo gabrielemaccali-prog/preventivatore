@@ -4,7 +4,7 @@ import { scaricaExcel } from '../../lib/excel'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA, etichettaPartita } from '../../lib/utils'
 import { STATO_PREN, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
-import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, arrotonda2, totaliDi } from '../../lib/fornitori'
+import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, arrotonda2, totaliDi, contropartiCampi, barSeparato, idBar } from '../../lib/fornitori'
 
 // ============================================================
 // Consuntivazione di chi paghiamo: i fornitori che ci noleggiano i giochi e i campi dove si gioca.
@@ -154,7 +154,7 @@ function Controparti({ tipo }) {
       // Anche le annullate: quelle con costi segnati entrano, le altre le scarta il calcolo.
       supabase.from('prenotazioni').select('*').in('stato', [STATO_PREN.CONFERMATO, STATO_PREN.ANNULLATA]).lte('data', oggiIso()).order('data'),
       supabase.from('sedi').select('*'),
-      supabase.from('pren_campi').select('id, nome').order('nome'),
+      supabase.from('pren_campi').select('*').order('nome'),
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
       // Le righe e gli extra del preventivo dicono di cosa è fatto il costo di un fornitore.
       supabase.from('preventivi').select('codice, gonfiabili, extras'),
@@ -180,7 +180,11 @@ function Controparti({ tipo }) {
   useEffect(() => { fetchTutto(); }, [tipo]);
 
   const nomeGiocoPerId = useMemo(() => Object.fromEntries(giochi.map(g => [g.id, g.nome])), [giochi]);
-  const anagrafica = tipo === 'campo' ? campi : sedi;
+  // Un campo col bar di un'altra società vale due controparti: i campi e i rinfreschi. I periodi
+  // dei rinfreschi si riconoscono per nome anche se la spunta è stata tolta dopo.
+  const anagrafica = useMemo(() => (tipo === 'campo'
+    ? [...contropartiCampi(campi), ...campi.filter(c => !barSeparato(c)).map(c => ({ id: idBar(c.id), nome: `${c.nome} rinfreschi`, campoId: c.id, bar: true }))]
+    : sedi), [tipo, campi, sedi]);
   const contropartePerId = useMemo(() => Object.fromEntries(anagrafica.map(c => [String(c.id), c])), [anagrafica]);
   const risolutore = useMemo(() => risolutoreSedi({ sedi, listino, preventivi }), [sedi, listino, preventivi]);
 

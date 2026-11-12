@@ -49,6 +49,24 @@ verifica('scrive netto e lordo, e il lordo anche nella colonna storica', [100, 1
 verifica('un periodo di un fornitore con lo stesso id non chiude il campo', 1,
   ricalcoloCampo({ campo, tariffe, prenotazioni: [prenotazioni[2]], periodi: [{ controparte: 'fornitore', controparte_id: 'cmp_1', dal: '2026-09-01', al: '2026-09-15' }] }).length);
 
+// ---------- bar di un'altra società: affitto e rinfresco si chiudono a parte ----------
+// Affitto salvato 80 (le tariffe dicono 100), merenda per 10 salvata 40 (le tariffe dicono 50).
+const campoBar = { ...campo, barSeparato: true };
+const conMerenda = { id: 'P-BAR', campoId: 'cmp_1', data: '2026-09-25', oraInizio: '17:00', tipoRinfresco: 'merenda', numeroPartecipanti: 10, costoCampoNetto: 80, costoRinfrescoNetto: 40 };
+const perRighe = (id, dettaglio) => ({ controparte: 'campo', controparte_id: id, per_righe: true, dal: '2026-09-25', al: '2026-09-25', righe: [{ riferimento: 'P-BAR', lato: 'costo', dettaglio }] });
+const soloAffittoPagato = ricalcoloCampo({ campo: campoBar, tariffe, prenotazioni: [conMerenda], periodi: [perRighe('cmp_1', { affitto: 80, rinfresco: 0 })] })[0];
+verifica("bar separato, affitto pagato: si ricalcola il rinfresco", [{ affitto: 80, rinfresco: 50 }, ['costoRinfresco', 'costoRinfrescoNetto', 'costoRinfrescoLordo']],
+  [soloAffittoPagato.dopo, Object.keys(soloAffittoPagato.rec)]);
+const soloBarPagato = ricalcoloCampo({ campo: campoBar, tariffe, prenotazioni: [conMerenda], periodi: [perRighe('cmp_1:bar', { affitto: 0, rinfresco: 40 })] })[0];
+verifica("bar separato, rinfresco pagato: si ricalcola l'affitto", [{ affitto: 100, rinfresco: 40 }, ['costoCampo', 'costoCampoNetto', 'costoCampoLordo']],
+  [soloBarPagato.dopo, Object.keys(soloBarPagato.rec)]);
+verifica('bar separato, tutti e due pagati: niente da ricalcolare', 0,
+  ricalcoloCampo({ campo: campoBar, tariffe, prenotazioni: [conMerenda], periodi: [perRighe('cmp_1', { affitto: 80, rinfresco: 0 }), perRighe('cmp_1:bar', { affitto: 0, rinfresco: 40 })] }).length);
+verifica('bar separato: un periodo di prima della separazione ha pagato anche il rinfresco', 0,
+  ricalcoloCampo({ campo: campoBar, tariffe, prenotazioni: [conMerenda], periodi: [perRighe('cmp_1', { affitto: 80, rinfresco: 40 })] }).length);
+verifica('senza bar separato il periodo del campo chiude tutto, come prima', 0,
+  ricalcoloCampo({ campo, tariffe, prenotazioni: [conMerenda], periodi: [perRighe('cmp_1', { affitto: 80, rinfresco: 0 })] }).length);
+
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : `\n      atteso ${JSON.stringify(e.atteso)}\n      ottenuto ${JSON.stringify(e.ottenuto)}`}`));
 console.log(`\n${esiti.length - falliti.length}/${esiti.length} verifiche superate`);

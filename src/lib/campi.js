@@ -1,5 +1,5 @@
 import { toMinutes } from './utils.js';
-import { periodoCopre } from './fornitori.js';
+import { periodoCopre, idBar, barSeparato } from './fornitori.js';
 
 // ============================================================
 // Quanto costa una partita al campo: l'affitto dalle tariffe, il rinfresco dal costo a persona.
@@ -60,28 +60,58 @@ export const costiCampoDi = ({ campo, tariffe = [], data, oraInizio, tipoRinfres
   };
 };
 
-// Una prenotazione di quel campo è già chiusa in un periodo consuntivato: i suoi importi sono stati
-// pagati e non si ricalcolano. Stessa regola della consuntivazione (fornitori.js).
-export const giornataChiusa = (periodi, campoId, p) => periodi.some(pe =>
-  (pe.controparte || 'fornitore') === 'campo' && String(pe.controparte_id) === String(campoId)
-  && periodoCopre(pe, { riferimento: p.id, lato: 'costo', data: p.data }));
+// Quali parti di una prenotazione di quel campo sono già chiuse in un periodo consuntivato: sono
+// state pagate e non si ricalcolano. Stessa regola della consuntivazione (fornitori.js).
+// Di norma affitto e rinfresco si pagano insieme, quindi o sono chiusi tutti e due o nessuno. Col bar
+// di un'altra società si pagano a parte, e ognuno si chiude per conto suo: con l'affitto pagato il
+// rinfresco si può ancora ricalcolare, e viceversa. Un periodo del campo di prima della separazione
+// ha pagato anche il rinfresco, se la sua riga lo portava.
+export const partiChiuse = (periodi, campo, p) => {
+  const delCampo = periodi.filter(pe => (pe.controparte || 'fornitore') === 'campo');
+  const copre = (pe) => periodoCopre(pe, { riferimento: p.id, lato: 'costo', data: p.data });
+  const campoChiuso = delCampo.filter(pe => String(pe.controparte_id) === String(campo.id) && copre(pe));
+  if (!barSeparato(campo)) {
+    const chiuso = campoChiuso.length > 0 || delCampo.some(pe => String(pe.controparte_id) === idBar(campo.id) && copre(pe));
+    return { affitto: chiuso, rinfresco: chiuso };
+  }
+  const rigaConRinfresco = (pe) => {
+    if (!pe.per_righe) return true;
+    const r = (pe.righe || []).find(x => String(x.riferimento) === String(p.id) && x.lato === 'costo');
+    return !!r && (!r.dettaglio || (parseFloat(r.dettaglio.rinfresco) || 0) > 0.005);
+  };
+  return {
+    affitto: campoChiuso.length > 0,
+    rinfresco: campoChiuso.some(rigaConRinfresco) || delCampo.some(pe => String(pe.controparte_id) === idBar(campo.id) && copre(pe)),
+  };
+};
+export const giornataChiusa = (periodi, campo, p) => {
+  const c = partiChiuse(periodi, campo, p);
+  return c.affitto && c.rinfresco;
+};
 
 // Le prenotazioni di un campo i cui importi cambierebbero con le tariffe di adesso, fuori dai
-// periodi già consuntivati. Per ognuna: gli importi salvati, quelli nuovi e il record da scrivere.
+// periodi già consuntivati. Per ognuna: gli importi salvati, quelli nuovi, le parti già pagate
+// (che restano come sono) e il record da scrivere, con le sole parti ancora aperte.
 export const ricalcoloCampo = ({ campo, tariffe = [], prenotazioni = [], periodi = [] }) => {
   const r2 = (n) => Math.round((+n || 0) * 100) / 100;
   const netto = (n, l) => (n != null ? (parseFloat(n) || 0) : (parseFloat(l) || 0) / 1.22);
   return prenotazioni
-    .filter(p => p.campoId === campo.id && p.data && !giornataChiusa(periodi, campo.id, p))
+    .filter(p => p.campoId === campo.id && p.data)
     .map(p => {
+      const chiuse = partiChiuse(periodi, campo, p);
       const nuovi = costiCampoDi({ campo, tariffe, data: p.data, oraInizio: p.oraInizio, tipoRinfresco: p.tipoRinfresco, numeroPartecipanti: p.numeroPartecipanti });
+      const prima = { affitto: r2(netto(p.costoCampoNetto, p.costoCampo)), rinfresco: r2(netto(p.costoRinfrescoNetto, p.costoRinfresco)) };
       return {
         prenotazione: p,
-        prima: { affitto: r2(netto(p.costoCampoNetto, p.costoCampo)), rinfresco: r2(netto(p.costoRinfrescoNetto, p.costoRinfresco)) },
-        dopo: { affitto: r2(nuovi.costoCampoNetto), rinfresco: r2(nuovi.costoRinfrescoNetto) },
+        chiuse,
+        prima,
+        dopo: {
+          affitto: chiuse.affitto ? prima.affitto : r2(nuovi.costoCampoNetto),
+          rinfresco: chiuse.rinfresco ? prima.rinfresco : r2(nuovi.costoRinfrescoNetto),
+        },
         rec: {
-          costoCampo: nuovi.costoCampoLordo, costoCampoNetto: nuovi.costoCampoNetto, costoCampoLordo: nuovi.costoCampoLordo,
-          costoRinfresco: nuovi.costoRinfrescoLordo, costoRinfrescoNetto: nuovi.costoRinfrescoNetto, costoRinfrescoLordo: nuovi.costoRinfrescoLordo,
+          ...(chiuse.affitto ? {} : { costoCampo: nuovi.costoCampoLordo, costoCampoNetto: nuovi.costoCampoNetto, costoCampoLordo: nuovi.costoCampoLordo }),
+          ...(chiuse.rinfresco ? {} : { costoRinfresco: nuovi.costoRinfrescoLordo, costoRinfrescoNetto: nuovi.costoRinfrescoNetto, costoRinfrescoLordo: nuovi.costoRinfrescoLordo }),
         },
       };
     })

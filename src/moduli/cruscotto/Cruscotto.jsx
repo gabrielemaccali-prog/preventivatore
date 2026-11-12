@@ -11,7 +11,7 @@ import {
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { preventiviPerOperatore, lordizza, righeConsuntivo, trasfertePerData, giornataDelPeriodo } from '../compensi/calcolo'
-import { risolutoreSedi, arrotonda2, suoCampoDi } from '../../lib/fornitori'
+import { risolutoreSedi, arrotonda2, suoCampoDi, idBar, barSeparato } from '../../lib/fornitori'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine,
@@ -614,11 +614,21 @@ function Cruscotto({ user }) {
       const rinfrescoPrev = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO) ? nettoRinf(p) : 0;
       const prevCampo = affittoPrev + rinfrescoPrev;
       if (prevCampo > 0.005 || righeCampo.length) {
-        const d = righeCampo[0]?.dettaglio;
+        // Col bar di un'altra società affitto e rinfresco si chiudono in due periodi diversi: le
+        // righe si sommano, ma il campo è consuntivato solo quando lo sono tutte e due le parti.
+        // Una riga chiusa prima della separazione porta già il rinfresco con sé.
+        const sommaDett = (campo) => righeCampo.reduce((s, r) => s + (parseFloat(r.dettaglio?.[campo]) || 0), 0);
+        const d = righeCampo.some(r => r.dettaglio) ? { affitto: sommaDett('affitto'), rinfresco: sommaDett('rinfresco') } : null;
+        const campo = campi.find(c => String(c.id) === String(p.campoId));
+        const haAffitto = righeCampo.some(r => r.controparteId === String(p.campoId));
+        const haRinfresco = righeCampo.some(r => r.controparteId === idBar(p.campoId)
+          || (r.controparteId === String(p.campoId) && (!r.dettaglio || (parseFloat(r.dettaglio.rinfresco) || 0) > 0.005)));
+        const completo = righeCampo.length > 0 && (!barSeparato(campo)
+          || ((affittoPrev <= 0.005 || haAffitto) && (rinfrescoPrev <= 0.005 || haRinfresco)));
         // Il rinfresco si nomina solo se c'e': "+ rinfresco €0.00" su una partita senza merenda e' rumore.
         const parti = (affitto, rinfresco) => `€${(+affitto || 0).toFixed(2)}${(+rinfresco || 0) > 0.005 ? ` + rinfresco €${(+rinfresco).toFixed(2)}` : ''}`;
         costi.push({
-          tipo: 'Campo', nome: campoNomeDi(p), prev: prevCampo, cons: righeCampo.length ? sommaCons(righeCampo) : null,
+          tipo: 'Campo', nome: campoNomeDi(p), prev: prevCampo, cons: completo ? sommaCons(righeCampo) : null,
           nota: rinfrescoPrev > 0.005 ? 'Affitto e rinfresco' : 'Affitto',
           titolo: `Preventivati ${parti(affittoPrev, rinfrescoPrev)}${d ? ` · consuntivati ${parti(d.affitto, d.rinfresco)}` : ''}`,
         });
@@ -710,7 +720,7 @@ function Cruscotto({ user }) {
       };
     });
     return risultato;
-  }, [tutteLePrenotazioni, righeConsuntivate, fatturatoPer, valoriVoucher, sedi, risolutore, campoNomeDi,
+  }, [tutteLePrenotazioni, righeConsuntivate, fatturatoPer, valoriVoucher, sedi, campi, risolutore, campoNomeDi,
     compensoPrevistoPerOp, compensoConsuntivatoPerOp, coperte]);
 
   // Una cella di importo del cruscotto: "—" quando la voce non c'e' (nessun ricavo, nessun costo).

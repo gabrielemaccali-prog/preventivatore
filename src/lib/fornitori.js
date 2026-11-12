@@ -166,9 +166,11 @@ export const totaliDi = (righe) => {
 // Voci e periodi arrivano già filtrati sul tipo di controparte.
 //
 // `senzaControparte` sono i costi che non si sa a chi pagare: vanno detti, non persi.
-const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, voci, periodi, nelFiltro }) => {
+//   chiusoAltrove(c, p, lato)  se la riga è già chiusa in un periodo di un'altra controparte (vedi
+//                              i rinfreschi dei campi col bar separato); di norma mai
+const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, voci, periodi, nelFiltro, chiusoAltrove = () => false }) => {
   const perId = Object.fromEntries(controparti.map(c => [String(c.id), c]));
-  const chiuso = (id, p, lato) => periodi.some(pe => String(pe.controparte_id) === String(id)
+  const chiuso = (c, p, lato) => chiusoAltrove(c, p, lato) || periodi.some(pe => String(pe.controparte_id) === String(c.id)
     && periodoCopre(pe, { riferimento: p.id, lato, data: p.data }));
 
   const gruppi = new Map();
@@ -205,7 +207,7 @@ const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, 
         if (c.costo > 0) senzaControparte.push({ prenotazione: p, nome: c.nome, costo: arrotonda2(c.costo) });
         return;
       }
-      if (chiuso(controparte.id, p, 'costo')) return;
+      if (chiuso(controparte, p, 'costo')) return;
       const r = { ...riga(controparte, p, 'costo', c.costo, c.giochi || []), dettaglio: c.dettaglio || null };
       // Una riga a zero senza rettifiche non ha niente da consuntivare.
       if (r.preventivato !== 0 || r.voci.length > 0) righeDi(controparte).push(r);
@@ -214,7 +216,7 @@ const consuntivoControparti = ({ prenotazioni, controparti, costiDi, clienteDi, 
     if (annullata) return; // niente ricavo da compensare: la partita non si è giocata
     const idCliente = clienteDi(p);
     const cliente = idCliente ? perId[String(idCliente)] : null;
-    if (cliente && !chiuso(cliente.id, p, 'ricavo')) righeDi(cliente).push(riga(cliente, p, 'ricavo', nettoRicavoDi(p), []));
+    if (cliente && !chiuso(cliente, p, 'ricavo')) righeDi(cliente).push(riga(cliente, p, 'ricavo', nettoRicavoDi(p), []));
   });
 
   const elenco = [...gruppi.values()].map(({ controparte, righe }) => {
@@ -256,37 +258,79 @@ export const nettoRinfrescoDi = (p) => (p.costoRinfrescoNetto != null ? (parseFl
 // pacchetto. Stessa lettura dei compensi.
 const oreDi = (p) => (p.oraFine ? (oreDaOrari(p.oraInizio, p.oraFine) || 0) : (parseFloat(p.durataOre) || 0));
 
-export const daConsuntivareCampi = ({ prenotazioni = [], campi = [], voci = [], periodi = [], nelFiltro = () => true }) => consuntivoControparti({
-  prenotazioni, controparti: campi, nelFiltro,
-  voci: soloDi('campo', voci), periodi: soloDi('campo', periodi),
-  costiDi: (p) => {
-    if (!p.campoId) return [];
-    // Di un'annullata si paga solo quello che è stato segnato; il resto vale zero.
-    const annullata = p.stato === STATO_PREN.ANNULLATA;
-    const segnati = costiAnnullamentoDi(p);
-    if (annullata && !segnati.has(COSTO_ANNULLAMENTO.CAMPO) && !segnati.has(COSTO_ANNULLAMENTO.RINFRESCO)) return [];
-    const affitto = !annullata || segnati.has(COSTO_ANNULLAMENTO.CAMPO) ? arrotonda2(nettoAffittoDi(p)) : 0;
-    const rinfresco = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO) ? arrotonda2(nettoRinfrescoDi(p)) : 0;
-    // Ore e paganti del rinfresco spiegano affitto e rinfresco: sono i numeri su cui il campo fa il
-    // conto, e quelli che si confrontano con la sua richiesta. I paganti contano quando il rinfresco
-    // è dovuto -- di un'annullata solo se è stato segnato -- anche se costa zero: un aperitivo su un
-    // campo senza prezzo dell'aperitivo va visto, non nascosto.
-    const tipo = String(p.tipoRinfresco || '').trim().toLowerCase();
-    const dovuto = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO);
-    const paganti = dovuto ? (parseFloat(p.numeroPartecipanti) || 0) : 0;
-    return [{
-      id: p.campoId, nome: p.campoNome || p.campoId, costo: affitto + rinfresco, giochi: [],
-      dettaglio: {
-        // Le ore sono quelle che il centro mette in fattura: una partita di un'ora su due campi
-        // affiancati sono due ore di campo, ed è il numero con cui si confronta la sua richiesta.
-        affitto, rinfresco, ore: oreDi(p) * Math.max(parseInt(p.campiOccupati, 10) || 1, 1),
-        merende: tipo === 'merenda' ? paganti : 0,
-        aperitivi: tipo === 'aperitivo' ? paganti : 0,
-      },
-    }];
-  },
-  clienteDi: (p) => p.clienteCampoId || null,
-});
+// ---- Campi col bar di un'altra società ----
+// In alcuni centri il bar (merende e aperitivi) è un'azienda diversa da chi affitta i campi: si
+// pagano a parte, e in consuntivazione diventano due controparti, "Comasina campi" e "Comasina
+// rinfreschi: Bar Srl". La prenotazione non cambia: è solo il modo in cui si divide il costo.
+// I rinfreschi hanno un id loro, ricavato da quello del campo, che è quello che finisce nei
+// periodi e nelle rettifiche: controparte_id è testo, e non serve un'anagrafica a parte.
+const SUFFISSO_BAR = ':bar';
+export const idBar = (campoId) => `${campoId}${SUFFISSO_BAR}`;
+export const eIdBar = (id) => String(id ?? '').endsWith(SUFFISSO_BAR);
+export const campoDiIdBar = (id) => String(id).slice(0, -SUFFISSO_BAR.length);
+export const barSeparato = (campo) => !!campo?.barSeparato;
+
+// Le controparti della consuntivazione campi: un campo col bar separato ne vale due.
+export const contropartiCampi = (campi = []) => campi.flatMap(c => (barSeparato(c)
+  ? [
+    { ...c, nome: `${c.nome} campi` },
+    { id: idBar(c.id), nome: `${c.nome} rinfreschi${c.barSocieta ? `: ${c.barSocieta}` : ''}`, campoId: c.id, bar: true },
+  ]
+  : [c]));
+
+// Un periodo del campo chiuso prima della separazione ha pagato affitto e rinfresco insieme: il
+// rinfresco di quelle partite non va pagato di nuovo al bar. Lo si riconosce dalla riga, che porta
+// il rinfresco nel dettaglio; un periodo per intervallo (i più vecchi) le copre tutte.
+const periodoCampoCopreRinfresco = (pe, p) => {
+  if (!pe.per_righe) return p.data >= pe.dal && p.data <= pe.al;
+  const r = (pe.righe || []).find(x => String(x.riferimento) === String(p.id) && x.lato === 'costo');
+  return !!r && (!r.dettaglio || (parseFloat(r.dettaglio.rinfresco) || 0) > 0.005);
+};
+
+export const daConsuntivareCampi = ({ prenotazioni = [], campi = [], voci = [], periodi = [], nelFiltro = () => true }) => {
+  const perId = Object.fromEntries(campi.map(c => [String(c.id), c]));
+  const periodiCampo = soloDi('campo', periodi);
+  return consuntivoControparti({
+    prenotazioni, controparti: contropartiCampi(campi), nelFiltro,
+    voci: soloDi('campo', voci), periodi: periodiCampo,
+    chiusoAltrove: (c, p, lato) => !!c.bar && lato === 'costo' && periodiCampo.some(pe =>
+      String(pe.controparte_id) === String(c.campoId) && periodoCampoCopreRinfresco(pe, p)),
+    costiDi: (p) => {
+      if (!p.campoId) return [];
+      // Di un'annullata si paga solo quello che è stato segnato; il resto vale zero.
+      const annullata = p.stato === STATO_PREN.ANNULLATA;
+      const segnati = costiAnnullamentoDi(p);
+      if (annullata && !segnati.has(COSTO_ANNULLAMENTO.CAMPO) && !segnati.has(COSTO_ANNULLAMENTO.RINFRESCO)) return [];
+      const affitto = !annullata || segnati.has(COSTO_ANNULLAMENTO.CAMPO) ? arrotonda2(nettoAffittoDi(p)) : 0;
+      const rinfresco = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO) ? arrotonda2(nettoRinfrescoDi(p)) : 0;
+      // Ore e paganti del rinfresco spiegano affitto e rinfresco: sono i numeri su cui il campo fa il
+      // conto, e quelli che si confrontano con la sua richiesta. I paganti contano quando il rinfresco
+      // è dovuto -- di un'annullata solo se è stato segnato -- anche se costa zero: un aperitivo su un
+      // campo senza prezzo dell'aperitivo va visto, non nascosto.
+      const tipo = String(p.tipoRinfresco || '').trim().toLowerCase();
+      const dovuto = !annullata || segnati.has(COSTO_ANNULLAMENTO.RINFRESCO);
+      const paganti = dovuto ? (parseFloat(p.numeroPartecipanti) || 0) : 0;
+      // Le ore sono quelle che il centro mette in fattura: una partita di un'ora su due campi
+      // affiancati sono due ore di campo, ed è il numero con cui si confronta la sua richiesta.
+      const ore = oreDi(p) * Math.max(parseInt(p.campiOccupati, 10) || 1, 1);
+      const merende = tipo === 'merenda' ? paganti : 0;
+      const aperitivi = tipo === 'aperitivo' ? paganti : 0;
+      const nome = p.campoNome || p.campoId;
+      // Col bar separato l'affitto resta al campo e il rinfresco va al bar, ognuno con i suoi numeri.
+      if (barSeparato(perId[String(p.campoId)])) {
+        return [
+          { id: p.campoId, nome, costo: affitto, giochi: [], dettaglio: { affitto, rinfresco: 0, ore, merende: 0, aperitivi: 0 } },
+          { id: idBar(p.campoId), nome: `${nome} rinfreschi`, costo: rinfresco, giochi: [], dettaglio: { affitto: 0, rinfresco, ore: 0, merende, aperitivi } },
+        ];
+      }
+      return [{
+        id: p.campoId, nome, costo: affitto + rinfresco, giochi: [],
+        dettaglio: { affitto, rinfresco, ore, merende, aperitivi },
+      }];
+    },
+    clienteDi: (p) => p.clienteCampoId || null,
+  });
+};
 
 // La fotografia di una controparte al momento della consuntivazione: quello che si scrive nel
 // periodo. Solo dati, niente riferimenti agli oggetti vivi, che domani direbbero altro.
