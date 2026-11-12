@@ -1,9 +1,9 @@
 import { useState, useEffect, Fragment } from 'react'
-import { supabase } from '../../lib/supabaseClient'
+import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
-  nomeCategoria, idCategoriaScelta, ENTI, etichettaEnte, num, r2, euro, giornataDiLavoro, periodoIniziale, intervalloPeriodo,
+  nomeCategoria, idCategoriaScelta, ENTI, etichettaEnte, num, r2, euro, giornataDiLavoro, periodoIniziale, intervalloPeriodo, dicituraPeriodo,
   dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, categorieDi, spesaDettagliabile, spesaMulticategoria, DA_DETTAGLIARE, METODI_SPESA, spesaDaPagare, etichettaMetodoSpesa,
 } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
@@ -52,13 +52,14 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   const [da, al] = intervalloPeriodo(periodo);
 
   const carica = async () => {
-    const { data } = await supabase.from('albatros_spese').select('*')
+    // In un anno le righe superano il limite di una lettura: si leggono a pagine.
+    const { data } = await leggiTutte(() => supabase.from('albatros_spese').select('*')
       .gte('data', da).lte('data', al)
-      .order('data', { ascending: false }).order('id', { ascending: false });
+      .order('data', { ascending: false }).order('id', { ascending: false }));
     setSpese(data || []);
     const ids = (data || []).map(x => x.id);
     const { data: voci } = ids.length
-      ? await supabase.from('albatros_spese_righe').select('*').in('spesa_id', ids).order('id')
+      ? await leggiTutte(() => supabase.from('albatros_spese_righe').select('*').in('spesa_id', ids).order('id'))
       : { data: [] };
     const mappa = {};
     (voci || []).forEach(v => { (mappa[v.spesa_id] = mappa[v.spesa_id] || []).push(v); });
@@ -228,7 +229,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
           </button>
           <button type="button" className="btn-accent-inline albatros-bottone" style={{ alignSelf: 'flex-end' }} onClick={() => setModulo(SPESA_VUOTA())}>+ Nuova spesa</button>
           <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: '0.88rem' }}>
-            <div>Spese {periodo.tipo === 'settimana' ? 'della settimana' : 'del mese'}: <strong>{euro(totale(visibili))}</strong></div>
+            <div>Spese {dicituraPeriodo(periodo, 'del')}: <strong>{euro(totale(visibili))}</strong></div>
             {!filtroEnte && (
               <div className="albatros-tenue">{[...ENTI.map(e => `${e.label} ${euro(totale(spese.filter(s => s.ente === e.id)))}`), ...(daAttribuire.length ? [`da attribuire ${euro(totale(daAttribuire))}`] : [])].join(' · ')}</div>
             )}

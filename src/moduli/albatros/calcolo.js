@@ -175,11 +175,20 @@ export function importoInCategoria(spesa, voci, categoriaId) {
 export const spesaDettagliabile = (spesa) => spesaMulticategoria(spesa);
 export const rigaSpesaConsentita = (spesa, righe, importo) => r2(dettaglioSpesa(spesa, righe).dettagliato + num(importo)) <= r2(spesa?.importo);
 
-// Il periodo dei filtri di Chiusure e Spese: si parte dal mese corrente.
-export const periodoIniziale = () => { const oggi = giornataDiLavoro(); return { tipo: 'mese', mese: oggi.slice(0, 7), lunedi: lunediDi(oggi) }; };
+// Il periodo dei filtri di Chiusure, Spese e Incassi: una settimana, un mese o un anno. Si parte
+// dal mese corrente; passando da un tipo all'altro gli altri restano dov'erano.
+export const periodoIniziale = () => { const oggi = giornataDiLavoro(); return { tipo: 'mese', mese: oggi.slice(0, 7), lunedi: lunediDi(oggi), anno: oggi.slice(0, 4) }; };
+// Come si dice il periodo nelle frasi: "Incassato del mese", "Nessuna spesa in quest'anno".
+const DICITURE_PERIODO = {
+  settimana: { del: 'della settimana', in: 'in questa settimana' },
+  mese: { del: 'del mese', in: 'in questo mese' },
+  anno: { del: "dell'anno", in: "in quest'anno" },
+};
+export const dicituraPeriodo = (periodo, forma) => (DICITURE_PERIODO[periodo.tipo] || DICITURE_PERIODO.mese)[forma];
 // Primo e ultimo giorno del periodo, compresi.
-export function intervalloPeriodo({ tipo, mese, lunedi }) {
+export function intervalloPeriodo({ tipo, mese, lunedi, anno }) {
   if (tipo === 'settimana') return [lunedi, aggiungiGiorni(lunedi, 6)];
+  if (tipo === 'anno') return [`${anno}-01-01`, `${anno}-12-31`];
   const [a, m] = mese.split('-').map(Number);
   return [`${mese}-01`, isoDi(new Date(a, m, 0))];
 }

@@ -125,6 +125,8 @@ verifica("attraverso il cambio dell'ora", '2026-10-26', aggiungiGiorni('2026-10-
 verifica('mese: primo giorno', '2026-02-01', intervalloPeriodo({ tipo: 'mese', mese: '2026-02' })[0]);
 verifica('mese: ultimo giorno', '2026-02-28', intervalloPeriodo({ tipo: 'mese', mese: '2026-02' })[1]);
 verifica('settimana: fino a domenica', '2026-10-11', intervalloPeriodo({ tipo: 'settimana', lunedi: '2026-10-05' })[1]);
+verifica('anno: dal primo gennaio', '2026-01-01', intervalloPeriodo({ tipo: 'anno', anno: '2026' })[0]);
+verifica('anno: al 31 dicembre', '2026-12-31', intervalloPeriodo({ tipo: 'anno', anno: '2026' })[1]);
 
 // ---------- blocchi ----------
 const aperta = { chiusa_il: null };

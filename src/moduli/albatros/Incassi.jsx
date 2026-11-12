@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
-import { supabase } from '../../lib/supabaseClient'
-import { quadratura, totaleRiga, euro, r2, num, categorieDi, periodoIniziale, intervalloPeriodo, accontiConfermati } from './calcolo'
+import { supabase, leggiTutte } from '../../lib/supabaseClient'
+import { quadratura, totaleRiga, euro, r2, num, categorieDi, periodoIniziale, intervalloPeriodo, accontiConfermati, dicituraPeriodo } from './calcolo'
 import { ICONE_CATEGORIA } from './iconeCategoria'
 import IconaCategoria from './IconaCategoria'
 import FiltroPeriodo from './FiltroPeriodo'
@@ -27,11 +27,12 @@ function Incassi({ listino, categorie }) {
   const [da, al] = intervalloPeriodo(periodo);
 
   const carica = async () => {
-    const { data: ch } = await supabase.from('albatros_chiusure').select('*')
-      .gte('data', da).lte('data', al).not('chiusa_il', 'is', null);
+    // In un anno le righe superano il limite di una lettura: si leggono a pagine.
+    const { data: ch } = await leggiTutte(() => supabase.from('albatros_chiusure').select('*')
+      .gte('data', da).lte('data', al).not('chiusa_il', 'is', null).order('id'));
     const elenco = ch || [];
     const { data: rg } = elenco.length
-      ? await supabase.from('albatros_righe').select('chiusura_id, voce_id, quantita, prezzo').in('chiusura_id', elenco.map(c => c.id))
+      ? await leggiTutte(() => supabase.from('albatros_righe').select('chiusura_id, voce_id, quantita, prezzo').in('chiusura_id', elenco.map(c => c.id)).order('id'))
       : { data: [] };
     // Senza sql/albatros_acconti.sql la tabella non c'è: si conta senza acconti.
     const { data: ac } = await supabase.from('albatros_acconti').select('*')
@@ -76,7 +77,7 @@ function Incassi({ listino, categorie }) {
   }, [chiusure, righe, acconti, listino, categorie]);
 
   const giorni = chiusure.length;
-  const periodoTesto = periodo.tipo === 'settimana' ? 'della settimana' : 'del mese';
+  const periodoTesto = dicituraPeriodo(periodo, 'del');
 
   return (
     <div className="albatros-pagina no-print">
@@ -97,7 +98,7 @@ function Incassi({ listino, categorie }) {
           </p>
         )}
 
-        {giorni === 0 && conti.incassato === 0 && <p className="albatros-vuoto">Nessuna giornata chiusa {periodo.tipo === 'settimana' ? 'in questa settimana' : 'in questo mese'}.</p>}
+        {giorni === 0 && conti.incassato === 0 && <p className="albatros-vuoto">Nessuna giornata chiusa {dicituraPeriodo(periodo, 'in')}.</p>}
         {(giorni > 0 || conti.incassato > 0) && (
           <div style={{ overflowX: 'auto', marginTop: '14px' }}>
             <table className="albatros-tabella albatros-incassi">

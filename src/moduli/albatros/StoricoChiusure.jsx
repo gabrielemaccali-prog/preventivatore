@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '../../lib/supabaseClient'
+import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import { scaricaExcel } from '../../lib/excel'
-import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, euro, r2, periodoIniziale, intervalloPeriodo, accontiConfermati, accontoConfermabile, giornataDiLavoro } from './calcolo'
+import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, euro, r2, periodoIniziale, intervalloPeriodo, dicituraPeriodo, accontiConfermati, accontoConfermabile, giornataDiLavoro } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 import Acconti from './Acconti'
 
@@ -36,7 +36,8 @@ function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onAp
 
   const carica = async () => {
     const [{ data: ch }, attesi, delPeriodo] = await Promise.all([
-      supabase.from('albatros_chiusure').select('*').gte('data', da).lte('data', al).order('data', { ascending: false }),
+      // In un anno le righe superano il limite di una lettura: si leggono a pagine.
+      leggiTutte(() => supabase.from('albatros_chiusure').select('*').gte('data', da).lte('data', al).order('data', { ascending: false })),
       supabase.from('albatros_acconti').select('*').eq('stato', 'atteso'),
       supabase.from('albatros_acconti').select('*').gte('data_riferimento', da).lte('data_riferimento', al),
     ]);
@@ -46,7 +47,7 @@ function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onAp
     setAccontiMancanti(attesi.error?.message || null);
     const [{ data: rg }, { data: prima }] = await Promise.all([
       elenco.length
-        ? supabase.from('albatros_righe').select('chiusura_id, quantita, prezzo').in('chiusura_id', elenco.map(c => c.id))
+        ? leggiTutte(() => supabase.from('albatros_righe').select('chiusura_id, quantita, prezzo').in('chiusura_id', elenco.map(c => c.id)).order('id'))
         : Promise.resolve({ data: [] }),
       // Per confrontare il fondo della prima giornata del periodo serve l'ultima chiusura prima.
       supabase.from('albatros_chiusure').select('*').lt('data', da).not('fondo_lasciato', 'is', null)
@@ -105,7 +106,7 @@ function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onAp
       'Chiusa da': chiusa(g) ? utenti[g.chiusura.chiusa_da] || '' : '',
       'Chiusa il': chiusa(g) ? oraDi(g.chiusura.chiusa_il) : '',
     }));
-    const nome = periodo.tipo === 'settimana' ? `settimana_dal_${formattaDataGGMMAAAA(da).replaceAll('/', '-')}` : periodo.mese;
+    const nome = periodo.tipo === 'settimana' ? `settimana_dal_${formattaDataGGMMAAAA(da).replaceAll('/', '-')}` : periodo.tipo === 'anno' ? periodo.anno : periodo.mese;
     scaricaExcel(`Albatros_chiusure_${nome}${soloDaSpecificare ? '_da_specificare' : ''}`, [{ nome: 'Chiusure', righe }]);
   };
 
@@ -128,7 +129,7 @@ function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onAp
             Da specificare ({incomplete.length})
           </button>
           <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: '0.88rem' }}>
-            <div>Incassato {periodo.tipo === 'settimana' ? 'della settimana' : 'del mese'}: <strong>{euro(tot('incassato'))}</strong></div>
+            <div>Incassato {dicituraPeriodo(periodo, 'del')}: <strong>{euro(tot('incassato'))}</strong></div>
             <div className="albatros-tenue">Battuto {euro(tot('specificato'))}</div>
           </div>
           <button type="button" className="btn-outline-annulla albatros-bottone" style={{ alignSelf: 'flex-end', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
@@ -137,7 +138,7 @@ function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onAp
           </button>
         </div>
 
-        {visibili.length === 0 && <p className="albatros-vuoto">{soloDaSpecificare ? 'Nessuna giornata da specificare' : 'Nessuna giornata'} in {periodo.tipo === 'settimana' ? 'questa settimana' : 'questo mese'}.</p>}
+        {visibili.length === 0 && <p className="albatros-vuoto">{soloDaSpecificare ? 'Nessuna giornata da specificare' : 'Nessuna giornata'} {dicituraPeriodo(periodo, 'in')}.</p>}
         {visibili.length > 0 && (
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
             <table className="albatros-tabella">
