@@ -3512,8 +3512,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const righeSettimana = prenotazioni.filter(p => p.stato !== STATO_PREN.ANNULLATA && p.stato !== STATO_PREN.PREGRESSA && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
         const locLabelRiep = (p) => p.campoNome || luogoLiberoDi(p) || '—';
 
-        // Come si legge un evento in un promemoria: prima cosa si gioca, poi -- se c'è -- il
-        // rinfresco e per quante persone. "solo Bubble" oppure "Bubble + merenda (12 persone)".
+        // Come si legge un evento in un promemoria: cosa si gioca, e -- solo nel messaggio al
+        // campo -- il rinfresco con quante persone: "Bubble Football" al bubbler, "Bubble Football
+        // + merenda x 12p" al campo.
         // Il pacchetto qui non serve: a un campo e a un bubbler interessa cosa succede sul posto,
         // non con quale tariffa è stato venduto.
         // L'orario per intero: a chi apre il campo serve sapere quando finisce, non solo quando
@@ -3528,13 +3529,19 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           return fine ? `${p.oraInizio} - ${fine}${durata}` : p.oraInizio;
         };
 
-        const specificaDi = (p) => {
+        // Un bubbler legge il nome del gioco, non la parola "solo": su un campo nostro il campo
+        // e' gia' scritto accanto, quindi basta il gioco; fuori dai campi la partita e' un
+        // noleggio, e "Noleggio" davanti al gioco dice subito che si carica il furgone e si va.
+        // Il rinfresco si dice a chi lo deve preparare, cioe' al campo: a un bubbler che arriva
+        // per giocare non cambia niente, e una riga piu' corta si legge meglio sul telefono.
+        const specificaDi = (p, conRinfresco = true) => {
           const giochi = etichettaGiochiBreve(giochiBreviDi(p)) || 'Prenotazione';
-          if (!p.tipoRinfresco) return `solo ${giochi}`;
+          const cosa = p.campoId ? giochi : `Noleggio ${giochi}`;
+          if (!conRinfresco || !p.tipoRinfresco) return cosa;
           // "x 20p" invece di "(20 persone)": un promemoria si legge di corsa, e in un messaggio
           // su WhatsApp ogni parola in meno e' una riga che non va a capo.
           const quante = p.numeroPartecipanti ? ` x ${p.numeroPartecipanti}p` : '';
-          return `${giochi} + ${p.tipoRinfresco}${quante}`;
+          return `${cosa} + ${p.tipoRinfresco}${quante}`;
         };
 
         // Gli eventi si raggruppano per giorno: è l'ordine con cui un campo legge la settimana, e
@@ -3556,11 +3563,11 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // Con un operatore indicato, le sue righe dicono anche quanto deve farsi dare in contanti:
         // è l'unica cosa del messaggio che riguarda soldi, e si legge di corsa su WhatsApp -- per
         // questo sta su una riga sua, in maiuscolo.
-        const righeGiorno = (righe, conLuogo, operatoreId = null) => perGiorno(righe).flatMap(g => [
+        const righeGiorno = (righe, { conLuogo = false, operatoreId = null, conRinfresco = true } = {}) => perGiorno(righe).flatMap(g => [
           formattaDataEstesaIT(g.data),
           ...g.eventi.flatMap(p => {
             const luogo = conLuogo && locLabelRiep(p) !== '—' ? ` · ${locLabelRiep(p)}` : '';
-            const riga = `  ${orarioDi(p)} · ${specificaDi(p)}${luogo}`;
+            const riga = `  ${orarioDi(p)} · ${specificaDi(p, conRinfresco)}${luogo}`;
             const daRitirare = operatoreId ? contantiDiOperatore(p, operatoreId) : 0;
             return daRitirare > 0
               ? [riga, `  ⚠️ DA RITIRARE €${daRitirare.toFixed(2)} IN CONTANTI`]
@@ -3597,14 +3604,14 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
           // 'Partite' e' come le chiamano i bubbler fra loro: il messaggio e' per loro.
           'Ecco le tue prossime partite:',
           '',
-          ...righeGiorno(op.righe, true, op.id),
+          ...righeGiorno(op.righe, { conLuogo: true, operatoreId: op.id, conRinfresco: false }),
           'Grazie! 💪'
         ].join('\n');
 
         const messaggioCampo = (c) => [
           `📋 Prenotazioni - ${c.label}`,
           '',
-          ...righeGiorno(c.righe, false)
+          ...righeGiorno(c.righe)
         ].join('\n');
 
         return (
@@ -3643,7 +3650,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                           <li key={g.data} style={{ listStyle: 'none', marginLeft: '-20px', marginBottom: '6px' }}>
                             <strong>{formattaDataEstesaIT(g.data)}</strong>
                             <ul style={{ margin: '2px 0 0 0', paddingLeft: '18px' }}>
-                              {g.eventi.map(p => <li key={p.id}>{orarioDi(p)} · {specificaDi(p)}{locLabelRiep(p) !== '—' && ` · ${locLabelRiep(p)}`}</li>)}
+                              {g.eventi.map(p => <li key={p.id}>{orarioDi(p)} · {specificaDi(p, false)}{locLabelRiep(p) !== '—' && ` · ${locLabelRiep(p)}`}</li>)}
                             </ul>
                           </li>
                         ))}
