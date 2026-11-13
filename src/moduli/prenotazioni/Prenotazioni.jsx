@@ -3594,7 +3594,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
 
         const messaggioOperatore = (op) => [
           `Ciao ${op.nome}! 👋`,
-          'Ecco le tue prossime prenotazioni:',
+          // 'Partite' e' come le chiamano i bubbler fra loro: il messaggio e' per loro.
+          'Ecco le tue prossime partite:',
           '',
           ...righeGiorno(op.righe, true, op.id),
           'Grazie! 💪'
