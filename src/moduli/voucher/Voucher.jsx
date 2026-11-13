@@ -571,7 +571,7 @@ function Voucher({ user }) {
     const coloreStatoRiga = v.stato === STATO_VOUCHER.EMESSO ? '#16a34a' : v.stato === STATO_VOUCHER.USATO ? '#94a3b8' : '#f59e0b';
     return (
       <Fragment key={v.codice}>
-        <tr onClick={() => setRigaEspansaId(prev => prev === v.codice ? null : v.codice)} style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}>
+        <tr className="scheda-voucher" onClick={() => setRigaEspansaId(prev => prev === v.codice ? null : v.codice)} style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}>
           <td style={{ padding: '12px' }}>
             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             <strong>{v.codice}</strong>
@@ -642,7 +642,7 @@ function Voucher({ user }) {
 
   const tabellaVoucher = (righe, messaggioVuoto) => (
     <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
-      <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+      <table className="storico-table tabella-voucher" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
           <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
             {COLONNE_VOUCHER.map(c => {

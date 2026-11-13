@@ -447,52 +447,87 @@ body {
    messaggio di elenco vuoto sono una cella sola, e una regola scritta per nove colonne li
    cancellerebbe (la "prima cella nascosta" li' dentro e' tutto il contenuto). */
 @media (max-width: 768px) {
-  .schermata-storico .tabella-pren tr.scheda-pren {
+  .schermata-storico tr.scheda-pren,
+  .schermata-storico tr.scheda-voucher,
+  .schermata-storico tr.scheda-prev {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "quando stato"
-      "chi chi"
-      "partita dove"
-      "soldi fattura";
     gap: 0 8px;
     padding: 6px 12px;
     line-height: 1.25;
   }
   /* Dentro la scheda le celle non sono piu' righe di tabella: niente bordi tratteggiati,
      niente fondo grigio sull'ultima, e il padding lo mette la scheda. */
-  .schermata-storico .tabella-pren tr.scheda-pren > td {
+  .schermata-storico tr.scheda-pren > td,
+  .schermata-storico tr.scheda-voucher > td,
+  .schermata-storico tr.scheda-prev > td {
     padding: 0 !important; border-bottom: none; background: none; border-radius: 0; width: auto;
   }
-  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(1),
-  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(7) { display: none; }
-  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(2) { grid-area: stato; justify-self: end; align-self: center; }
-  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(3) { grid-area: quando; font-weight: 600; font-size: 0.84rem !important; }
-  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(4) { grid-area: chi; font-size: 0.88rem !important; }
+  .schermata-storico tr.scheda-pren { grid-template-areas: "quando stato" "chi chi" "partita dove" "soldi fattura"; }
+  /* Il voucher ha sei colonne: in alto quando e' stato emesso e a che punto sta, poi a chi e'
+     intestato, poi il pacchetto col codice a destra -- il codice e' il suo nome, quello che il
+     cliente ha in mano -- e in fondo quanto ha pagato, con la spunta della fattura dentro. */
+  .schermata-storico tr.scheda-voucher { grid-template-areas: "quando stato" "chi chi" "partita dove" "soldi soldi"; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(1) { grid-area: dove; justify-self: end; color: #94a3b8 !important; font-size: 0.76rem !important; white-space: nowrap; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(2) { grid-area: quando; font-weight: 600; font-size: 0.84rem !important; color: #334155 !important; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(3) { grid-area: stato; justify-self: end; align-self: center; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(4) { grid-area: chi; font-size: 0.88rem !important; font-weight: 600; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(5) { grid-area: partita; font-size: 0.76rem !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(6) { grid-area: soldi; font-size: 0.8rem !important; }
+  .schermata-storico tr.scheda-voucher .badge-mini { font-size: 0.6rem !important; padding: 1px 6px !important; }
+  /* Il preventivo: in alto la data dell'evento con lo stato, poi il referente, poi dove si fa
+     con il codice a destra, e in fondo la vendita col "di cui BFM". Restano fuori la data di
+     emissione e la colonna dei segnini (offerta, opzioni, note interne), che in una scheda da
+     telefono sono rumore: chi guarda lo storico dal telefono cerca una partita, non un flag. */
+  .schermata-storico tr.scheda-prev { grid-template-areas: "quando stato" "chi chi" "partita dove" "soldi fattura"; }
+  .schermata-storico tr.scheda-prev > td:nth-child(2),
+  .schermata-storico tr.scheda-prev > td:nth-child(9) { display: none; }
+  .schermata-storico tr.scheda-prev > td:nth-child(1) { grid-area: dove; justify-self: end; color: #94a3b8 !important; font-size: 0.76rem !important; white-space: nowrap; }
+  .schermata-storico tr.scheda-prev > td:nth-child(3) { grid-area: stato; justify-self: end; align-self: center; }
+  .schermata-storico tr.scheda-prev > td:nth-child(4) { grid-area: quando; font-weight: 600; font-size: 0.84rem !important; }
+  .schermata-storico tr.scheda-prev > td:nth-child(5) { grid-area: partita; font-size: 0.76rem !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .schermata-storico tr.scheda-prev > td:nth-child(6) { grid-area: chi; font-size: 0.88rem !important; font-weight: 600; }
+  .schermata-storico tr.scheda-prev > td:nth-child(7) { grid-area: soldi; font-size: 0.8rem !important; }
+  .schermata-storico tr.scheda-prev > td:nth-child(8) { grid-area: fattura; justify-self: end; font-size: 0.8rem !important; }
+  .schermata-storico tr.scheda-prev .badge-mini { font-size: 0.6rem !important; padding: 1px 6px !important; }
+  .schermata-storico tr.scheda-pren > td:nth-child(1),
+  .schermata-storico tr.scheda-pren > td:nth-child(7) { display: none; }
+  .schermata-storico tr.scheda-pren > td:nth-child(2) { grid-area: stato; justify-self: end; align-self: center; }
+  .schermata-storico tr.scheda-pren > td:nth-child(3) { grid-area: quando; font-weight: 600; font-size: 0.84rem !important; }
+  .schermata-storico tr.scheda-pren > td:nth-child(4) { grid-area: chi; font-size: 0.88rem !important; }
   /* La partita e il campo stanno sulla stessa riga: il campo a destra, cortissimo ("Milano MI",
      "Codogno LO"), e la partita che si accorcia con i puntini se lo spazio non basta. */
-  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(5) {
+  .schermata-storico tr.scheda-pren > td:nth-child(5) {
     grid-area: partita; color: #64748b !important; font-size: 0.76rem !important;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(6) {
+  .schermata-storico tr.scheda-pren > td:nth-child(6) {
     grid-area: dove; color: #94a3b8 !important; font-size: 0.76rem !important; white-space: nowrap; justify-self: end;
   }
-  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(8) { grid-area: soldi; font-size: 0.8rem !important; }
-  .schermata-storico .tabella-pren tr.scheda-pren > td:nth-child(9) { grid-area: fattura; justify-self: end; text-align: right !important; }
-  .schermata-storico .tabella-pren tr.scheda-pren .badge-mini { font-size: 0.6rem !important; padding: 1px 6px !important; }
+  .schermata-storico tr.scheda-pren > td:nth-child(8) { grid-area: soldi; font-size: 0.8rem !important; }
+  .schermata-storico tr.scheda-pren > td:nth-child(9) { grid-area: fattura; justify-self: end; text-align: right !important; }
+  .schermata-storico tr.scheda-pren .badge-mini { font-size: 0.6rem !important; padding: 1px 6px !important; }
   /* Il chevron del telefono: l'unico segno che la scheda si apre, perche' la colonna che lo
      portava su desktop qui non c'e'. */
   .schermata-storico .tabella-pren .chevron-telefono { display: inline-block; }
   /* Il pannello che si apre: su desktop i dati stanno a sinistra e i pulsanti a destra, ma in
      375 pixel quei pulsanti strozzano la colonna dei dati e ogni valore va a capo a meta'
      ("Telefono 333 / 1234567"). Qui vanno sotto, in fila, dove si toccano anche meglio. */
-  .schermata-storico .tabella-pren tr.riga-espandibile-dettaglio > td > div {
+  .schermata-storico .tabella-pren tr.riga-espandibile-dettaglio > td > div,
+  .schermata-storico .tabella-voucher tr.riga-espandibile-dettaglio > td > div,
+  .schermata-storico .tabella-prev tr.riga-espandibile-dettaglio > td > div {
     flex-direction: column; align-items: stretch !important; gap: 12px !important;
   }
-  .schermata-storico .tabella-pren tr.riga-espandibile-dettaglio > td > div > div:last-child {
+  .schermata-storico .tabella-pren tr.riga-espandibile-dettaglio > td > div > div:last-child,
+  .schermata-storico .tabella-voucher tr.riga-espandibile-dettaglio > td > div > div:last-child,
+  .schermata-storico .tabella-prev tr.riga-espandibile-dettaglio > td > div > div:last-child {
     flex-wrap: wrap;
   }
+  /* Sul preventivo il pannello e' lungo -- indirizzo, periodo, contatti, la tabella dei
+     gonfiabili, note e note interne -- e su un telefono diventa una pagina da scorrere per
+     niente: il posto dove si legge un preventivo e' il documento, e si apre da qui. Al tocco
+     restano quindi i soli pulsanti, che e' quello che si cerca davvero: aprirlo. */
+  .schermata-storico .tabella-prev tr.riga-espandibile-dettaglio > td > div > div:first-child { display: none !important; }
 }
 /* Su desktop il chevron sta nella prima colonna, dove e' sempre stato: questo secondo non si vede. */
 .chevron-telefono { display: none; }

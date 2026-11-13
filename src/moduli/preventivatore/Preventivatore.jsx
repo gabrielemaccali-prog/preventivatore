@@ -1981,7 +1981,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
     const coloreStatoRiga = COLORE_STATO_PREVENTIVO[stato] || COLORE_STATO_PREVENTIVO[STATO_PREVENTIVO.REGISTRATO];
     return (
       <Fragment key={`${codice}-${index}`}>
-        <tr onClick={() => setRigaEspansaId(prev => prev === codice ? null : codice)} style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}>
+        <tr className="scheda-prev" onClick={() => setRigaEspansaId(prev => prev === codice ? null : codice)} style={{ cursor: 'pointer', background: espansa ? '#f8fafc' : undefined, borderBottom: espansa ? 'none' : '1px solid #eee', borderLeft: `3px solid ${coloreStatoRiga}` }}>
           <td style={{ padding: '8px 10px' }}>
             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             <strong>{codice}</strong>
@@ -2173,7 +2173,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
 
   const tabellaPreventivi = (righe, messaggioVuoto, onApri) => (
     <div className="admin-table-box-full" style={{ marginTop: '20px' }}>
-      <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
+      <table className="storico-table tabella-prev" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
           <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
             {colonnePrev.map(c => {
@@ -2188,7 +2188,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
         </thead>
         <tbody>
           {righe.length === 0
-            ? <tr><td colSpan={colonnePrev.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
+            ? <tr className="riga-vuota"><td colSpan={colonnePrev.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
             : ordina(righe).map((p, index) => rigaTabellaPreventivo(p, index, onApri))}
         </tbody>
       </table>
