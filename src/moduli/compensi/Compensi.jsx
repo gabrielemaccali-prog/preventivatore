@@ -6,7 +6,7 @@ import html2pdf from 'html2pdf.js'
 import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita, quotePartite, righeConsuntivo, trasfertePerData, giornataDelPeriodo } from './calcolo'
 import { scaricaExcel } from '../../lib/excel'
 import { toMinutes, righeResidenza, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, generaCompenso, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
+import { STATO_PREN, generaCompenso, etichettaStatoPren, classeBadgeStato, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -961,7 +961,7 @@ function Compensi({ user }) {
         const rettifica = sommaDi(vociDi(op.id, x.partita.id, 'rettifica'));
         const spese = sommaDi(vociDi(op.id, x.partita.id, 'spesa'));
         return {
-          Bubbler: nome, Data: dataBreve(g.data), Orario: intervalloPartita(x.partita), Partita: x.partita.id,
+          Bubbler: nome, Data: dataBreve(g.data), Orario: intervalloPartita(x.partita), Partita: x.partita.id, Stato: etichettaStatoPren(x.partita.stato),
           Nominativo: x.partita.nominativo || '', Annullata: x.partita.stato === STATO_PREN.ANNULLATA ? 'sì' : '',
           'Pacchetto · Gioco': etichettaPartita(x.partita.pacchettoNome, nomeGiocoPerId[x.partita.giocoId]) || '',
           Location: locationDi(x.partita), Ore: arrotonda2(x.oreAttribuite), Contanti: arrotonda2(contantiDi(op.id, x.partita.id)),
@@ -970,7 +970,7 @@ function Compensi({ user }) {
         };
       }),
       ...g.voci.filter(v => !v.riferimento).map(v => ({
-        Bubbler: nome, Data: dataBreve(g.data), Orario: '', Partita: '',
+        Bubbler: nome, Data: dataBreve(g.data), Orario: '', Partita: '', Stato: '',
         Nominativo: `${v.tipo}: ${v.descrizione || ''} (non attribuita a una partita)`, Annullata: '', 'Pacchetto · Gioco': '', Location: '',
         Ore: 0, Contanti: 0, Compenso: 0,
         Rettifica: v.tipo === 'spesa' ? 0 : arrotonda2(v.importo), Recensione: 0, Spese: v.tipo === 'spesa' ? arrotonda2(v.importo) : 0,
@@ -1085,8 +1085,13 @@ function Compensi({ user }) {
                           </span></>
                         )}
                       </td>
-                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{x.partita.id}</td>
-                      <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}{x.partita.stato === STATO_PREN.ANNULLATA && <span style={{ color: '#dc2626', fontSize: '0.75rem', fontWeight: 600, marginLeft: '6px' }} title="Partita annullata con costi da sostenere">annullata</span>}</td>
+                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+                        {x.partita.id}
+                        {/* Lo stato della prenotazione, col badge degli altri menu: dice da solo anche
+                            di una partita annullata con gli operatori da pagare. */}
+                        {x.partita.stato && <span className={`badge-stato badge-mini ${classeBadgeStato(x.partita.stato)}`} style={{ marginLeft: '6px' }}>{etichettaStatoPren(x.partita.stato)}</span>}
+                      </td>
+                      <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}</td>
                       <td style={{ padding: '7px 10px', color: '#666' }}>{etichettaPartita(x.partita.pacchettoNome, nomeGiocoPerId[x.partita.giocoId]) || '—'}</td>
                       <td style={{ padding: '7px 10px', color: '#666' }}>{locationDi(x.partita)}</td>
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>{ore(x.oreAttribuite)}</td>

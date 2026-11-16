@@ -3,7 +3,7 @@ import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { scaricaExcel } from '../../lib/excel'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, COSTO_ANNULLAMENTO, costiAnnullamentoDi, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
+import { STATO_PREN, COSTO_ANNULLAMENTO, costiAnnullamentoDi, etichettaStatoPren, classeBadgeStato, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
 import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, arrotonda2, totaliDi, contropartiCampi, barSeparato, idBar, quantitaCampoDi, nettoAffittoDi, nettoRinfrescoDi } from '../../lib/fornitori'
 
 // ============================================================
@@ -184,6 +184,7 @@ function Controparti({ tipo }) {
 
   const nomeGiocoPerId = useMemo(() => Object.fromEntries(giochi.map(g => [g.id, g.nome])), [giochi]);
   const prenotazionePerId = useMemo(() => Object.fromEntries(prenotazioni.map(p => [String(p.id), p])), [prenotazioni]);
+  const statoPrenotazione = (riferimento) => prenotazionePerId[String(riferimento)]?.stato || null;
 
   // Ore e paganti di una riga di costo. Le righe congelate li portano dal 22 ottobre 2026; un
   // periodo chiuso prima ha salvato solo gli importi, e allora si rileggono dalla prenotazione:
@@ -446,10 +447,19 @@ function Controparti({ tipo }) {
                     </td>
                   )}
                   <td style={{ ...cella, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(x.data)}</td>
-                  <td style={{ ...cella, whiteSpace: 'nowrap' }}><strong>{x.riferimento}</strong></td>
+                  <td style={{ ...cella, whiteSpace: 'nowrap' }}>
+                    <strong>{x.riferimento}</strong>
+                    {/* Lo stato di adesso della prenotazione, col badge degli altri menu: anche in un
+                        periodo chiuso, dove la riga è congelata ma la prenotazione può essere cambiata. */}
+                    {statoPrenotazione(x.riferimento) && (
+                      <span className={`badge-stato badge-mini ${classeBadgeStato(statoPrenotazione(x.riferimento))}`} style={{ marginLeft: '6px' }}>
+                        {etichettaStatoPren(statoPrenotazione(x.riferimento))}
+                      </span>
+                    )}
+                  </td>
                   {/* Un costo su una partita che non si è giocata va riconosciuto a colpo d'occhio:
-                      di solito è da rettificare fino a quanto concordato. */}
-                  <td style={cella}>{x.nominativo || '—'}{x.annullata && <span style={{ color: '#dc2626', fontSize: '0.75rem', fontWeight: 600, marginLeft: '6px' }} title="Partita annullata con costi da sostenere">annullata</span>}</td>
+                      di solito è da rettificare fino a quanto concordato. Se il badge c'è, lo dice già lui. */}
+                  <td style={cella}>{x.nominativo || '—'}{x.annullata && !statoPrenotazione(x.riferimento) && <span style={{ color: '#dc2626', fontSize: '0.75rem', fontWeight: 600, marginLeft: '6px' }} title="Partita annullata con costi da sostenere">annullata</span>}</td>
                   <td style={{ ...cella, color: '#475569' }}>{soloLettura ? etichettaCongelata(x.esempio) : etichettaRiga(x.esempio)}</td>
                   {cfg.conteggi.map(c => <td key={c.campo} style={{ ...destra, color: '#475569' }}>{conteggio(x, c.campo)}</td>)}
                   {cfg.parti.map(p => (
@@ -494,6 +504,7 @@ function Controparti({ tipo }) {
       ...(periodo ? { Periodo: periodoTesto(periodo.dal, periodo.al), 'Pagato il': eOld(periodo) ? ETICHETTA_OLD : formattaDataGGMMAAAA(periodo.data_consuntivo) } : {}),
       Data: formattaDataGGMMAAAA(x.data),
       Partita: x.riferimento,
+      Stato: statoPrenotazione(x.riferimento) ? etichettaStatoPren(statoPrenotazione(x.riferimento)) : '',
       Nominativo: x.nominativo || '',
       Annullata: x.annullata ? 'sì' : '',
       'Pacchetto · Gioco': (periodo ? etichettaCongelata(x.esempio) : etichettaRiga(x.esempio)).replace(/^—$/, ''),

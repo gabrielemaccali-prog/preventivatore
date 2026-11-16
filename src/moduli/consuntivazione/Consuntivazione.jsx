@@ -4,7 +4,7 @@ import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import { fineEventoDi, formattaDataGGMMAAAA, locationBreveDi, incassatoDi, statoIncassoDi } from '../../lib/utils'
-import { STATO_PREN } from '../../lib/costanti'
+import { STATO_PREN, etichettaStatoPren, etichettaStatoVoucher, classeBadgeStato, annullataConPenale, incassoTrattenutoDi } from '../../lib/costanti'
 import {
   sommaImporti, statoFatturazione, daFatturarePrenotazione, daFatturareVoucher,
   righeClientiExport, leggiExportFatture, abbinaFatture,
@@ -124,7 +124,9 @@ function Consuntivazione({ user }) {
   // Tutto ciò che si può fatturare: le prenotazioni confermate e i voucher venduti con l'app.
   // Una partita commissionata da un fornitore o da un campo no: non si fattura, si compensa nella
   // sua scheda di consuntivazione.
-  const fatturabili = useMemo(() => prenotazioni.filter(p => p.stato === STATO_PREN.CONFERMATO && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
+  // Ci sta anche una partita annullata fuori termine: non si e' giocata, ma l'acconto e' rimasto
+  // a noi e quello va fatturato, per il trattenuto e non per il prezzo del pacchetto.
+  const fatturabili = useMemo(() => prenotazioni.filter(p => (p.stato === STATO_PREN.CONFERMATO || annullataConPenale(p)) && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
   // Quanto di una prenotazione è stato incassato in contanti: non si fattura. Lo usano la tabella e
   // l'import, che devono dire lo stesso "da fatturare".
   const inContantiDi = useMemo(() => (id) => (pagamentiPer[`prenotazione|${id}`] || [])
@@ -138,7 +140,8 @@ function Consuntivazione({ user }) {
       const fatturato = sommaImporti(lista);
       return {
         tipo: 'prenotazione', codice: String(p.id), data: p.data, fine: fineEventoDi(p), intestatario: intestatarioPren(p),
-        descrizione: p.pacchettoNome || '', location: locationBreveDi(p), totale: parseFloat(p.prezzoVendita) || 0,
+        descrizione: [p.pacchettoNome || '', annullataConPenale(p) ? 'penale di annullamento' : ''].filter(Boolean).join(' · '),
+        location: locationBreveDi(p), totale: annullataConPenale(p) ? incassoTrattenutoDi(p) : (parseFloat(p.prezzoVendita) || 0),
         voucher: p.voucherCodice ? { codice: p.voucherCodice, valore: valore(p.voucherCodice) } : null,
         dovuto, fatturato, fatture: lista, stato: statoFatturazione(dovuto, fatturato), origine: p,
       };
@@ -387,6 +390,12 @@ function Consuntivazione({ user }) {
                             fatturare, e passando sull'asterisco si leggono senza aprire la prenotazione. */}
                         {String(x.origine?.note || '').trim() && (
                           <span title={x.origine.note} aria-label="Ha delle note" style={{ color: '#dc2626', fontWeight: 'bold', marginLeft: '3px', cursor: 'help' }}>*</span>
+                        )}
+                        {/* Lo stato della prenotazione o del voucher, col badge degli altri menu. */}
+                        {x.origine?.stato && (
+                          <span className={`badge-stato badge-mini ${classeBadgeStato(x.origine.stato)}`} style={{ marginLeft: '6px' }}>
+                            {x.tipo === 'voucher' ? etichettaStatoVoucher(x.origine.stato) : etichettaStatoPren(x.origine.stato)}
+                          </span>
                         )}
                       </td>
                       <td style={{ ...cella, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(x.data)}</td>
