@@ -4,7 +4,7 @@ import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import { fineEventoDi, formattaDataGGMMAAAA, locationBreveDi, incassatoDi, statoIncassoDi } from '../../lib/utils'
-import { STATO_PREN, etichettaStatoPren, etichettaStatoVoucher, classeBadgeStato, annullataConPenale, incassoTrattenutoDi } from '../../lib/costanti'
+import { STATO_PREN, etichettaStatoPrenDi, etichettaStatoVoucher, classeBadgeStato, classeBadgeStatoDi, annullataConPenale, incassoTrattenutoDi } from '../../lib/costanti'
 import {
   sommaImporti, statoFatturazione, daFatturarePrenotazione, daFatturareVoucher,
   righeClientiExport, leggiExportFatture, abbinaFatture,
@@ -393,8 +393,8 @@ function Consuntivazione({ user }) {
                         )}
                         {/* Lo stato della prenotazione o del voucher, col badge degli altri menu. */}
                         {x.origine?.stato && (
-                          <span className={`badge-stato badge-mini ${classeBadgeStato(x.origine.stato)}`} style={{ marginLeft: '6px' }}>
-                            {x.tipo === 'voucher' ? etichettaStatoVoucher(x.origine.stato) : etichettaStatoPren(x.origine.stato)}
+                          <span className={`badge-stato badge-mini ${x.tipo === 'voucher' ? classeBadgeStato(x.origine.stato) : classeBadgeStatoDi(x.origine)}`} style={{ marginLeft: '6px' }}>
+                            {x.tipo === 'voucher' ? etichettaStatoVoucher(x.origine.stato) : etichettaStatoPrenDi(x.origine)}
                           </span>
                         )}
                       </td>

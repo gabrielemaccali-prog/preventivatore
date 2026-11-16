@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { costruisciClienti } from '../../lib/clienti'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
-import { etichettaStatoPren, etichettaStatoVoucher, etichettaStatoPreventivo, classeBadgeStato } from '../../lib/costanti'
+import { etichettaStatoVoucher, etichettaStatoPreventivo, classeBadgeStato } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Anagrafica clienti in sola lettura: si ricostruisce ogni volta da preventivi, prenotazioni e
@@ -13,8 +13,9 @@ const stileInput = { height: '36px', boxSizing: 'border-box', padding: '6px 10px
 const testoVuoto = <span style={{ color: '#cbd5e1' }}>—</span>;
 const euro = (n) => `€${(Number(n) || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const ETICHETTA_FONTE = { preventivo: 'Preventivo', prenotazione: 'Prenotazione', voucher: 'Voucher' };
-const etichettaStato = (d) => (d.fonte === 'prenotazione' ? etichettaStatoPren(d.stato)
+const etichettaStato = (d) => (d.fonte === 'prenotazione' ? d.etichettaStato
   : d.fonte === 'voucher' ? etichettaStatoVoucher(d.stato) : etichettaStatoPreventivo(d.stato));
+const classeStato = (d) => (d.fonte === 'prenotazione' ? d.classeStato : classeBadgeStato(d.stato));
 const oggiIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 function Clienti() {
@@ -192,7 +193,7 @@ function Clienti() {
                                 <td style={{ padding: '5px 8px', width: '95px', whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(d.data)}</td>
                                 <td style={{ padding: '5px 8px' }}>{d.descrizione || testoVuoto}</td>
                                 <td style={{ padding: '5px 8px', width: '130px' }}>
-                                  {d.stato && <span className={`badge-stato badge-mini ${classeBadgeStato(d.stato)}`}>{etichettaStato(d)}</span>}
+                                  {d.stato && <span className={`badge-stato badge-mini ${classeStato(d)}`}>{etichettaStato(d)}</span>}
                                 </td>
                                 <td style={{ padding: '5px 8px', width: '100px', textAlign: 'right' }}>{d.importo ? euro(d.importo) : ''}</td>
                               </tr>

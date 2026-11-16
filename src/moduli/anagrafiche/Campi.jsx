@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { formattaDataGGMMAAAA, siglaProvincia, provinciaValida, formattaOraInput, normalizzaOra24 } from '../../lib/utils'
 import { ricalcoloCampo, minutiAllestimentoDi } from '../../lib/campi'
 import { idBar } from '../../lib/fornitori'
-import { etichettaStatoPren, classeBadgeStato } from '../../lib/costanti'
+import { etichettaStatoPrenDi, classeBadgeStatoDi } from '../../lib/costanti'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
 
@@ -407,7 +407,7 @@ function Campi({ user }) {
                           <td style={cella}><input type="checkbox" checked={scelte.includes(p.id)} onChange={() => cambia(p.id)} /></td>
                           <td style={cella}>{p.id}{p.nominativo ? <span style={{ color: '#64748b' }}> · {p.nominativo}</span> : ''}</td>
                           <td style={cella}>{formattaDataGGMMAAAA(p.data)}{p.oraInizio ? ` ${p.oraInizio}` : ''}</td>
-                          <td style={cella}><span className={`badge-stato ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
+                          <td style={cella}><span className={`badge-stato ${classeBadgeStatoDi(p)}`}>{etichettaStatoPrenDi(p)}</span></td>
                           <td style={cella}>{importo(prima.affitto, dopo.affitto)}{chiuse?.affitto && pagato}</td>
                           <td style={cella}>{importo(prima.rinfresco, dopo.rinfresco)}{chiuse?.rinfresco && pagato}</td>
                           <td style={{ ...cella, color: rettifiche[p.id] ? '#b45309' : '#94a3b8' }}>{rettifiche[p.id] ? eur(rettifiche[p.id]) : '—'}</td>

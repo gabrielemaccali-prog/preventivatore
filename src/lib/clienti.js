@@ -9,7 +9,7 @@
 // Niente React e niente Supabase: funzioni pure, come in fatturazione.js.
 // ============================================================
 import { siglaProvincia } from './utils.js';
-import { STATO_PREN, STATO_VOUCHER, statoPreventivoDi } from './costanti.js';
+import { STATO_PREN, STATO_VOUCHER, statoPreventivoDi, annullataConPenale, etichettaStatoPrenDi, classeBadgeStatoDi } from './costanti.js';
 import { daFatturarePrenotazione } from './fatturazione.js';
 
 const pulito = (v) => String(v ?? '').trim();
@@ -28,6 +28,7 @@ const daPrenotazione = (p, valoreVoucher) => {
   const azienda = p.fattTipo === 'azienda';
   return {
     fonte: 'prenotazione', rif: String(p.id), data: pulito(p.data).slice(0, 10), stato: p.stato || '',
+    etichettaStato: etichettaStatoPrenDi(p), classeStato: classeBadgeStatoDi(p),
     descrizione: p.pacchettoNome || '', preventivo: pulito(p.preventivoCollegato),
     azienda,
     denominazione: azienda
@@ -42,8 +43,9 @@ const daPrenotazione = (p, valoreVoucher) => {
     cap: pulito(azienda ? p.aziCap : p.fattCap),
     citta: pulito(azienda ? p.aziCitta : p.fattCitta),
     provincia: siglaProvincia(azienda ? p.aziProvincia : p.fattProvincia),
-    // Il voucher usato è già contato quando è stato venduto: qui va solo il saldo.
-    importo: p.stato === STATO_PREN.CONFERMATO ? daFatturarePrenotazione(p, valoreVoucher) : 0,
+    // Il voucher usato è già contato quando è stato venduto: qui va solo il saldo. Un'annullata
+    // fuori termine ci entra: la partita non si è giocata, ma il cliente quei soldi li ha spesi.
+    importo: (p.stato === STATO_PREN.CONFERMATO || annullataConPenale(p)) ? daFatturarePrenotazione(p, valoreVoucher) : 0,
   };
 };
 

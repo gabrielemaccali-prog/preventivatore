@@ -7,7 +7,7 @@
 // Niente React e niente Supabase: funzioni pure, così l'abbinamento si può provare da solo.
 // ============================================================
 import { siglaProvincia } from './utils.js';
-import { STATO_ITALIA } from './costanti.js';
+import { STATO_ITALIA, STATO_PREN, incassoTrattenutoDi } from './costanti.js';
 
 // Sotto il centesimo due importi sono uguali: i lordi arrivano da conti con l'IVA e 1610,40 può
 // valere 1610,3999999.
@@ -22,8 +22,15 @@ export const sommaImporti = (righe) => (righe || []).reduce((s, r) => s + (parse
 // I contanti non entrano nel giro delle fatture: sono soldi che il cliente ha dato in mano a un
 // operatore, e che si regolano con lui nella consuntivazione dei bubbler. Quello che resta da
 // fatturare è il prezzo meno il voucher e meno il contante.
+//
+// Una partita annullata non si fattura: non si e' giocata e il suo prezzo non si deve piu'. Fa
+// eccezione l'annullamento fuori termine, dove quello che si fattura e' il denaro trattenuto --
+// gia' al netto del voucher speso (fatturato a suo tempo) e dei contanti che nessuno ritirera'
+// mai, perche' e' quello che era davvero in cassa il giorno dell'annullamento.
 export const daFatturarePrenotazione = (p, valoreVoucher = 0, incassatoInContanti = 0) =>
-  Math.max((parseFloat(p?.prezzoVendita) || 0) - (parseFloat(valoreVoucher) || 0) - (parseFloat(incassatoInContanti) || 0), 0);
+  p?.stato === STATO_PREN.ANNULLATA
+    ? incassoTrattenutoDi(p)
+    : Math.max((parseFloat(p?.prezzoVendita) || 0) - (parseFloat(valoreVoucher) || 0) - (parseFloat(incassatoInContanti) || 0), 0);
 
 // Un voucher si fattura per il suo valore. Quelli pregressi sono stati venduti col vecchio
 // sistema e lì sono stati fatturati: qui non c'è niente da fare.

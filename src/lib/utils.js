@@ -1,4 +1,4 @@
-import { MOLTIPLICATORE_TARGET, SIGLE_PROVINCE, STATO_PREN } from './costanti.js';
+import { MOLTIPLICATORE_TARGET, SIGLE_PROVINCE, STATO_PREN, incassoTrattenutoDi } from './costanti.js';
 
 // Confronto "morbido" fra nomi di provincia: senza accenti, spazi, trattini e apostrofi, così
 // "Forlì-Cesena", "forli cesena" e "FORLI-CESENA" finiscono tutti sulla stessa chiave.
@@ -240,8 +240,13 @@ export const contantiIncassatiDi = (p) => (p?.pagamenti || [])
   .filter(pg => pg.contanti)
   .reduce((s, pg) => s + (parseFloat(pg.importo) || 0), 0);
 
+// Di una partita annullata non c'e' niente da fatturare: non si e' giocata. Tranne quando e'
+// stata annullata fuori termine -- li' la fattura ce l'ha eccome, ma per il denaro trattenuto,
+// non per il prezzo del pacchetto.
 export const senzaFatturaDaEmettere = (p) => partitaInCompensazione(p)
-  || (parseFloat(p?.prezzoVendita) || 0) - (parseFloat(p?.voucherValore) || 0) - contantiIncassatiDi(p) <= 0.01;
+  || (p?.stato === STATO_PREN.ANNULLATA
+    ? incassoTrattenutoDi(p) <= 0.01
+    : (parseFloat(p?.prezzoVendita) || 0) - (parseFloat(p?.voucherValore) || 0) - contantiIncassatiDi(p) <= 0.01);
 
 // L'anagrafica di fatturazione serve solo se una fattura va emessa.
 export const anagraficaFatturazioneAPosto = (p) => senzaFatturaDaEmettere(p) || fatturazioneCompletaDi(p);

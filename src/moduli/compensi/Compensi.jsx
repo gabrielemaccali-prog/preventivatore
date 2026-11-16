@@ -6,7 +6,7 @@ import html2pdf from 'html2pdf.js'
 import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita, quotePartite, righeConsuntivo, trasfertePerData, giornataDelPeriodo } from './calcolo'
 import { scaricaExcel } from '../../lib/excel'
 import { toMinutes, righeResidenza, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, generaCompenso, etichettaStatoPren, classeBadgeStato, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
+import { STATO_PREN, generaCompenso, etichettaStatoPrenDi, classeBadgeStatoDi, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -961,7 +961,7 @@ function Compensi({ user }) {
         const rettifica = sommaDi(vociDi(op.id, x.partita.id, 'rettifica'));
         const spese = sommaDi(vociDi(op.id, x.partita.id, 'spesa'));
         return {
-          Bubbler: nome, Data: dataBreve(g.data), Orario: intervalloPartita(x.partita), Partita: x.partita.id, Stato: etichettaStatoPren(x.partita.stato),
+          Bubbler: nome, Data: dataBreve(g.data), Orario: intervalloPartita(x.partita), Partita: x.partita.id, Stato: etichettaStatoPrenDi(x.partita),
           Nominativo: x.partita.nominativo || '', Annullata: x.partita.stato === STATO_PREN.ANNULLATA ? 'sì' : '',
           'Pacchetto · Gioco': etichettaPartita(x.partita.pacchettoNome, nomeGiocoPerId[x.partita.giocoId]) || '',
           Location: locationDi(x.partita), Ore: arrotonda2(x.oreAttribuite), Contanti: arrotonda2(contantiDi(op.id, x.partita.id)),
@@ -1089,7 +1089,7 @@ function Compensi({ user }) {
                         {x.partita.id}
                         {/* Lo stato della prenotazione, col badge degli altri menu: dice da solo anche
                             di una partita annullata con gli operatori da pagare. */}
-                        {x.partita.stato && <span className={`badge-stato badge-mini ${classeBadgeStato(x.partita.stato)}`} style={{ marginLeft: '6px' }}>{etichettaStatoPren(x.partita.stato)}</span>}
+                        {x.partita.stato && <span className={`badge-stato badge-mini ${classeBadgeStatoDi(x.partita)}`} style={{ marginLeft: '6px' }}>{etichettaStatoPrenDi(x.partita)}</span>}
                       </td>
                       <td style={{ padding: '7px 10px' }}>{x.partita.nominativo || '—'}</td>
                       <td style={{ padding: '7px 10px', color: '#666' }}>{etichettaPartita(x.partita.pacchettoNome, nomeGiocoPerId[x.partita.giocoId]) || '—'}</td>

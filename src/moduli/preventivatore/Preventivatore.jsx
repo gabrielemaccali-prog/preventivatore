@@ -2096,10 +2096,10 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
                     <button type="button" className="btn-icon-action" title="Nessuna prenotazione lo sta usando: riportalo a Confermato" onClick={() => cambiaStatoPreventivo(codice, STATO_PREVENTIVO.CONFERMATO)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   {(p.stato === STATO_PREVENTIVO.REGISTRATO || p.stato === STATO_PREVENTIVO.CONFERMATO) && (
-                    <button type="button" className="btn-icon-action danger" title="Annulla il preventivo" onClick={() => annullaPreventivo(p)}><Icona nome="annulla" size={16} style={{ marginRight: 0 }} /></button>
+                    <button type="button" className="btn-icon-action danger" title="Segna il preventivo come sfumato" onClick={() => annullaPreventivo(p)}><Icona nome="annulla" size={16} style={{ marginRight: 0 }} /></button>
                   )}
                   {p.stato === STATO_PREVENTIVO.ANNULLATO && (<>
-                    <button type="button" className="btn-icon-action" title={categoriaAnnullamentoDi(p) ? "Cambia il motivo dell'annullamento" : "Scegli la categoria dell'annullamento"} onClick={() => annullaPreventivo(p)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
+                    <button type="button" className="btn-icon-action" title={categoriaAnnullamentoDi(p) ? "Cambia il motivo: perché è sfumato" : "Scegli la categoria: perché è sfumato"} onClick={() => annullaPreventivo(p)}><Icona nome="modifica" size={16} style={{ marginRight: 0 }} /></button>
                     <button type="button" className="btn-icon-action" title="Ripristina: torna fra i registrati" onClick={() => ripristinaPreventivo(p)}><Icona nome="riporta" size={16} style={{ marginRight: 0 }} /></button>
                   </>)}
                   {/* La prenotazione la crea il modulo Prenotazioni: qui si va solo a aprirne una nuova
@@ -3031,10 +3031,10 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
 
       {daAnnullare && (
         <DialogoAnnullamento
-          titolo={`${daAnnullare.stato === STATO_PREVENTIVO.ANNULLATO ? 'Motivo dell\'annullamento di' : 'Annulla'} ${codiceDi(daAnnullare)}${daAnnullare.nomeReferente ? ` · ${daAnnullare.nomeReferente}` : ''}`}
-          spiegazione={daAnnullare.stato === STATO_PREVENTIVO.ANNULLATO ? null : "Il preventivo passa ad Annullato ed esce da Gestione; resta nello Storico e si può ripristinare."}
+          titolo={`${daAnnullare.stato === STATO_PREVENTIVO.ANNULLATO ? 'Perché è sfumato' : 'Sfumato'}: ${codiceDi(daAnnullare)}${daAnnullare.nomeReferente ? ` · ${daAnnullare.nomeReferente}` : ''}`}
+          spiegazione={daAnnullare.stato === STATO_PREVENTIVO.ANNULLATO ? null : "Il preventivo passa a Sfumato ed esce da Gestione; resta nello Storico e si può ripristinare."}
           iniziale={{ categoria: daAnnullare.categoriaAnnullamento, nota: daAnnullare.motivoAnnullamento }}
-          etichettaConferma={daAnnullare.stato === STATO_PREVENTIVO.ANNULLATO ? 'Salva' : 'Annulla il preventivo'}
+          etichettaConferma={daAnnullare.stato === STATO_PREVENTIVO.ANNULLATO ? 'Salva' : 'Segna come sfumato'}
           onConferma={confermaAnnullamentoPreventivo}
           onChiudi={() => setDaAnnullare(null)}
         />

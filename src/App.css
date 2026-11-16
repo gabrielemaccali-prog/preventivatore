@@ -963,7 +963,9 @@ td { padding: 8px 12px; vertical-align: middle; }
 }
 
 /* Preventivo annullato: resta nello Storico con il suo motivo */
-.badge-stato.annullato { background-color: #fee2e2; color: #991b1b; }
+/* Sfumato: non e' successo niente, non c'e' niente da fare. Grigio, non rosso -- il rosso resta
+   alle partite annullate davvero, che hanno dei soldi da seguire. */
+.badge-stato.annullato { background-color: #e2e8f0; color: #475569; }
 
 /* Stati prenotazioni */
 .badge-stato.forse { background-color: #fed7aa; color: #9a3412; }
@@ -1129,6 +1131,7 @@ input:disabled {
 /* Una partita annullata. Se aveva un acconto non si perde niente: quei soldi diventano un voucher,
    e la riga lo dice con un suo segno accanto allo stato. */
 .badge-stato.annullata { background-color: #fee2e2; color: #991b1b; }
+.badge-stato.sfumata { background-color: #e2e8f0; color: #475569; }
 /* Una partita della vecchia gestione, ricostruita: grigio, perché non c'è niente da fare. */
 .badge-stato.pregressa { background-color: #e2e8f0; color: #334155; }
 

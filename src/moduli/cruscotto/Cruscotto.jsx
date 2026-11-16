@@ -4,9 +4,10 @@ import { supabase } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
 import { etichettaPartita, etichettaGiochiBreve, formattaDataGGMMAAAA, estraiDateDaPeriodo } from '../../lib/utils'
 import {
-  STATO_PREN, etichettaStatoPren, classeBadgeStato, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO,
+  STATO_PREN, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO,
   costiAnnullamentoDi, generaCompenso, STATO_PREVENTIVO, statoPreventivoDi, GIORNI_VALIDITA_PREVENTIVO,
   categoriaAnnullamentoDi, etichettaCategoriaAnnullamento, ETICHETTA_NON_CLASSIFICATO, giocata, trasformataInVoucher,
+  annullataConPenale, incassoTrattenutoDi, sfumata, etichettaStatoPrenDi, classeBadgeStatoDi, OPZIONI_STATO_PREN, corrispondeStatoPren,
 } from '../../lib/costanti'
 import Icona from '../../components/Icona'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
@@ -101,6 +102,23 @@ const useSchermoStretto = (soglia = 640) => {
   return stretto;
 };
 
+// Quanto e' lontana la destinazione di un preventivo, in km di sola andata. Il preventivatore lo
+// scrive sul preventivo; dove non c'e' si prende il massimo dei km calcolati sulle righe, che e' la
+// gamba piu' lunga del viaggio. Null quando non si sa: una distanza inventata direbbe cose
+// sbagliate su quali preventivi si perdono.
+const kmDi = (p) => {
+  const scritto = parseFloat(p?.kmAndata);
+  if (!isNaN(scritto) && scritto > 0) return scritto;
+  const dalleRighe = (p?.gonfiabili || [])
+    .map(g => parseFloat(g?.kmCalcolati))
+    .filter(v => !isNaN(v) && v > 0);
+  return dalleRighe.length ? Math.max(...dalleRighe) : null;
+};
+
+// Le sedi sono al nord, e oltre questa distanza un preventivo si perde piu' per la logistica che per
+// il prezzo: guardare solo i vicini dice se il problema e' quello che chiediamo o quanto siamo lontani.
+const SOGLIA_VICINI_KM = 200;
+
 const ESITO = { VINTO: 'vinto', PERSO: 'perso', APERTO: 'aperto' };
 // null = fuori dal conto: un annullato che non era una richiesta vera, o che e' passato a un'altra
 // nostra formula, non e' ne' vinto ne' perso.
@@ -129,12 +147,13 @@ const raggruppaPerCategoria = (righe, valoreDi = () => 0) => {
     .map(g => ({ ...g, nome: g.categoria?.etichetta || ETICHETTA_NON_CLASSIFICATO, descrizione: g.categoria?.descrizione || 'Annullamenti senza categoria: vanno classificati.' }))
     .sort((a, b) => (a.chiave === '') - (b.chiave === '') || b.n - a.n || b.valore - a.valore);
 };
-// Annullato si', ma non perso: una richiesta che non era vera, un cliente passato a un'altra
-// nostra formula, o una partita i cui soldi sono diventati un voucher -- quel ricavo torna con la
-// prenotazione nuova. Restano nell'elenco ma fuori dal valore perso e dalla conversione.
+// Annullato si', ma non perso: il ricavo non se n'e' andato da nessuna parte. O la richiesta non
+// era vera, o il cliente e' passato a un'altra nostra formula, o i soldi sono parcheggiati in un
+// voucher e torneranno con la prenotazione nuova, o sono rimasti a noi come penale. Restano
+// nell'elenco ma fuori dal valore perso e dalla conversione.
 const annullatoMaNonPerso = (p) => {
   const cat = categoriaAnnullamentoDi(p);
-  return trasformataInVoucher(p) || !!(cat && (cat.fuoriStatistiche || cat.nonPerso));
+  return trasformataInVoucher(p) || annullataConPenale(p) || !!(cat && (cat.fuoriStatistiche || cat.nonPerso));
 };
 
 // Nella colonna in pila il ricavo non e' una barra: e' l'altezza delle due messe insieme. Il tooltip
@@ -307,7 +326,7 @@ function Cruscotto({ user }) {
       supabase.from('op_voci').select('*'),
       supabase.from('op_periodi').select('*'),
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
-      supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, periodo, mostraComeOpzioni, totaleVendita, costoVivoTotale, destinazione, nomeReferente, categoriaAnnullamento, motivoAnnullamento'),
+      supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, periodo, mostraComeOpzioni, totaleVendita, costoVivoTotale, kmAndata, destinazione, nomeReferente, categoriaAnnullamento, motivoAnnullamento'),
       supabase.from('fatture').select('riferimento, importo').eq('tipo', 'prenotazione'),
       supabase.from('voucher').select('codice, importo'),
       supabase.from('cons_periodi').select('controparte, controparte_id, righe'),
@@ -572,7 +591,23 @@ function Cruscotto({ user }) {
       let ricavo;
       const annullata = p.stato === STATO_PREN.ANNULLATA;
       const segnati = costiAnnullamentoDi(p);
-      if (annullata) {
+      if (annullata && annullataConPenale(p)) {
+        // Annullata fuori termine: la partita non si è giocata, ma i soldi incassati sono rimasti
+        // a noi e vanno fatturati. È un ricavo vero, solo più piccolo del prezzo del pacchetto:
+        // vale il trattenuto, riportato al netto con lo stesso rapporto della prenotazione (che
+        // non è sempre 1,22 — un cliente estero non paga IVA).
+        const lordo = parseFloat(p.prezzoVendita) || 0;
+        const trattenuto = incassoTrattenutoDi(p);
+        const netto = lordo > 0 ? trattenuto * (nettoRicavo(p) / lordo) : trattenuto / 1.22;
+        const fatturato = sommaImporti(fatturatoPer[String(p.id)]);
+        const coperta = statoFatturazione(daFatturarePrenotazione(p), fatturato) === 'fatturata';
+        ricavo = {
+          prev: netto,
+          cons: coperta ? (lordo > 0 ? fatturato * (nettoRicavo(p) / lordo) : fatturato / 1.22) : null,
+          nota: coperta ? 'Penale fatturata' : 'Penale da fatturare',
+          titolo: 'Annullata fuori termine: il cliente ha perso l\'acconto, e quei soldi sono un nostro ricavo da fatturare',
+        };
+      } else if (annullata) {
         // Annullata vuol dire senza ricavo: se un incasso c'era, se n'è andato nel voucher.
         ricavo = { prev: 0, cons: null, nessuno: true, nota: 'Nessun ricavo', titolo: 'Annullata senza incasso' };
       } else if (p.clienteSedeId || p.clienteCampoId) {
@@ -759,10 +794,11 @@ function Cruscotto({ user }) {
     const a = analisiPartite[p.id];
     if (!a) return false;
     // Un'annullata che non ha mosso niente -- nessun ricavo, nessun costo segnato -- nel cruscotto
-    // e' solo rumore: resta nel modulo prenotazioni, con il suo motivo.
-    if (p.stato === STATO_PREN.ANNULLATA && a.statoCosto === 'vuoto') return false;
+    // e' solo rumore: resta nel modulo prenotazioni, con il suo motivo. Quella fuori termine ha
+    // mosso eccome: l'acconto trattenuto e' un ricavo, e sta qui anche senza costi.
+    if (p.stato === STATO_PREN.ANNULLATA && a.statoCosto === 'vuoto' && a.statoRicavo === 'vuoto') return false;
     if (crMese && !String(p.data || '').startsWith(crMese)) return false;
-    if (crStato && p.stato !== crStato) return false;
+    if (crStato && !corrispondeStatoPren(p, crStato)) return false;
     if (crNome && !`${p.id} ${p.nominativo || ''}`.toLowerCase().includes(crNome.toLowerCase())) return false;
     if (crConsuntivo && a.statoMargine !== crConsuntivo) return false;
     if (crOperatore && !(p.operatori || []).some(o => String(o.id) === crOperatore)) return false;
@@ -803,7 +839,7 @@ function Cruscotto({ user }) {
     const ws = XLSX.utils.json_to_sheet(ordinamentoCruscotto.ordina(righeCruscotto).map(p => {
       const a = analisiPartite[p.id];
       return {
-        Codice: p.id, 'Data evento': p.data, Nominativo: p.nominativo || '', Partita: etichettaDi(p), Stato: etichettaStatoPren(p.stato),
+        Codice: p.id, 'Data evento': p.data, Nominativo: p.nominativo || '', Partita: etichettaDi(p), Stato: etichettaStatoPrenDi(p),
         'Ricavo preventivo': a.ricavo.prev, 'Ricavo consuntivo': a.ricavo.cons ?? '',
         'Costi preventivo': +a.costoPrev.toFixed(2), 'Costi consuntivo': a.statoCosto === 'cons' ? +a.costoEff.toFixed(2) : '',
         Ricavo: +a.ricavoEff.toFixed(2), Costi: +a.costoEff.toFixed(2), Margine: +a.margineEff.toFixed(2),
@@ -846,11 +882,12 @@ function Cruscotto({ user }) {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 20px', fontSize: '0.8rem', color: '#334155', marginBottom: '8px' }}>
             <span><span style={{ color: '#94a3b8' }}>Codice </span><strong>{p.id}</strong></span>
             <span><span style={{ color: '#94a3b8' }}>Data </span>{formattaDataGGMMAAAA(p.data)}{p.oraInizio ? ` ${p.oraInizio}` : ''}{p.oraFine ? `–${p.oraFine}` : ''}</span>
-            <span><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato badge-mini ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></span>
+            <span><span style={{ color: '#94a3b8' }}>Stato </span><span className={`badge-stato badge-mini ${classeBadgeStatoDi(p)}`}>{etichettaStatoPrenDi(p)}</span></span>
             {p.stato === STATO_PREN.ANNULLATA && (costiAnnullamentoDi(p).size > 0
               ? <em style={{ color: '#991b1b' }}>Annullata con costi da sostenere: {[...costiAnnullamentoDi(p)].map(c => ETICHETTA_COSTO_ANNULLAMENTO[c] || c).join(', ').toLowerCase()}.</em>
               : null)}
             {trasformataInVoucher(p) && <em style={{ color: '#5b21b6' }}>Diventata il voucher {p.voucherGenerato}: il ricavo conterà sulla prenotazione nuova.</em>}
+            {annullataConPenale(p) && <em style={{ color: '#b45309' }}>Annullata fuori termine: €{incassoTrattenutoDi(p).toFixed(2)} trattenuti, da fatturare.</em>}
           </div>
           <table className="tabella-dettaglio-cruscotto">
             <colgroup>
@@ -1059,6 +1096,13 @@ function Cruscotto({ user }) {
   // perde, e perche'. Il perche' e' la categoria scelta annullando (CATEGORIE_ANNULLAMENTO); la
   // nota scritta a mano accompagna la riga nell'elenco.
   //
+  // Sulle partite lo stato ANNULLATA tiene insieme due storie che non si sommano. Una partita
+  // senza incasso prenotata non lo e' mai stata davvero: e' una richiesta sfumata, e quello che
+  // ha da dire e' perche' non si e' chiuso -- e' di queste che parla la scheda. Una con l'incasso
+  // invece era una prenotazione vera, annullata dopo: li' non c'e' niente da imparare sul perche'
+  // non vendiamo, c'e' del denaro da seguire (un voucher, o una penale trattenuta). Mescolarle
+  // vorrebbe dire contare fra le occasioni perse una partita che e' stata venduta.
+  //
   // Le richieste non valide restano nell'elenco ma fuori dalle percentuali, e con quelle passate a
   // un'altra nostra formula fuori dal valore perso: annullate si', perse no.
   //
@@ -1071,8 +1115,11 @@ function Cruscotto({ user }) {
   const [annoAnn, setAnnoAnn] = useState("");
   const [meseAnn, setMeseAnn] = useState("");
   const meseAnnSel = annoAnn ? meseAnn : "";
-  const [statoAnn, setStatoAnn] = useState(""); // '' | 'perse' | 'voucher', solo per le prenotazioni
+  // '' = le sfumate (la vista di casa), 'annullate' = quelle annullate dopo l'incasso, 'tutte'.
+  const [statoAnn, setStatoAnn] = useState(""); // solo per le prenotazioni
   const [motivoAnn, setMotivoAnn] = useState(null); // categoria scelta ('' = non classificati), null = tutte
+  // Vale solo per i preventivi: una prenotazione annullata non porta i km.
+  const [soloVicini, setSoloVicini] = useState(false);
 
   const dataAnnullatoDi = useCallback((p) => String((annullatiPren ? p.data : p.dataEmissione) || '').slice(0, 10), [annullatiPren]);
   const anniAnnullati = useMemo(() => {
@@ -1086,14 +1133,22 @@ function Cruscotto({ user }) {
       if (!data) return false;
       if (annoAnn && data.slice(0, 4) !== annoAnn) return false;
       if (meseAnnSel && parseInt(data.slice(5, 7), 10) !== parseInt(meseAnnSel, 10)) return false;
+      // Senza distanza non si sa da che parte della soglia stia, quindi resta fuori dai vicini.
+      if (!annullatiPren && soloVicini) {
+        const km = kmDi(p);
+        if (km == null || km > SOGLIA_VICINI_KM) return false;
+      }
       return true;
     });
     const perData = (a, b) => dataAnnullatoDi(b).localeCompare(dataAnnullatoDi(a));
     const fuori = (p) => !!categoriaAnnullamentoDi(p)?.fuoriStatistiche;
     const valore = annullatiPren ? nettoRicavo : (p) => parseFloat(p.totaleVendita) || 0;
+    const dopoIncasso = annullatiPren
+      ? nelPeriodo.filter(p => p.stato === STATO_PREN.ANNULLATA && !sfumata(p))
+      : [];
     const annullati = annullatiPren
       ? nelPeriodo.filter(p => p.stato === STATO_PREN.ANNULLATA
-          && (statoAnn === 'voucher' ? trasformataInVoucher(p) : statoAnn === 'perse' ? !trasformataInVoucher(p) : true))
+          && (statoAnn === 'annullate' ? !sfumata(p) : statoAnn === 'tutte' ? true : sfumata(p)))
       : nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO);
     const motivi = raggruppaPerCategoria(annullati, valore);
     const scelto = motivoAnn == null ? null : motivi.find(m => m.chiave === motivoAnn);
@@ -1107,16 +1162,21 @@ function Cruscotto({ user }) {
     };
 
     if (annullatiPren) {
-      // Due cose diverse sotto lo stesso stato: la partita persa davvero, e quella i cui soldi
-      // sono diventati un voucher. La seconda non e' un ricavo perso -- il cliente tornera' -- e
-      // quello che vale e' quanto c'e' dentro il voucher, non il prezzo della partita saltata.
-      const trasformate = annullati.filter(trasformataInVoucher);
-      const perse = annullati.filter(p => !trasformataInVoucher(p));
+      // Le sfumate seguono la vista scelta; le annullate dopo l'incasso si contano sempre su tutto
+      // il periodo, perche' il loro riquadro c'e' anche quando la scheda sta guardando altro. Una
+      // vale quanto c'e' dentro il voucher o quanto si e' trattenuto, non il prezzo della partita.
+      const sfumate = annullati.filter(sfumata);
+      const trasformate = dopoIncasso.filter(trasformataInVoucher);
+      const conPenale = dopoIncasso.filter(annullataConPenale);
       return {
         ...comune,
-        annullate: perse.filter(p => !fuori(p)), trasformate: trasformate.filter(p => !fuori(p)),
-        ricavoPerso: perse.filter(p => !annullatoMaNonPerso(p)).reduce((s, p) => s + nettoRicavo(p), 0),
+        sfumate: sfumate.filter(p => !fuori(p)),
+        trasformate: trasformate.filter(p => !fuori(p)),
+        conPenale: conPenale.filter(p => !fuori(p)),
+        dopoIncasso: dopoIncasso.filter(p => !fuori(p)),
+        ricavoPerso: sfumate.filter(p => !annullatoMaNonPerso(p)).reduce((s, p) => s + nettoRicavo(p), 0),
         parcheggiato: trasformate.reduce((s, p) => s + (valoriVoucher[p.voucherGenerato] || 0), 0),
+        trattenuto: conPenale.reduce((s, p) => s + incassoTrattenutoDi(p), 0),
         conCosti: annullati.filter(p => costiAnnullamentoDi(p).size > 0),
       };
     }
@@ -1130,20 +1190,30 @@ function Cruscotto({ user }) {
       // li annulla gliela da'. Si contano per dire quanti potrebbero ancora arrivare in questa lista.
       azioneRichiesta: nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.AZIONE_RICHIESTA).length,
     };
-  }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi, annoAnn, meseAnnSel, statoAnn, motivoAnn, valoriVoucher]);
+  }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi, annoAnn, meseAnnSel, statoAnn, motivoAnn, soloVicini, valoriVoucher]);
+
+  // Che fine ha fatto una partita annullata, in due parole. Lo stato da solo direbbe "ANNULLATA"
+  // su tutte e tre le storie, che e' il motivo per cui questa scheda le teneva mescolate.
+  const esitoAnnullata = (p) => (trasformataInVoucher(p)
+    ? { testo: `voucher ${p.voucherGenerato}`, colore: '#5b21b6' }
+    : annullataConPenale(p)
+      ? { testo: `fuori termine · €${incassoTrattenutoDi(p).toFixed(2)} trattenuti`, colore: '#b45309' }
+      : { testo: 'sfumata: mai prenotata', colore: '#94a3b8' });
 
   const esportaAnnullati = () => {
     if (statAnnullati.righe.length === 0) return alert("Niente da esportare.");
     const righe = annullatiPren
       ? statAnnullati.righe.map(p => ({
         Codice: p.id, 'Data evento': p.data, Nominativo: p.nominativo || '', Partita: etichettaDi(p),
-        Stato: etichettaStatoPren(p.stato), Categoria: etichettaCategoriaAnnullamento(p), Nota: p.motivoAnnullamento || '',
+        Stato: etichettaStatoPrenDi(p), Esito: esitoAnnullata(p).testo,
+        Categoria: etichettaCategoriaAnnullamento(p), Nota: p.motivoAnnullamento || '',
         'Costi da sostenere': [...costiAnnullamentoDi(p)].map(c => ETICHETTA_COSTO_ANNULLAMENTO[c] || c).join(', '),
         'Ricavo netto': +nettoRicavo(p).toFixed(2),
       }))
       : statAnnullati.righe.map(p => ({
         Codice: p.codice, Emissione: String(p.dataEmissione || '').slice(0, 10), Evento: estraiDateDaPeriodo(p.periodo).inizio || '',
-        Referente: p.nomeReferente || '', Destinazione: p.destinazione || '', Categoria: etichettaCategoriaAnnullamento(p), Nota: p.motivoAnnullamento || '',
+        Referente: p.nomeReferente || '', Destinazione: p.destinazione || '', 'Km andata': kmDi(p) == null ? '' : Math.round(kmDi(p)),
+        Categoria: etichettaCategoriaAnnullamento(p), Nota: p.motivoAnnullamento || '',
         Valore: +(parseFloat(p.totaleVendita) || 0).toFixed(2),
       }));
     const wb = XLSX.utils.book_new();
@@ -1424,7 +1494,7 @@ function Cruscotto({ user }) {
           <button className={`nav-btn ${currentView === 'pergioco' ? 'active' : ''}`} onClick={() => setCurrentView("pergioco")}><Icona nome="giochi" />Per gioco</button>
         )}
         {puoVedere(user, 'costiricavi', 'annullati') && (
-          <button className={`nav-btn ${currentView === 'annullati' ? 'active' : ''}`} onClick={() => setCurrentView("annullati")}><Icona nome="annulla" />Annullati</button>
+          <button className={`nav-btn ${currentView === 'annullati' ? 'active' : ''}`} onClick={() => setCurrentView("annullati")}><Icona nome="annulla" />Sfumati</button>
         )}
       </nav>
 
@@ -1462,7 +1532,7 @@ function Cruscotto({ user }) {
               <label>Stato:</label>
               <select value={crStato} onChange={(e) => setCrStato(e.target.value)}>
                 <option value="">Tutti</option>
-                {Object.values(STATO_PREN).map(s => <option key={s} value={s}>{etichettaStatoPren(s)}</option>)}
+                {OPZIONI_STATO_PREN.map(o => <option key={o.valore} value={o.valore}>{o.etichetta}</option>)}
               </select>
             </div>
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
@@ -1519,7 +1589,7 @@ function Cruscotto({ user }) {
                             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
                             {formattaDataGGMMAAAA(p.data) || '—'}
                           </td>
-                          <td style={{ padding: '8px 10px' }}><span className={`badge-stato badge-mini ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
+                          <td style={{ padding: '8px 10px' }}><span className={`badge-stato badge-mini ${classeBadgeStatoDi(p)}`}>{etichettaStatoPrenDi(p)}</span></td>
                           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#64748b', whiteSpace: 'nowrap' }}>{p.id}</td>
                           <td style={{ padding: '8px 10px' }}><strong>{p.nominativo}</strong></td>
                           <td style={{ padding: '8px 10px', fontSize: '0.82rem', color: '#555' }}>{etichettaDi(p)}</td>
@@ -1967,7 +2037,7 @@ function Cruscotto({ user }) {
         );
         const intestazioni = annullatiPren
           ? ['Data', 'Codice', 'Nominativo', 'Partita', 'Stato', 'Motivo', 'Costi da sostenere', 'Ricavo']
-          : ['Emissione', 'Codice', 'Evento', 'Referente', 'Destinazione', 'Motivo', 'Valore'];
+          : ['Emissione', 'Codice', 'Evento', 'Referente', 'Destinazione', 'Distanza', 'Motivo', 'Valore'];
         return (
           <div className="schermata-storico no-print">
             <nav className="modulo-subnav subnav-segmented" style={{ margin: '0 0 14px' }}>
@@ -1978,17 +2048,29 @@ function Cruscotto({ user }) {
             {sottoschede.length === 0 ? <p className="descrizione-pagina">Nessuna sottoscheda abilitata per il tuo ruolo.</p> : (<>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                 <h2 style={{ margin: 0 }}>
-                  {annullatiPren ? 'Prenotazioni annullate' : 'Preventivi annullati'}
+                  {annullatiPren
+                    ? (statoAnn === 'annullate' ? 'Partite annullate' : statoAnn === 'tutte' ? 'Partite sfumate e annullate' : 'Partite sfumate')
+                    : 'Preventivi sfumati'}
                   {' '}<span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>({annullatiPren ? 'per data della partita, ricavi senza IVA' : 'per data di emissione, importi di vendita'})</span>
                 </h2>
                 <button onClick={esportaAnnullati} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
               </div>
               <p className="descrizione-pagina">
                 {annullatiPren
-                  ? <>Una partita senza incasso si <strong>annulla</strong> e il suo ricavo è perso; se un acconto era entrato, quei soldi <strong>diventano un voucher</strong> e il ricavo tornerà con la prenotazione nuova. Il perché è la categoria scelta annullando; la nota scritta a mano è nell'elenco in fondo.</>
-                  : <>I preventivi chiusi dal cliente o da noi, con la categoria scelta annullandoli. Quelli scaduti senza risposta non sono qui finché qualcuno non li annulla.</>}
+                  ? <>Una richiesta che non è mai diventata una prenotazione — nessun euro incassato, nessuna partita giocata — è <strong>sfumata</strong>: è di queste che parla la scheda, e la domanda è perché non si è chiuso. Quando invece un acconto era entrato la prenotazione c'era davvero, e annullarla è un'altra storia: quei soldi <strong>diventano un voucher</strong>, oppure, fuori dai termini, <strong>restano a noi</strong> e si fatturano. Quelle si leggono nella vista «Annullate dopo l'incasso». Il perché è la categoria scelta annullando; la nota scritta a mano è nell'elenco in fondo.</>
+                  : <>Le offerte che non sono diventate niente, con la categoria scelta chiudendole. Un preventivo non si annulla — non c'era niente da annullare, era una proposta — o si vince o <strong>sfuma</strong>. Quelli scaduti senza risposta non sono qui finché qualcuno non li chiude.</>}
                 {' '}Le richieste non valide restano fuori dalle percentuali; con quelle passate a un'altra nostra formula, anche dal valore perso. Clicca una categoria per vedere solo le sue righe.
               </p>
+              {/* Le annullate dopo l'incasso non stanno in questi numeri, ma non devono nemmeno
+                  sparire: una riga lo dice e porta dall'altra parte con un clic. */}
+              {annullatiPren && statoAnn === '' && s.dopoIncasso.length > 0 && (
+                <p style={{ margin: '-6px 0 14px', fontSize: '0.82rem', color: '#64748b' }}>
+                  Fuori da questi numeri: <strong>{s.dopoIncasso.length}</strong> {s.dopoIncasso.length === 1 ? 'partita era prenotata davvero ed è stata annullata' : 'partite erano prenotate davvero e sono state annullate'} dopo l'incasso
+                  {s.trasformate.length > 0 && <> — {s.trasformate.length} {s.trasformate.length === 1 ? 'diventata voucher' : 'diventate voucher'} ({formattaEuro(s.parcheggiato)})</>}
+                  {s.conPenale.length > 0 && <> — {s.conPenale.length} fuori termine ({formattaEuro(s.trattenuto)} trattenuti)</>}.
+                  {' '}<button type="button" onClick={() => { setStatoAnn('annullate'); setMotivoAnn(null); }} style={{ background: 'none', border: 'none', padding: 0, color: '#0288d1', cursor: 'pointer', fontSize: '0.82rem', textDecoration: 'underline' }}>Guardale</button>
+                </p>
+              )}
 
               <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
                 <div className="filtro-group" style={{ flex: '1 1 140px' }}>
@@ -2005,13 +2087,21 @@ function Cruscotto({ user }) {
                     {MESI.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
                   </select>
                 </div>
+                {!annullatiPren && (
+                  <div className="filtro-group" style={{ flex: '0 1 auto' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: 0, paddingBottom: '9px' }} title={`Tiene solo i preventivi con destinazione entro ${SOGLIA_VICINI_KM} km di sola andata; quelli senza distanza calcolata restano fuori`}>
+                      <input type="checkbox" checked={soloVicini} onChange={(e) => { setSoloVicini(e.target.checked); setMotivoAnn(null); }} />
+                      Entro i {SOGLIA_VICINI_KM} km
+                    </label>
+                  </div>
+                )}
                 {annullatiPren && (
-                  <div className="filtro-group" style={{ flex: '1 1 160px' }}>
-                    <label>Stato:</label>
+                  <div className="filtro-group" style={{ flex: '1 1 200px' }}>
+                    <label>Vista:</label>
                     <select value={statoAnn} onChange={(e) => { setStatoAnn(e.target.value); setMotivoAnn(null); }}>
-                      <option value="">Tutte</option>
-                      <option value="perse">Solo perse</option>
-                      <option value="voucher">Solo diventate voucher</option>
+                      <option value="">Sfumate (mai prenotate)</option>
+                      <option value="annullate">Annullate dopo l'incasso</option>
+                      <option value="tutte">Tutte e due</option>
                     </select>
                   </div>
                 )}
@@ -2019,11 +2109,12 @@ function Cruscotto({ user }) {
 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '20px' }}>
                 {annullatiPren ? (<>
-                  {riquadro('Annullate', s.annullate.length, `${percentuale(quota(s.annullate.length))} delle ${s.totale} partite del periodo`, '#b91c1c')}
-                  {riquadro('Diventate voucher', s.trasformate.length, `${percentuale(quota(s.trasformate.length))} delle partite, ${formattaEuro(s.parcheggiato)} da riusare`, '#6d28d9')}
-                  {riquadro('Ricavo perso', formattaEuro(s.ricavoPerso), 'quello delle annullate davvero perse', '#b91c1c')}
+                  {statoAnn !== 'annullate' && riquadro('Sfumate', s.sfumate.length, `${percentuale(quota(s.sfumate.length))} delle ${s.totale} partite del periodo`, '#b91c1c')}
+                  {statoAnn !== 'annullate' && riquadro('Ricavo perso', formattaEuro(s.ricavoPerso), 'quello delle sfumate che si potevano vincere', '#b91c1c')}
+                  {statoAnn !== '' && riquadro('Diventate voucher', s.trasformate.length, `${formattaEuro(s.parcheggiato)} da riusare`, '#6d28d9')}
+                  {statoAnn !== '' && riquadro('Fuori termine', s.conPenale.length, `${formattaEuro(s.trattenuto)} trattenuti e da fatturare`, '#b45309')}
                   {riquadro('Con costi da sostenere', s.conCosti.length, 'annullate ma con campo, rinfresco o operatori da pagare')}
-                  {riquadro('Non perse', s.nonPersi.length, 'richieste non valide o passate a un\'altra nostra formula')}
+                  {statoAnn !== 'annullate' && riquadro('Non perse', s.nonPersi.length, 'richieste non valide o passate a un\'altra nostra formula')}
                   {s.daClassificare > 0 && riquadro('Da classificare', s.daClassificare, 'annullamenti senza categoria', '#a16207')}
                 </>) : (<>
                   {riquadro('Persi', s.persi.length, `${percentuale(quota(s.persi.length))} dei ${s.totale} preventivi emessi`, '#b91c1c')}
@@ -2049,7 +2140,7 @@ function Cruscotto({ user }) {
                       </div>
                       {s.motivi.map(m => {
                         const attivo = motivoAnn === m.chiave;
-                        const nAnn = annullatiPren ? m.righe.filter(p => !trasformataInVoucher(p)).length : m.n;
+                        const nAnn = annullatiPren ? m.righe.filter(p => !trasformataInVoucher(p) && !annullataConPenale(p)).length : m.n;
                         const totaleMotivi = s.motivi.reduce((t, x) => t + x.n, 0);
                         return (
                           <div key={m.chiave || '_'} onClick={() => setMotivoAnn(attivo ? null : m.chiave)}
@@ -2072,10 +2163,10 @@ function Cruscotto({ user }) {
                           </div>
                         );
                       })}
-                      {annullatiPren && s.trasformate.length > 0 && statoAnn === '' && (
+                      {annullatiPren && statoAnn !== '' && s.dopoIncasso.length > 0 && (
                         <div style={{ display: 'flex', gap: '14px', fontSize: '0.75rem', color: '#64748b', padding: '8px 8px 0' }}>
-                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: COLORE_COSTO, marginRight: '5px', verticalAlign: 'middle' }} />Perse</span>
-                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: '#8b5cf6', marginRight: '5px', verticalAlign: 'middle' }} />Diventate voucher</span>
+                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: COLORE_COSTO, marginRight: '5px', verticalAlign: 'middle' }} />Sfumate</span>
+                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: '#8b5cf6', marginRight: '5px', verticalAlign: 'middle' }} />Annullate dopo l'incasso</span>
                         </div>
                       )}
                     </div>
@@ -2109,7 +2200,10 @@ function Cruscotto({ user }) {
                             <td style={cella}>{p.id}</td>
                             <td style={cella}><strong>{p.nominativo}</strong></td>
                             <td style={cella}>{etichettaDi(p)}</td>
-                            <td style={cella}><span className={`badge-stato badge-mini ${classeBadgeStato(p.stato)}`}>{etichettaStatoPren(p.stato)}</span></td>
+                            <td style={cella}>
+                              <span className={`badge-stato badge-mini ${classeBadgeStatoDi(p)}`}>{etichettaStatoPrenDi(p)}</span>
+                              <div style={{ fontSize: '0.75rem', color: esitoAnnullata(p).colore, marginTop: '2px' }}>{esitoAnnullata(p).testo}</div>
+                            </td>
                             <td style={cella}>{motivoInCella(p)}</td>
                             <td style={{ ...cella, color: '#64748b' }}>{[...costiAnnullamentoDi(p)].map(c => ETICHETTA_COSTO_ANNULLAMENTO[c] || c).join(', ') || '—'}</td>
                             <td style={{ ...cella, textAlign: 'right' }}>{formattaEuro(nettoRicavo(p))}</td>
@@ -2122,6 +2216,9 @@ function Cruscotto({ user }) {
                             <td style={{ ...cella, whiteSpace: 'nowrap' }}>{estraiDateDaPeriodo(p.periodo).inizio ? formattaDataGGMMAAAA(estraiDateDaPeriodo(p.periodo).inizio) : '—'}</td>
                             <td style={cella}><strong>{p.nomeReferente || '—'}</strong></td>
                             <td style={cella}>{p.destinazione || '—'}</td>
+                            <td style={{ ...cella, whiteSpace: 'nowrap', color: '#64748b' }} title={kmDi(p) == null ? 'Il preventivo non dice i km' : 'Km di sola andata'}>
+                              {kmDi(p) == null ? '—' : `${Math.round(kmDi(p))} km`}
+                            </td>
                             <td style={cella}>{motivoInCella(p)}</td>
                             <td style={{ ...cella, textAlign: 'right' }}>{formattaEuro(parseFloat(p.totaleVendita) || 0)}</td>
                           </tr>

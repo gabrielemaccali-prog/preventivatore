@@ -3,7 +3,7 @@ import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { scaricaExcel } from '../../lib/excel'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, COSTO_ANNULLAMENTO, costiAnnullamentoDi, etichettaStatoPren, classeBadgeStato, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
+import { STATO_PREN, COSTO_ANNULLAMENTO, costiAnnullamentoDi, etichettaStatoPrenDi, classeBadgeStatoDi, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
 import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, arrotonda2, totaliDi, contropartiCampi, barSeparato, idBar, quantitaCampoDi, nettoAffittoDi, nettoRinfrescoDi } from '../../lib/fornitori'
 
 // ============================================================
@@ -184,7 +184,8 @@ function Controparti({ tipo }) {
 
   const nomeGiocoPerId = useMemo(() => Object.fromEntries(giochi.map(g => [g.id, g.nome])), [giochi]);
   const prenotazionePerId = useMemo(() => Object.fromEntries(prenotazioni.map(p => [String(p.id), p])), [prenotazioni]);
-  const statoPrenotazione = (riferimento) => prenotazionePerId[String(riferimento)]?.stato || null;
+  const prenotazioneDi = (riferimento) => prenotazionePerId[String(riferimento)] || null;
+  const statoPrenotazione = (riferimento) => prenotazioneDi(riferimento)?.stato || null;
 
   // Ore e paganti di una riga di costo. Le righe congelate li portano dal 22 ottobre 2026; un
   // periodo chiuso prima ha salvato solo gli importi, e allora si rileggono dalla prenotazione:
@@ -452,8 +453,8 @@ function Controparti({ tipo }) {
                     {/* Lo stato di adesso della prenotazione, col badge degli altri menu: anche in un
                         periodo chiuso, dove la riga è congelata ma la prenotazione può essere cambiata. */}
                     {statoPrenotazione(x.riferimento) && (
-                      <span className={`badge-stato badge-mini ${classeBadgeStato(statoPrenotazione(x.riferimento))}`} style={{ marginLeft: '6px' }}>
-                        {etichettaStatoPren(statoPrenotazione(x.riferimento))}
+                      <span className={`badge-stato badge-mini ${classeBadgeStatoDi(prenotazioneDi(x.riferimento))}`} style={{ marginLeft: '6px' }}>
+                        {etichettaStatoPrenDi(prenotazioneDi(x.riferimento))}
                       </span>
                     )}
                   </td>
@@ -504,7 +505,7 @@ function Controparti({ tipo }) {
       ...(periodo ? { Periodo: periodoTesto(periodo.dal, periodo.al), 'Pagato il': eOld(periodo) ? ETICHETTA_OLD : formattaDataGGMMAAAA(periodo.data_consuntivo) } : {}),
       Data: formattaDataGGMMAAAA(x.data),
       Partita: x.riferimento,
-      Stato: statoPrenotazione(x.riferimento) ? etichettaStatoPren(statoPrenotazione(x.riferimento)) : '',
+      Stato: statoPrenotazione(x.riferimento) ? etichettaStatoPrenDi(prenotazioneDi(x.riferimento)) : '',
       Nominativo: x.nominativo || '',
       Annullata: x.annullata ? 'sì' : '',
       'Pacchetto · Gioco': (periodo ? etichettaCongelata(x.esempio) : etichettaRiga(x.esempio)).replace(/^—$/, ''),

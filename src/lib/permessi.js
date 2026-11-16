@@ -157,7 +157,7 @@ export const SCHEDE_REGISTRY = {
       { id: 'preventivi', label: 'Preventivi' },
       {
         id: 'annullati',
-        label: 'Annullati',
+        label: 'Sfumati',
         sottoschede: [
           { id: 'pren_annullate', label: 'Prenotazioni' },
           { id: 'prev_annullati', label: 'Preventivi' },

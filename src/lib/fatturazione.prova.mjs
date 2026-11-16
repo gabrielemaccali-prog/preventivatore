@@ -2,7 +2,7 @@
 // si esegue con
 //   npm run prova:fatturazione
 // Gira in Node senza dev server né browser, perché fatturazione.js è fatto di sole funzioni pure.
-import { abbinaFatture } from './fatturazione.js';
+import { abbinaFatture, daFatturarePrenotazione } from './fatturazione.js';
 import { STATO_PREN } from './costanti.js';
 
 const esiti = [];
@@ -71,6 +71,23 @@ verifica('nessuna combinazione: una partita, da verificare', [1, false], [nessun
 // Due righe dello stesso export: la seconda non ricopre le partite già coperte dalla prima.
 const dueRighe = abbinaFatture([fattura(520), fattura(400, '102', '2026-12-10')], { prenotazioni: [p1, p2, p3] }).proposte;
 verifica('la seconda fattura va sulla partita rimasta', [['PRN-3', 400]], parti(dueRighe[1]));
+
+// ---------- annullata fuori termine: si fattura quello che si e' trattenuto ----------
+// La partita non si e' giocata e il prezzo del pacchetto non si deve piu'. Quello che resta da
+// fatturare e' l'acconto rimasto a noi, che e' gia' al netto del voucher speso e dei contanti
+// che nessuno ha mai ritirato.
+const fuoriTermine = { ...cliente, id: 'PRN-9', data: '2026-11-07', stato: STATO_PREN.ANNULLATA, prezzoVendita: 220, incassoTrattenuto: 100 };
+verifica('annullata fuori termine: si fattura il trattenuto, non il prezzo', 100, daFatturarePrenotazione(fuoriTermine));
+verifica('il trattenuto non si scala di nuovo del voucher ne dei contanti', 100, daFatturarePrenotazione(fuoriTermine, 60, 40));
+// Un'annullata dentro i termini invece non ha niente da fatturare: il prezzo non si deve piu' e
+// l'acconto se n'e' andato nel voucher, che si fattura per conto suo.
+verifica('annullata senza trattenuto: niente da fatturare', 0, daFatturarePrenotazione({ ...fuoriTermine, incassoTrattenuto: null }, 0, 0));
+verifica('confermata: dal prezzo si tolgono voucher e contanti', 120, daFatturarePrenotazione({ ...fuoriTermine, stato: STATO_PREN.CONFERMATO, incassoTrattenuto: null }, 60, 40));
+verifica('confermata: si fattura il prezzo, come sempre', 220, daFatturarePrenotazione({ ...fuoriTermine, stato: STATO_PREN.CONFERMATO, incassoTrattenuto: null }));
+
+// E l'abbinamento la trova: la fattura della penale arriva come tutte le altre.
+const penale = abbinaFatture([fattura(100, '110', '2026-11-10')], { prenotazioni: [fuoriTermine] }).proposte[0];
+verifica('la fattura della penale si abbina all\'annullata fuori termine', [['PRN-9', 100]], parti(penale));
 
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : `\n      atteso ${JSON.stringify(e.atteso)}\n      ottenuto ${JSON.stringify(e.ottenuto)}`}`));

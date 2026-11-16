@@ -50,9 +50,40 @@ export const ETICHETTA_STATO_PREN = Object.freeze({
 // gia' incassati restano del cliente e tornano quando riprenota. Non si conta fra le perse.
 export const trasformataInVoucher = (p) => p?.stato === STATO_PREN.ANNULLATA && !!p?.voucherGenerato;
 
+// L'altra strada: annullata fuori termine. I termini di annullamento sono scaduti, quindi i soldi
+// gia' incassati restano a noi. Niente voucher -- il cliente che un giorno tornera' riprenotera'
+// da capo -- e quel denaro non e' un acconto in sospeso ma un ricavo nostro, che va fatturato.
+// Quanto si e' trattenuto lo dice la colonna "incassoTrattenuto", che e' anche il segno che la
+// decisione e' stata presa: senza di lei questa e' un'annullata come tutte le altre.
+export const annullataConPenale = (p) => p?.stato === STATO_PREN.ANNULLATA && (parseFloat(p?.incassoTrattenuto) || 0) > 0;
+export const incassoTrattenutoDi = (p) => (annullataConPenale(p) ? parseFloat(p.incassoTrattenuto) : 0);
+
 // Le partite che si sono giocate davvero: le confermate e le pregresse.
 export const giocata = (p) => p?.stato === STATO_PREN.CONFERMATO || p?.stato === STATO_PREN.PREGRESSA;
 export const etichettaStatoPren = etichettaDa(ETICHETTA_STATO_PREN);
+
+// Due parole per lo stesso stato. Una partita annullata senza che un euro sia mai entrato non era
+// una prenotazione: era una richiesta, ed e' SFUMATA. Una con l'incasso prenotata lo era davvero,
+// ed e' stata ANNULLATA -- con tutto quello che si porta dietro, un voucher o una penale da
+// fatturare. Nel database lo stato resta uno solo, perche' la differenza si legge dai soldi: non
+// c'e' niente da migrare e niente che possa disallinearsi.
+export const sfumata = (p) => p?.stato === STATO_PREN.ANNULLATA && !trasformataInVoucher(p) && !annullataConPenale(p);
+export const etichettaStatoPrenDi = (p) => (sfumata(p) ? 'SFUMATA' : etichettaStatoPren(p?.stato));
+export const classeBadgeStatoDi = (p) => (sfumata(p) ? 'sfumata' : classeBadgeStato(p?.stato));
+
+// Nei filtri i due esiti si scelgono separatamente, anche se nel database lo stato e' uno.
+export const FILTRO_SFUMATA = 'SFUMATA';
+export const OPZIONI_STATO_PREN = Object.freeze([
+  { valore: STATO_PREN.FORSE, etichetta: ETICHETTA_STATO_PREN[STATO_PREN.FORSE] },
+  { valore: STATO_PREN.CONFERMATO, etichetta: ETICHETTA_STATO_PREN[STATO_PREN.CONFERMATO] },
+  { valore: STATO_PREN.ANNULLATA, etichetta: ETICHETTA_STATO_PREN[STATO_PREN.ANNULLATA] },
+  { valore: FILTRO_SFUMATA, etichetta: 'SFUMATA' },
+  { valore: STATO_PREN.PREGRESSA, etichetta: ETICHETTA_STATO_PREN[STATO_PREN.PREGRESSA] },
+]);
+export const corrispondeStatoPren = (p, filtro) => !filtro
+  || (filtro === FILTRO_SFUMATA ? sfumata(p)
+    : filtro === STATO_PREN.ANNULLATA ? p?.stato === STATO_PREN.ANNULLATA && !sfumata(p)
+      : p?.stato === filtro);
 
 // Costi di una partita annullata -- colonna prenotazioni.costiAnnullamento (text[]).
 // Un'annullata senza incasso non ha ricavo e di norma nemmeno costi. Quando qualcosa si paga lo
@@ -138,7 +169,9 @@ export const ETICHETTA_STATO_PREVENTIVO = Object.freeze({
   [STATO_PREVENTIVO.REGISTRATO]: 'Registrato',
   [STATO_PREVENTIVO.CONFERMATO]: 'Confermato',
   [STATO_PREVENTIVO.PRENOTATO]: 'Prenotato',
-  [STATO_PREVENTIVO.ANNULLATO]: 'Annullato',
+  // Il valore salvato resta "Annullato" (e' scritto su migliaia di righe), ma un preventivo non si
+  // annulla: non c'era niente da annullare, era una proposta. O si vince o sfuma.
+  [STATO_PREVENTIVO.ANNULLATO]: 'Sfumato',
   [STATO_PREVENTIVO.AZIONE_RICHIESTA]: 'Azione richiesta',
 });
 export const etichettaStatoPreventivo = etichettaDa(ETICHETTA_STATO_PREVENTIVO);
