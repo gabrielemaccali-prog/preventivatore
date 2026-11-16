@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { puoVedere } from '../../lib/permessi'
+import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import Icona from '../../components/Icona'
 import { fineEventoDi, formattaDataGGMMAAAA, locationBreveDi, incassatoDi, statoIncassoDi } from '../../lib/utils'
 import { STATO_PREN, etichettaStatoPrenDi, etichettaStatoVoucher, classeBadgeStato, classeBadgeStatoDi, annullataConPenale, incassoTrattenutoDi } from '../../lib/costanti'
@@ -190,6 +191,23 @@ function Consuntivazione({ user }) {
     const totale = valoreVoucher(x.codice);
     return { pagato, totale, stato: pagato > 0 && pagato + 0.001 >= totale ? 'saldato' : pagato > 0 ? 'acconto' : null, contanti };
   };
+
+  // Colonne ordinabili, come negli storici: un clic in testata ordina, il secondo inverte, il
+  // terzo torna all'ordine di partenza. I Pagamenti ordinano sull'incassato.
+  const COLONNE_FATTURE = [
+    { chiave: 'codice', label: 'Codice', valore: (x) => x.codice },
+    { chiave: 'data', label: 'Data', valore: (x) => x.data || '' },
+    { chiave: 'intestatario', label: 'Intestatario', valore: (x) => x.intestatario },
+    { chiave: 'descrizione', label: 'Descrizione', valore: (x) => x.descrizione },
+    { chiave: 'location', label: 'Location', valore: (x) => x.location || '' },
+    { chiave: 'pagamenti', label: 'Pagamenti', titolo: 'Incassato sul totale, come nello storico prenotazioni', valore: (x) => recapPagamento(x).pagato },
+    { chiave: 'dovuto', label: 'Da fatturare', destra: true, valore: (x) => x.dovuto },
+    { chiave: 'fatturato', label: 'Fatturato', destra: true, valore: (x) => x.fatturato },
+    { chiave: 'stato', label: 'Stato', valore: (x) => etichettaStatoFattura(x) },
+  ];
+  const { ordina: ordinaFatture, propsTestata: testataFatture, frecciaOrdinamento: frecciaFatture } =
+    useOrdinamentoTabella(Object.fromEntries(COLONNE_FATTURE.map(c => [c.chiave, c.valore])));
+
   const apriRiga = (x) => {
     if (espansa === chiave(x)) { setEspansa(null); return; }
     setEspansa(chiave(x));
@@ -364,22 +382,21 @@ function Consuntivazione({ user }) {
           <table className="storico-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
             <thead>
               <tr style={{ background: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                <th style={cella}>Codice</th>
-                <th style={cella}>Data</th>
-                <th style={cella}>Intestatario</th>
-                <th style={cella}>Descrizione</th>
-                <th style={cella}>Location</th>
-                <th style={cella} title="Incassato sul totale, come nello storico prenotazioni">Pagamenti</th>
-                <th style={{ ...cella, textAlign: 'right' }}>Da fatturare</th>
-                <th style={{ ...cella, textAlign: 'right' }}>Fatturato</th>
-                <th style={cella}>Stato</th>
+                {COLONNE_FATTURE.map(c => {
+                  const { style: stileOrdinabile, title, ...propsOrdinabile } = testataFatture(c.chiave);
+                  return (
+                    <th key={c.chiave} {...propsOrdinabile} title={c.titolo ? `${c.titolo}. ${title}` : title} style={{ ...cella, ...(c.destra ? { textAlign: 'right' } : {}), ...stileOrdinabile }}>
+                      {c.label}{frecciaFatture(c.chiave)}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
               {visibili.length === 0 && (
                 <tr><td colSpan={9} style={{ ...cella, textAlign: 'center', color: '#666', padding: '20px' }}>Nessuna voce con questi filtri.</td></tr>
               )}
-              {visibili.map(x => {
+              {ordinaFatture(visibili).map(x => {
                 const aperta = espansa === chiave(x);
                 return (
                   <Fragment key={chiave(x)}>
