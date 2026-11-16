@@ -1609,12 +1609,6 @@ function Compensi({ user }) {
 
       {currentView === "daconsuntivare" && (
         <>
-          {/* Promemoria di un lavoro aperto: i contanti ritirati dai bubbler si vedono (colonna
-              Contanti e totale in testata) ma non si regolano ancora -- non si scalano dal compenso
-              né si segnano come restituiti. Finché manca, chi consuntiva deve saperlo. */}
-          <div style={{ margin: '12px 0', padding: '10px 14px', borderRadius: '6px', border: '1px solid #dc2626', background: '#fee2e2', color: '#991b1b', fontWeight: 'bold', fontSize: '0.9rem' }}>
-            ⚠️ Manca da fare: gestione contanti
-          </div>
           <p className="descrizione-pagina">
             Tutto quello che resta da consuntivare, operatore per operatore, calcolato dalle partite confermate.
             Spunta le recensioni, aggiungi spese e correzioni, poi consuntiva: da quel momento i valori si congelano
