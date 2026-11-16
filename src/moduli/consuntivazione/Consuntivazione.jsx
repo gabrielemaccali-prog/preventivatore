@@ -57,6 +57,7 @@ function Consuntivazione({ user }) {
   const [fatture, setFatture] = useState([]);
   // I pagamenti si mostrano accanto alle fatture: incassato e fatturato si confrontano a colpo d'occhio.
   const [pagamenti, setPagamenti] = useState([]);
+  const [pacchetti, setPacchetti] = useState([]);
   // Finché sql/fatture.sql non è stato eseguito la tabella non esiste: senza avviso la pagina
   // sembrerebbe solo vuota.
   const [schemaMancante, setSchemaMancante] = useState(null);
@@ -90,14 +91,17 @@ function Consuntivazione({ user }) {
   const inputFile = useRef(null);
 
   const fetchTutto = async () => {
-    const [pr, vc, ft, pg] = await Promise.all([
+    const [pr, vc, ft, pg, pc] = await Promise.all([
       supabase.from('prenotazioni').select('*').order('data', { ascending: false }),
       supabase.from('voucher').select('*'),
       supabase.from('fatture').select('*').order('data'),
       // Paginata: i pagamenti crescono più in fretta delle prenotazioni e Supabase tronca in silenzio.
       leggiTutte(() => supabase.from('pagamenti').select('*').order('data').order('id')),
+      // Il listino dei pacchetti, per dire quanto una partita è stata venduta sotto (o sopra) prezzo.
+      supabase.from('pren_pacchetti').select('id, prezzo'),
     ]);
     setSchemaMancante(ft.error ? ft.error.message : null);
+    setPacchetti(pc.data || []);
     if (pr.data) setPrenotazioni(pr.data);
     if (vc.data) setVoucher(vc.data);
     setFatture(ft.data || []);
@@ -192,6 +196,32 @@ function Consuntivazione({ user }) {
     return { pagato, totale, stato: pagato > 0 && pagato + 0.001 >= totale ? 'saldato' : pagato > 0 ? 'acconto' : null, contanti };
   };
 
+  // Lo sconto è una percentuale scritta sulla prenotazione; i voucher non ne hanno. In euro è la
+  // differenza fra il prezzo netto pieno e quello scontato.
+  const scontoDi = (x) => (x.tipo === 'prenotazione' ? Math.min(Math.max(parseFloat(x.origine?.sconto) || 0, 0), 100) : 0);
+  const importoScontoDi = (x) => {
+    const s = scontoDi(x);
+    const netto = parseFloat(x.origine?.prezzoVenditaNetto) || 0;
+    return s > 0 && s < 100 ? netto / (1 - s / 100) - netto : 0;
+  };
+  // Quanto la partita è stata venduta sotto il listino del pacchetto (positivo) o sopra (negativo),
+  // in lordo come il listino: sconto e prezzo ritoccato a mano insieme. Si confronta il netto
+  // riportato al 22%, perché il lordo salvato è più basso quando una parte si paga in contanti, e
+  // quello non è uno sconto. null quando il pacchetto non ha un listino (prezzo a mano o a voci).
+  // È il listino di oggi: se nel frattempo è cambiato, la differenza lo dice.
+  const listinoPerPacchetto = useMemo(() => Object.fromEntries(pacchetti
+    .filter(pc => pc.prezzo != null && pc.prezzo !== '')
+    .map(pc => [String(pc.id), parseFloat(pc.prezzo) || 0])), [pacchetti]);
+  const listinoDi = (x) => (x.tipo === 'prenotazione' ? (listinoPerPacchetto[String(x.origine?.pacchettoId)] ?? null) : null);
+  const sottoListinoDi = (x) => {
+    const listino = listinoDi(x);
+    if (listino == null) return null;
+    const p = x.origine;
+    const netto = p.prezzoVenditaNetto != null ? parseFloat(p.prezzoVenditaNetto) || 0 : (parseFloat(p.prezzoVendita) || 0) / 1.22;
+    const diff = listino - netto * 1.22;
+    return Math.abs(diff) < 0.5 ? 0 : diff;
+  };
+
   // Colonne ordinabili, come negli storici: un clic in testata ordina, il secondo inverte, il
   // terzo torna all'ordine di partenza. I Pagamenti ordinano sull'incassato.
   const COLONNE_FATTURE = [
@@ -199,6 +229,7 @@ function Consuntivazione({ user }) {
     { chiave: 'data', label: 'Data', valore: (x) => x.data || '' },
     { chiave: 'intestatario', label: 'Intestatario', valore: (x) => x.intestatario },
     { chiave: 'descrizione', label: 'Descrizione', valore: (x) => x.descrizione },
+    { chiave: 'sconto', label: 'Sconto / listino', titolo: "Lo sconto applicato e la differenza col listino del pacchetto, se c'è", destra: true, valore: (x) => sottoListinoDi(x) || importoScontoDi(x) || null },
     { chiave: 'location', label: 'Location', valore: (x) => x.location || '' },
     { chiave: 'pagamenti', label: 'Pagamenti', titolo: 'Incassato sul totale, come nello storico prenotazioni', valore: (x) => recapPagamento(x).pagato },
     { chiave: 'dovuto', label: 'Da fatturare', destra: true, valore: (x) => x.dovuto },
@@ -394,7 +425,7 @@ function Consuntivazione({ user }) {
             </thead>
             <tbody>
               {visibili.length === 0 && (
-                <tr><td colSpan={9} style={{ ...cella, textAlign: 'center', color: '#666', padding: '20px' }}>Nessuna voce con questi filtri.</td></tr>
+                <tr><td colSpan={10} style={{ ...cella, textAlign: 'center', color: '#666', padding: '20px' }}>Nessuna voce con questi filtri.</td></tr>
               )}
               {ordinaFatture(visibili).map(x => {
                 const aperta = espansa === chiave(x);
@@ -421,6 +452,28 @@ function Consuntivazione({ user }) {
                         {x.descrizione}
                         {x.voucher && <span style={{ color: '#94a3b8' }}> · voucher {x.voucher.codice} −{euro(x.voucher.valore)}</span>}
                       </td>
+                      {/* Sconto e differenza col listino saltano all'occhio: spiegano perché si
+                          fattura un importo diverso da quello del pacchetto. */}
+                      {(() => {
+                        const sconto = scontoDi(x);
+                        const diff = sottoListinoDi(x);
+                        const listino = listinoDi(x);
+                        if (!sconto && !diff) return <td style={{ ...cella, textAlign: 'right', color: '#cbd5e1' }}>—</td>;
+                        const titolo = [
+                          sconto > 0 && `Sconto del ${sconto}%: ${euro(importoScontoDi(x))} netti in meno sul prezzo`,
+                          diff && `Listino del pacchetto ${euro(listino)}, venduta a ${euro(listino - diff)} (IVA inclusa): ${diff > 0 ? `${euro(diff)} in meno` : `${euro(-diff)} in più`}`,
+                        ].filter(Boolean).join('\n');
+                        return (
+                          <td style={{ ...cella, textAlign: 'right', whiteSpace: 'nowrap' }} title={titolo}>
+                            {sconto > 0 && <strong style={{ color: '#c2410c' }}>−{sconto}%</strong>}
+                            {diff ? (
+                              <div style={{ fontSize: '0.75rem', color: diff > 0 ? '#c2410c' : '#15803d' }}>
+                                {diff > 0 ? `−${euro(diff)}` : `+${euro(-diff)}`} dal listino
+                              </div>
+                            ) : null}
+                          </td>
+                        );
+                      })()}
                       <td style={{ ...cella, color: '#555' }}>{x.location || '—'}</td>
                       {(() => {
                         const pg = recapPagamento(x);
@@ -440,7 +493,7 @@ function Consuntivazione({ user }) {
                     </tr>
                     {aperta && (
                       <tr className="riga-espandibile-dettaglio">
-                        <td colSpan={9} onClick={(e) => e.stopPropagation()} style={{ padding: '10px 14px', borderBottom: '1px solid #eee' }}>
+                        <td colSpan={10} onClick={(e) => e.stopPropagation()} style={{ padding: '10px 14px', borderBottom: '1px solid #eee' }}>
                           {(() => {
                             // Il voucher usato a saldo conta come pagamento, pur non essendo una riga di pagamenti.
                             const righePag = pagamentiPer[chiave(x)] || [];
