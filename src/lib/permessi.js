@@ -146,7 +146,6 @@ export const SCHEDE_REGISTRY = {
       { id: 'calendario', label: 'Calendario' },
       { id: 'riepiloghi', label: 'Riepiloghi' },
       { id: 'storico', label: 'Storico' },
-      { id: 'pregresso', label: 'Pregresso' },
     ],
   },
   costiricavi: {

@@ -3,7 +3,7 @@ import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { scaricaExcel } from '../../lib/excel'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, COSTO_ANNULLAMENTO, costiAnnullamentoDi, etichettaStatoPrenDi, classeBadgeStatoDi, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
+import { STATO_PREN, ePregressa, COSTO_ANNULLAMENTO, costiAnnullamentoDi, etichettaStatoPrenDi, classeBadgeStatoDi, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
 import { risolutoreSedi, daConsuntivareFornitori, daConsuntivareCampi, periodoDaControparte, arrotonda2, totaliDi, contropartiCampi, barSeparato, idBar, quantitaCampoDi, nettoAffittoDi, nettoRinfrescoDi } from '../../lib/fornitori'
 
 // ============================================================
@@ -169,7 +169,9 @@ function Controparti({ tipo }) {
     setCaricamento(false);
     setSchemaMancante(vc.error?.message || pe.error?.message || null);
     setSelezioneAttiva(!sel.error);
-    if (pr.data) setPrenotazioni(pr.data);
+    // Le pregresse sono già chiuse nei periodi della vecchia gestione: anche confermate, non tornano
+    // fra quelle da consuntivare.
+    if (pr.data) setPrenotazioni(pr.data.filter(p => !ePregressa(p)));
     if (se.data) setSedi(se.data);
     if (ca.data) setCampi(ca.data);
     if (li.data) setListino(li.data);

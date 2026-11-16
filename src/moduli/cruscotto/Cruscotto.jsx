@@ -14,10 +14,23 @@ import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { preventiviPerOperatore, lordizza, righeConsuntivo, trasfertePerData, giornataDelPeriodo } from '../compensi/calcolo'
 import { risolutoreSedi, arrotonda2, suoCampoDi, idBar, barSeparato } from '../../lib/fornitori'
 import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../lib/fatturazione'
+import FiltroPeriodo from '../albatros/FiltroPeriodo'
+import Paginazione, { usePaginazione } from '../../components/Paginazione'
+import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine,
   PieChart, Pie, Cell
 } from 'recharts'
+
+// Il periodo si sceglie come nelle Prenotazioni (Tutto, Anno, Mese, Settimana); le schede ragionano
+// per anno, mese (1-12) e settimana, e da lì non cambiano: un anno mostra i suoi mesi, "Tutto" gli anni.
+// La settimana sta nel suo anno, e in più restringe le partite ai suoi sette giorni.
+const scomponiPeriodo = (p) => (p.tipo === 'anno' ? { anno: p.anno, mese: '', settimana: null }
+  : p.tipo === 'mese' ? { anno: p.mese.slice(0, 4), mese: String(Number(p.mese.slice(5, 7))), settimana: null }
+    : p.tipo === 'settimana' ? { anno: p.lunedi.slice(0, 4), mese: '', settimana: intervalloPeriodo(p) }
+      : { anno: '', mese: '', settimana: null });
+const fuoriSettimana = (settimana, data) => !!settimana && (String(data) < settimana[0] || String(data).slice(0, 10) > settimana[1]);
+const periodoAnnoCorrente = () => ({ ...periodoIniziale(), tipo: 'anno' });
 
 const MESI = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 
@@ -761,7 +774,7 @@ function Cruscotto({ user }) {
   // Una cella di importo del cruscotto: "—" quando la voce non c'e' (nessun ricavo, nessun costo).
   const cellaImportoCr = (valore, stato, colore) => (stato === 'vuoto' ? <span style={{ color: '#94a3b8' }}>—</span> : importoCr(valore, stato, colore));
 
-  const [crMese, setCrMese] = useState(""); // mese dell'evento (aaaa-mm), "" = tutti
+  const [periodoCr, setPeriodoCr] = useState(() => ({ ...periodoIniziale(), tipo: 'tutto' })); // dell'evento
   const [crStato, setCrStato] = useState("");
   const [crNome, setCrNome] = useState("");
   const [crConsuntivo, setCrConsuntivo] = useState("");
@@ -778,16 +791,7 @@ function Cruscotto({ user }) {
     return [...per.entries()].map(([id, nome]) => ({ id, nome })).sort((a, b) => a.nome.localeCompare(b.nome, 'it'));
   }, [tutteLePrenotazioni]);
 
-  const spostaMeseCr = (delta) => {
-    const [a, m] = crMese ? crMese.split('-').map(Number) : [new Date().getFullYear(), new Date().getMonth() + 1];
-    const d = new Date(a, m - 1 + delta, 1);
-    setCrMese(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  };
-  const etichettaMese = (mese) => {
-    const [a, m] = mese.split('-').map(Number);
-    const testo = new Date(a, m - 1, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
-    return testo.charAt(0).toUpperCase() + testo.slice(1);
-  };
+  const intervalloCr = periodoCr.tipo === 'tutto' ? null : intervalloPeriodo(periodoCr);
 
   // Il filtro sul consuntivo guarda la partita intera: "consuntivata" vuol dire che il margine lo e'.
   const righeCruscotto = tutteLePrenotazioni.filter(p => {
@@ -797,7 +801,7 @@ function Cruscotto({ user }) {
     // e' solo rumore: resta nel modulo prenotazioni, con il suo motivo. Quella fuori termine ha
     // mosso eccome: l'acconto trattenuto e' un ricavo, e sta qui anche senza costi.
     if (p.stato === STATO_PREN.ANNULLATA && a.statoCosto === 'vuoto' && a.statoRicavo === 'vuoto') return false;
-    if (crMese && !String(p.data || '').startsWith(crMese)) return false;
+    if (fuoriSettimana(intervalloCr, p.data || '')) return false;
     if (crStato && !corrispondeStatoPren(p, crStato)) return false;
     if (crNome && !`${p.id} ${p.nominativo || ''}`.toLowerCase().includes(crNome.toLowerCase())) return false;
     if (crConsuntivo && a.statoMargine !== crConsuntivo) return false;
@@ -818,6 +822,8 @@ function Cruscotto({ user }) {
   ];
   const ordinamentoCruscotto = useOrdinamentoTabella(Object.fromEntries(COLONNE_CRUSCOTTO.map(c => [c.chiave, c.valore])));
 
+  // Il dettaglio si legge a pagine da 50; i totali in fondo restano su tutte le partite filtrate.
+  const pagineCruscotto = usePaginazione(righeCruscotto.length, [periodoCr, crStato, crNome, crConsuntivo, crOperatore]);
   const totaliCruscotto = righeCruscotto.filter(p => !fuoriDaiTotali(p)).reduce((t, p) => {
     const a = analisiPartite[p.id];
     return { n: t.n + 1, ricavo: t.ricavo + a.ricavoEff, costo: t.costo + a.costoEff, margine: t.margine + a.margineEff };
@@ -927,17 +933,9 @@ function Cruscotto({ user }) {
 
   // ====================== ANDAMENTO (grafici) ======================  // ====================== ANDAMENTO (grafici) ======================
   const annoCorrente = String(new Date().getFullYear());
-  const anniDisponibili = useMemo(() => {
-    const anni = new Set(prenotazioni.filter(p => p.data).map(p => p.data.slice(0, 4)));
-    return [...anni].sort().reverse();
-  }, [prenotazioni]);
-
-  // null = l'utente non ha ancora scelto esplicitamente un anno -> si applica il default calcolato
-  const [annoSelManuale, setAnnoSelManuale] = useState(null);
-  const annoDefault = anniDisponibili.includes(annoCorrente) ? annoCorrente : (anniDisponibili[0] || "");
-  const annoSel = annoSelManuale ?? annoDefault; // "" = Tutti gli anni
-  const setAnnoSel = setAnnoSelManuale;
-  const [meseSel, setMeseSel] = useState(""); // "" = Tutti i mesi (attivo solo se annoSel è specifico)
+  // Andamento e Per gioco hanno lo stesso periodo; si parte dall'anno in corso.
+  const [periodoAnd, setPeriodoAnd] = useState(periodoAnnoCorrente);
+  const { anno: annoSel, mese: meseSel, settimana: settimanaAnd } = scomponiPeriodo(periodoAnd);
   // Una FORSE non e' ancora una partita: i suoi numeri sono un'ipotesi. Tenerla fuori serve a
   // guardare l'andamento di quello che e' stato venduto davvero; tenerla dentro serve a vedere
   // dove si sta andando. Le due domande sono diverse, quindi si sceglie.
@@ -966,21 +964,13 @@ function Cruscotto({ user }) {
   const dataPrevDi = useCallback((p) => (riferimentoPrev === 'evento'
     ? estraiDateDaPeriodo(p.periodo).inizio
     : String(p.dataEmissione || '').slice(0, 10)), [riferimentoPrev]);
-  const [settimanaPrev, setSettimanaPrev] = useState("");
   // Le offerte "con opzioni" propongono al cliente piu' soluzioni fra cui scegliere: una sola
   // diventera' una partita, quindi contarle tutte gonfia il valore offerto e abbassa la conversione.
   const [senzaOpzioni, setSenzaOpzioni] = useState(false);
 
-  const [annoPrev, setAnnoPrev] = useState(null); // null = non scelto, vale il default calcolato
-  const anniPreventivi = useMemo(() => {
-    const anni = new Set(preventivi.map(p => dataPrevDi(p)).filter(Boolean).map(d => d.slice(0, 4)));
-    return [...anni].sort().reverse();
-  }, [preventivi, dataPrevDi]);
-  const annoPrevSel = annoPrev ?? (anniPreventivi.includes(annoCorrente) ? annoCorrente : (anniPreventivi[0] || ""));
-  // Il mese vale solo dentro un anno scelto: "marzo di tutti gli anni" e' una domanda diversa, e
-  // la tabella per periodo direbbe una riga sola senza dire di quale anno.
-  const [mesePrev, setMesePrev] = useState("");
-  const mesePrevSel = annoPrevSel ? mesePrev : "";
+  // Il periodo, sulla data scelta sopra; si parte dall'anno in corso.
+  const [periodoPrevC, setPeriodoPrevC] = useState(periodoAnnoCorrente);
+  const { anno: annoPrevSel, mese: mesePrevSel, settimana: settimanaPrevSel } = scomponiPeriodo(periodoPrevC);
 
   // Da quale sede parte un gioco a listino, e come si chiama: servono a dire quali giochi e quali
   // fornitori compaiono nelle offerte, che il preventivo scrive per id di listino e non per nome.
@@ -993,9 +983,7 @@ function Cruscotto({ user }) {
   }, [listino, sedi, giocoPerId]);
 
   const statPreventivi = useMemo(() => {
-    const settimana = settimanaPrev
-      ? { da: settimanaPrev, a: toISO(addGiorni(dataLocale(settimanaPrev), 6)) }
-      : null;
+    const settimana = settimanaPrevSel ? { da: settimanaPrevSel[0], a: settimanaPrevSel[1] } : null;
     const nelPeriodo = preventivi.filter(p => {
       if (senzaOpzioni && p.mostraComeOpzioni) return false;
       if (esitoDi(p) === null) return false;
@@ -1081,13 +1069,7 @@ function Cruscotto({ user }) {
       scadutiSenzaRisposta,
       annullati: annullati.length,
     };
-  }, [preventivi, annoPrevSel, mesePrevSel, settimanaPrev, senzaOpzioni, dataPrevDi, rigaListino, nomeSedeDiId]);
-
-  // Dalla settimana mostrata, o da quella di oggi se il filtro e' spento.
-  const spostaSettimanaPrev = (delta) => {
-    const partenza = settimanaPrev ? dataLocale(settimanaPrev) : new Date();
-    setSettimanaPrev(toISO(addGiorni(inizioSettimana(partenza), delta * 7)));
-  };
+  }, [preventivi, annoPrevSel, mesePrevSel, periodoPrevC, senzaOpzioni, dataPrevDi, rigaListino, nomeSedeDiId]);
 
   const percentuale = (v) => (v == null ? '—' : `${v.toFixed(0)}%`);
 
@@ -1112,9 +1094,8 @@ function Cruscotto({ user }) {
   const [vistaAnnullati, setVistaAnnullati] = useState(() => ['pren_annullate', 'prev_annullati'].find(vediAnnullati) || 'pren_annullate');
   const annullatiPren = vistaAnnullati === 'pren_annullate';
   // Gli annullamenti sono pochi: si parte da tutti gli anni, che e' dove i motivi si ripetono.
-  const [annoAnn, setAnnoAnn] = useState("");
-  const [meseAnn, setMeseAnn] = useState("");
-  const meseAnnSel = annoAnn ? meseAnn : "";
+  const [periodoAnn, setPeriodoAnn] = useState(() => ({ ...periodoIniziale(), tipo: 'tutto' }));
+  const { anno: annoAnn, mese: meseAnnSel, settimana: settimanaAnn } = scomponiPeriodo(periodoAnn);
   // '' = le sfumate (la vista di casa), 'annullate' = quelle annullate dopo l'incasso, 'tutte'.
   const [statoAnn, setStatoAnn] = useState(""); // solo per le prenotazioni
   const [motivoAnn, setMotivoAnn] = useState(null); // categoria scelta ('' = non classificati), null = tutte
@@ -1122,17 +1103,14 @@ function Cruscotto({ user }) {
   const [soloVicini, setSoloVicini] = useState(false);
 
   const dataAnnullatoDi = useCallback((p) => String((annullatiPren ? p.data : p.dataEmissione) || '').slice(0, 10), [annullatiPren]);
-  const anniAnnullati = useMemo(() => {
-    const fonte = annullatiPren ? tutteLePrenotazioni : preventivi;
-    return [...new Set(fonte.map(dataAnnullatoDi).filter(Boolean).map(d => d.slice(0, 4)))].sort().reverse();
-  }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi]);
-
+  // L'elenco degli sfumati si legge a pagine da 50; cambiando i filtri si riparte dalla prima.
   const statAnnullati = useMemo(() => {
     const nelPeriodo = (annullatiPren ? tutteLePrenotazioni : preventivi).filter(p => {
       const data = dataAnnullatoDi(p);
       if (!data) return false;
       if (annoAnn && data.slice(0, 4) !== annoAnn) return false;
       if (meseAnnSel && parseInt(data.slice(5, 7), 10) !== parseInt(meseAnnSel, 10)) return false;
+      if (fuoriSettimana(settimanaAnn, data)) return false;
       // Senza distanza non si sa da che parte della soglia stia, quindi resta fuori dai vicini.
       if (!annullatiPren && soloVicini) {
         const km = kmDi(p);
@@ -1190,7 +1168,8 @@ function Cruscotto({ user }) {
       // li annulla gliela da'. Si contano per dire quanti potrebbero ancora arrivare in questa lista.
       azioneRichiesta: nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.AZIONE_RICHIESTA).length,
     };
-  }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi, annoAnn, meseAnnSel, statoAnn, motivoAnn, soloVicini, valoriVoucher]);
+  }, [annullatiPren, tutteLePrenotazioni, preventivi, dataAnnullatoDi, annoAnn, meseAnnSel, periodoAnn, statoAnn, motivoAnn, soloVicini, valoriVoucher]);
+  const pagineAnnullati = usePaginazione(statAnnullati.righe.length, [annullatiPren, periodoAnn, statoAnn, motivoAnn, soloVicini]);
 
   // Che fine ha fatto una partita annullata, in due parole. Lo stato da solo direbbe "ANNULLATA"
   // su tutte e tre le storie, che e' il motivo per cui questa scheda le teneva mescolate.
@@ -1262,6 +1241,7 @@ function Cruscotto({ user }) {
       if (!p.data) return;
       if (annoSel && p.data.slice(0, 4) !== annoSel) return;
       if (annoSel && meseSel && parseInt(p.data.slice(5, 7), 10) !== parseInt(meseSel, 10)) return;
+      if (fuoriSettimana(settimanaAnd, p.data)) return;
       // "Confermate" vuol dire giocate davvero: anche le pregresse della vecchia gestione.
       if (soloConfermate && !giocata(p)) return;
       const voci = Array.isArray(p.voci) ? p.voci.filter(Boolean) : [];
@@ -1298,7 +1278,7 @@ function Cruscotto({ user }) {
       }
     });
     return righe;
-  }, [prenotazioni, annoSel, meseSel, soloConfermate, sedeDiRipiego, nostra, nomeSedeDiId, compensoPrevisto, compensoConsuntivato]);
+  }, [prenotazioni, annoSel, meseSel, periodoAnd, soloConfermate, sedeDiRipiego, nostra, nomeSedeDiId, compensoPrevisto, compensoConsuntivato]);
 
   // Anche i grafici guardano le righe, non le vendite intere. Un grafico intitolato "ricavi per
   // centro di ricavo" che non sa mostrare i 600 euro di Archery Tag, perche' sono stati venduti
@@ -1515,18 +1495,13 @@ function Cruscotto({ user }) {
           </p>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
-            <div className="filtro-group" style={{ flex: '1 1 250px' }}>
-              <label>Mese evento:</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese precedente" onClick={() => spostaMeseCr(-1)}>‹</button>
-                <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: crMese ? '#334155' : '#94a3b8' }}>
-                  {crMese ? etichettaMese(crMese) : 'tutti'}
-                </span>
-                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese successivo" onClick={() => spostaMeseCr(1)}>›</button>
-                {crMese
-                  ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per mese" onClick={() => setCrMese("")}>✕</button>
-                  : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese corrente" onClick={() => spostaMeseCr(0)}>Oggi</button>}
-              </div>
+            <div className="filtro-group" style={{ flex: '2 1 320px' }}>
+              <label>Periodo dell'evento:</label>
+              <div><FiltroPeriodo periodo={periodoCr} onChange={setPeriodoCr} conTutto /></div>
+            </div>
+            <div className="filtro-group" style={{ flex: '1 1 200px' }}>
+              <label>Cerca:</label>
+              <input type="text" placeholder="Nominativo o codice" value={crNome} onChange={(e) => setCrNome(e.target.value)} />
             </div>
             <div className="filtro-group" style={{ flex: '1 1 150px' }}>
               <label>Stato:</label>
@@ -1551,10 +1526,6 @@ function Cruscotto({ user }) {
                 {operatoriDisponibili.map(o => <option key={o.id} value={o.id}>{o.nome}</option>)}
               </select>
             </div>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Nominativo o codice:</label>
-              <input type="text" value={crNome} onChange={(e) => setCrNome(e.target.value)} />
-            </div>
           </div>
 
           <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
@@ -1574,7 +1545,7 @@ function Cruscotto({ user }) {
               <tbody>
                 {righeCruscotto.length === 0
                   ? <tr><td colSpan={COLONNE_CRUSCOTTO.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Nessuna partita.</td></tr>
-                  : ordinamentoCruscotto.ordina(righeCruscotto).map(p => {
+                  : pagineCruscotto.fetta(ordinamentoCruscotto.ordina(righeCruscotto)).map(p => {
                     const a = analisiPartite[p.id];
                     const espansa = crEspansa === p.id;
                     const esclusa = fuoriDaiTotali(p);
@@ -1617,6 +1588,7 @@ function Cruscotto({ user }) {
                 </tr>
               </tfoot>
             </table>
+            <Paginazione {...pagineCruscotto} />
           </div>
         </div>
       )}
@@ -1627,19 +1599,9 @@ function Cruscotto({ user }) {
           <h2 style={{ margin: '0 0 15px 0' }}>Andamento <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#777' }}>(valori senza IVA)</span></h2>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
-            <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-              <label>Anno:</label>
-              <select value={annoSel} onChange={(e) => { setAnnoSel(e.target.value); setMeseSel(""); }}>
-                <option value="">Tutti gli anni</option>
-                {anniDisponibili.map(a => <option key={a} value={a}>{a}</option>)}
-              </select>
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-              <label>Mese:</label>
-              <select value={meseSel} onChange={(e) => setMeseSel(e.target.value)} disabled={!annoSel}>
-                <option value="">Tutti i mesi</option>
-                {MESI.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
-              </select>
+            <div className="filtro-group" style={{ flex: '2 1 320px' }}>
+              <label>Periodo:</label>
+              <div><FiltroPeriodo periodo={periodoAnd} onChange={setPeriodoAnd} conTutto /></div>
             </div>
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
               <label>Centro di costo:</label>
@@ -1727,19 +1689,9 @@ function Cruscotto({ user }) {
           </p>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
-            <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-              <label>Anno:</label>
-              <select value={annoSel} onChange={(e) => { setAnnoSel(e.target.value); setMeseSel(""); }}>
-                <option value="">Tutti gli anni</option>
-                {anniDisponibili.map(a => <option key={a} value={a}>{a}</option>)}
-              </select>
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-              <label>Mese:</label>
-              <select value={meseSel} onChange={(e) => setMeseSel(e.target.value)} disabled={!annoSel}>
-                <option value="">Tutti i mesi</option>
-                {MESI.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
-              </select>
+            <div className="filtro-group" style={{ flex: '2 1 320px' }}>
+              <label>Periodo:</label>
+              <div><FiltroPeriodo periodo={periodoAnd} onChange={setPeriodoAnd} conTutto /></div>
             </div>
             <div className="filtro-group" style={{ flex: '1 1 200px' }}>
               <label>Raggruppa per:</label>
@@ -1871,39 +1823,16 @@ function Cruscotto({ user }) {
             </p>
 
             <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
+              <div className="filtro-group" style={{ flex: '2 1 320px' }}>
+                <label>Periodo:</label>
+                <div><FiltroPeriodo periodo={periodoPrevC} onChange={setPeriodoPrevC} conTutto /></div>
+              </div>
               <div className="filtro-group" style={{ flex: '1 1 150px' }}>
                 <label>Filtra per data di:</label>
                 <select value={riferimentoPrev} onChange={(e) => setRiferimentoPrev(e.target.value)}>
                   <option value="emissione">Emissione</option>
                   <option value="evento">Evento</option>
                 </select>
-              </div>
-              <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-                <label>Anno:</label>
-                <select value={annoPrevSel} onChange={(e) => { setAnnoPrev(e.target.value); setMesePrev(""); }}>
-                  <option value="">Tutti gli anni</option>
-                  {anniPreventivi.map(a => <option key={a} value={a}>{a}</option>)}
-                </select>
-              </div>
-              <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-                <label>Mese:</label>
-                <select value={mesePrevSel} onChange={(e) => setMesePrev(e.target.value)} disabled={!annoPrevSel}>
-                  <option value="">Tutti i mesi</option>
-                  {MESI.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
-                </select>
-              </div>
-              <div className="filtro-group" style={{ flex: '1 1 250px' }}>
-                <label>Settimana:</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana precedente" onClick={() => spostaSettimanaPrev(-1)}>‹</button>
-                  <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: settimanaPrev ? '#334155' : '#94a3b8' }}>
-                    {settimanaPrev ? `${formattaDataGGMMAAAA(settimanaPrev)} – ${formattaDataGGMMAAAA(toISO(addGiorni(dataLocale(settimanaPrev), 6)))}` : 'tutte'}
-                  </span>
-                  <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana successiva" onClick={() => spostaSettimanaPrev(1)}>›</button>
-                  {settimanaPrev
-                    ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per settimana" onClick={() => setSettimanaPrev("")}>✕</button>
-                    : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana corrente" onClick={() => spostaSettimanaPrev(0)}>Oggi</button>}
-                </div>
               </div>
               <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: 0, paddingBottom: '9px' }} title="Le offerte con più soluzioni alternative: una sola può diventare una partita">
@@ -2073,19 +2002,9 @@ function Cruscotto({ user }) {
               )}
 
               <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
-                <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-                  <label>Anno:</label>
-                  <select value={annoAnn} onChange={(e) => { setAnnoAnn(e.target.value); setMeseAnn(""); setMotivoAnn(null); }}>
-                    <option value="">Tutti gli anni</option>
-                    {anniAnnullati.map(a => <option key={a} value={a}>{a}</option>)}
-                  </select>
-                </div>
-                <div className="filtro-group" style={{ flex: '1 1 140px' }}>
-                  <label>Mese:</label>
-                  <select value={meseAnnSel} onChange={(e) => { setMeseAnn(e.target.value); setMotivoAnn(null); }} disabled={!annoAnn}>
-                    <option value="">Tutti i mesi</option>
-                    {MESI.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
-                  </select>
+                <div className="filtro-group" style={{ flex: '2 1 320px' }}>
+                  <label>Periodo:</label>
+                  <div><FiltroPeriodo periodo={periodoAnn} onChange={(p) => { setPeriodoAnn(p); setMotivoAnn(null); }} conTutto /></div>
                 </div>
                 {!annullatiPren && (
                   <div className="filtro-group" style={{ flex: '0 1 auto' }}>
@@ -2194,7 +2113,7 @@ function Cruscotto({ user }) {
                     {s.righe.length === 0
                       ? <tr><td colSpan={intestazioni.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>Niente di annullato nel periodo.</td></tr>
                       : annullatiPren
-                        ? s.righe.map(p => (
+                        ? pagineAnnullati.fetta(s.righe).map(p => (
                           <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
                             <td style={{ ...cella, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(p.data)}</td>
                             <td style={cella}>{p.id}</td>
@@ -2209,7 +2128,7 @@ function Cruscotto({ user }) {
                             <td style={{ ...cella, textAlign: 'right' }}>{formattaEuro(nettoRicavo(p))}</td>
                           </tr>
                         ))
-                        : s.righe.map(p => (
+                        : pagineAnnullati.fetta(s.righe).map(p => (
                           <tr key={p.codice} style={{ borderBottom: '1px solid #eee' }}>
                             <td style={{ ...cella, whiteSpace: 'nowrap' }}>{formattaDataGGMMAAAA(String(p.dataEmissione || '').slice(0, 10))}</td>
                             <td style={cella}>{p.codice}</td>
@@ -2225,6 +2144,7 @@ function Cruscotto({ user }) {
                         ))}
                   </tbody>
                 </table>
+                <Paginazione {...pagineAnnullati} />
               </div>
             </>)}
           </div>

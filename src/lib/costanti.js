@@ -35,9 +35,9 @@ export const STATO_PREN = Object.freeze({
   FORSE: 'FORSE',
   CONFERMATO: 'CONFERMATO',
   ANNULLATA: 'ANNULLATA',
-  // Una partita giocata prima che ci fosse l'app (dal vecchio foglio): è già fatturata, incassata e
-  // pagata a campi e bubbler. Conta nei ricavi e nei costi, ma non entra nel lavoro di tutti i
-  // giorni (Gestione, Calendario, Compensi, Consuntivazione): sta nella scheda Pregresso.
+  // Lo stato delle pregresse prima di sql/pregresse_con_stato.sql: ora una pregressa è CONFERMATO o
+  // ANNULLATA come le altre, con il segno prenotazioni.pregressa (vedi ePregressa). Resta per leggere
+  // le righe non ancora spostate e per il filtro "Pregresso".
   PREGRESSA: 'PREGRESSA',
 });
 export const ETICHETTA_STATO_PREN = Object.freeze({
@@ -58,7 +58,13 @@ export const trasformataInVoucher = (p) => p?.stato === STATO_PREN.ANNULLATA && 
 export const annullataConPenale = (p) => p?.stato === STATO_PREN.ANNULLATA && (parseFloat(p?.incassoTrattenuto) || 0) > 0;
 export const incassoTrattenutoDi = (p) => (annullataConPenale(p) ? parseFloat(p.incassoTrattenuto) : 0);
 
-// Le partite che si sono giocate davvero: le confermate e le pregresse.
+// Una partita della vecchia gestione, giocata prima che ci fosse l'app e ricostruita dal vecchio
+// foglio: è già fatturata, incassata e pagata a campi e bubbler. Conta nei ricavi e nei costi, ma non
+// entra nel lavoro di tutti i giorni (Calendario, Gestione, Compensi, Consuntivazione, Fatture); nello
+// Storico c'è, con un'etichetta. Ha uno stato vero, confermata o annullata; il segno è a parte.
+export const ePregressa = (p) => p?.pregressa === true || p?.stato === STATO_PREN.PREGRESSA;
+
+// Le partite che si sono giocate davvero: le confermate, pregresse comprese.
 export const giocata = (p) => p?.stato === STATO_PREN.CONFERMATO || p?.stato === STATO_PREN.PREGRESSA;
 export const etichettaStatoPren = etichettaDa(ETICHETTA_STATO_PREN);
 
@@ -83,7 +89,8 @@ export const OPZIONI_STATO_PREN = Object.freeze([
 export const corrispondeStatoPren = (p, filtro) => !filtro
   || (filtro === FILTRO_SFUMATA ? sfumata(p)
     : filtro === STATO_PREN.ANNULLATA ? p?.stato === STATO_PREN.ANNULLATA && !sfumata(p)
-      : p?.stato === filtro);
+      : filtro === STATO_PREN.PREGRESSA ? ePregressa(p)
+        : p?.stato === filtro);
 
 // Costi di una partita annullata -- colonna prenotazioni.costiAnnullamento (text[]).
 // Un'annullata senza incasso non ha ricavo e di norma nemmeno costi. Quando qualcosa si paga lo

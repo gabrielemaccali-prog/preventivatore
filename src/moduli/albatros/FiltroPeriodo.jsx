@@ -4,6 +4,8 @@ import { giornataDiLavoro, lunediDi, aggiungiGiorni } from './calcolo'
 // un mese o un anno. Si scorrono con ‹ › come nei moduli di BFM (Cruscotto, Consuntivazione), e
 // "Oggi" riporta al periodo corrente. Lo stato lo tiene chi lo usa (vedi periodoIniziale e
 // intervalloPeriodo in calcolo.js).
+// `conTutto`: in più la scelta "Tutto", cioè nessun periodo (tipo 'tutto'): serve dove si cerca in
+// tutto l'archivio, come lo Storico delle prenotazioni. In Albatros non c'è.
 const breve = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
 const etichettaMese = (mese) => {
   const [a, m] = mese.split('-').map(Number);
@@ -16,11 +18,12 @@ const spostaMese = (mese, delta) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
 
-function FiltroPeriodo({ periodo, onChange }) {
+function FiltroPeriodo({ periodo, onChange, conTutto = false }) {
   const { tipo, mese, lunedi } = periodo;
   const oggi = giornataDiLavoro();
   const settimana = tipo === 'settimana';
   const annuale = tipo === 'anno';
+  const tutto = tipo === 'tutto';
   // Un periodo salvato prima che ci fosse l'anno non ce l'ha: si parte da quello del mese.
   const anno = periodo.anno || mese.slice(0, 4);
   const corrente = settimana ? lunedi === lunediDi(oggi) : annuale ? anno === oggi.slice(0, 4) : mese === oggi.slice(0, 7);
@@ -33,10 +36,12 @@ function FiltroPeriodo({ periodo, onChange }) {
   return (
     <div className="albatros-periodo">
       <div className="albatros-filtri-listino" style={{ marginBottom: 0 }}>
+        {conTutto && <button type="button" className={`albatros-chip ${tutto ? 'attivo' : ''}`} onClick={() => onChange({ ...periodo, tipo: 'tutto' })}>Tutto</button>}
         <button type="button" className={`albatros-chip ${annuale ? 'attivo' : ''}`} onClick={() => onChange({ ...periodo, tipo: 'anno', anno })}>Anno</button>
         <button type="button" className={`albatros-chip ${tipo === 'mese' ? 'attivo' : ''}`} onClick={() => onChange({ ...periodo, tipo: 'mese' })}>Mese</button>
         <button type="button" className={`albatros-chip ${settimana ? 'attivo' : ''}`} onClick={() => onChange({ ...periodo, tipo: 'settimana' })}>Settimana</button>
       </div>
+      {!tutto && (
       <div className="albatros-scorri">
         <button type="button" className="btn-icon-action" aria-label={settimana ? 'Settimana prima' : annuale ? 'Anno prima' : 'Mese prima'} onClick={() => sposta(-1)}>‹</button>
         <span className="albatros-scorri-etichetta">
@@ -45,6 +50,7 @@ function FiltroPeriodo({ periodo, onChange }) {
         <button type="button" className="btn-icon-action" aria-label={settimana ? 'Settimana dopo' : annuale ? 'Anno dopo' : 'Mese dopo'} onClick={() => sposta(1)}>›</button>
         {!corrente && <button type="button" className="albatros-link" onClick={tornaAOggi}>Oggi</button>}
       </div>
+      )}
     </div>
   );
 }

@@ -7,6 +7,9 @@ import { puoVedere } from '../../lib/permessi';
 import Icona from '../../components/Icona';
 import DialogoAnnullamento from '../../components/DialogoAnnullamento';
 import SuggerimentoEmail from '../../components/SuggerimentoEmail';
+import FiltroPeriodo from '../albatros/FiltroPeriodo';
+import Paginazione, { usePaginazione } from '../../components/Paginazione';
+import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
 import { formaNome, formaEmail, formaTelefono } from '../../lib/maiuscole';
 import {
@@ -218,12 +221,11 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
   const [costiConcordati, setCostiConcordati] = useState({}); // costo pattuito (chiave = nome gonfiabile)
 
   // --- STATI PER I FILTRI DELLO STORICO ---
-  const [filtroId, setFiltroId] = useState("");
-  const [filtroDestinazione, setFiltroDestinazione] = useState("");
+  // Un campo solo per codice, referente, email e destinazione: chi cerca ha in mano una di queste.
+  const [filtroCerca, setFiltroCerca] = useState("");
   const [filtroStato, setFiltroStato] = useState("");
-  const [filtroReferente, setFiltroReferente] = useState("");
-  const [filtroEmail, setFiltroEmail] = useState("");
-  const [filtroMese, setFiltroMese] = useState(""); // mese dell'evento (aaaa-mm), "" = nessun filtro
+  // Il periodo dell'evento, come nelle Prenotazioni: anno, mese o settimana, oppure tutto.
+  const [periodoPrev, setPeriodoPrev] = useState(() => ({ ...periodoIniziale(), tipo: 'tutto' }));
   const [filtroSoloBFM, setFiltroSoloBFM] = useState(false); // solo preventivi con almeno un gioco da una sede BFM
   const [rigaEspansaId, setRigaEspansaId] = useState(null); // id preventivo con riga dettaglio espansa (Storico)
   const [daAnnullare, setDaAnnullare] = useState(null); // il preventivo di cui si sta chiedendo il perche' dell'annullamento
@@ -1156,30 +1158,21 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
   // I filtri sono gli stessi nelle due schede, e restano impostati passando dall'una all'altra.
   // Lo stato vale solo nello Storico: in Gestione lo stato sono le sotto-schede.
   // Il mese è quello in cui l'evento comincia, la stessa data della colonna "Evento".
+  const intervalloPrev = periodoPrev.tipo === 'tutto' ? null : intervalloPeriodo(periodoPrev);
   const passaFiltri = (p, { conStato }) => {
     const idDaConfrontare = (typeof p.id === 'object' ? p.id.codice : p.id) || "";
-    const matchId = idDaConfrontare.toLowerCase().includes(filtroId.toLowerCase());
-    const matchDest = (p.destinazione?.toLowerCase() || "").includes(filtroDestinazione.toLowerCase());
+    const cercato = filtroCerca.trim().toLowerCase();
+    const matchCerca = !cercato || [idDaConfrontare, p.nomeReferente, p.emailReferente, p.destinazione]
+      .some(x => (x || '').toLowerCase().includes(cercato));
     const matchStato = !conStato || filtroStato === "" || statoPreventivo(p) === filtroStato;
-    const matchReferente = (p.nomeReferente?.toLowerCase() || "").includes(filtroReferente.toLowerCase());
-    const matchEmail = (p.emailReferente?.toLowerCase() || "").includes(filtroEmail.toLowerCase());
-    const matchMese = !filtroMese || estraiDateDaPeriodo(p.periodo).inizio.startsWith(filtroMese);
+    const inizio = estraiDateDaPeriodo(p.periodo).inizio;
+    const matchPeriodo = !intervalloPrev || (!!inizio && inizio >= intervalloPrev[0] && inizio <= intervalloPrev[1]);
     const matchBFM = !filtroSoloBFM || haGiochiBFM(p);
-    return matchId && matchDest && matchStato && matchReferente && matchEmail && matchMese && matchBFM;
+    return matchCerca && matchStato && matchPeriodo && matchBFM;
   };
   const preventiviFiltrati = preventiviSalvati.filter(p => passaFiltri(p, { conStato: true }));
-
-  // Scorre il filtro mese di delta mesi; senza filtro parte dal mese corrente (delta 0 = oggi)
-  const spostaMese = (delta) => {
-    const [a, m] = filtroMese ? filtroMese.split('-').map(Number) : [new Date().getFullYear(), new Date().getMonth() + 1];
-    const d = new Date(a, m - 1 + delta, 1);
-    setFiltroMese(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  };
-  const etichettaMese = (mese) => {
-    const [a, m] = mese.split('-').map(Number);
-    const testo = new Date(a, m - 1, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
-    return testo.charAt(0).toUpperCase() + testo.slice(1);
-  };
+  // Lo Storico si legge a pagine da 50; cambiando i filtri si riparte dalla prima.
+  const pagineStorico = usePaginazione(preventiviFiltrati.length, [filtroCerca, filtroStato, periodoPrev, filtroSoloBFM]);
 
   // --- ESPORTAZIONE EXCEL ---
   const esportaExcel = () => {
@@ -2123,39 +2116,13 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
   // Filtri condivisi da Gestione e Storico (stesso schema del filtro settimana delle prenotazioni)
   const filtriPreventivi = ({ conStato }) => (
     <div className="filtri-storico" style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
-      <div className="filtro-group" style={{ flex: '1 1 250px' }}>
-        <label>Mese evento:</label>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese precedente" onClick={() => spostaMese(-1)}>‹</button>
-          <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: filtroMese ? '#334155' : '#94a3b8' }}>
-            {filtroMese ? etichettaMese(filtroMese) : 'tutti'}
-          </span>
-          <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese successivo" onClick={() => spostaMese(1)}>›</button>
-          {filtroMese
-            ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per mese" onClick={() => setFiltroMese("")}>✕</button>
-            : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese corrente" onClick={() => spostaMese(0)}>Oggi</button>}
-        </div>
+      <div className="filtro-group" style={{ flex: '2 1 320px' }}>
+        <label>Periodo dell'evento:</label>
+        <div><FiltroPeriodo periodo={periodoPrev} onChange={setPeriodoPrev} conTutto /></div>
       </div>
-      <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-        <label>Cerca per ID:</label>
-        <input type="text" placeholder="Es. PRV-2026-1001" value={filtroId} onChange={(e) => setFiltroId(e.target.value)} />
-      </div>
-      <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-        <label>Filtra per Referente:</label>
-        <input type="text" placeholder="Nome referente" value={filtroReferente} onChange={(e) => setFiltroReferente(e.target.value)} />
-      </div>
-      <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-        <label>Filtra per Email:</label>
-        <input type="text" placeholder="Indirizzo e-mail" value={filtroEmail} onChange={(e) => setFiltroEmail(e.target.value)} />
-      </div>
-      <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-        <label>Filtra per Destinazione:</label>
-        <input type="text" placeholder="Es. Milano" value={filtroDestinazione} onChange={(e) => setFiltroDestinazione(e.target.value)} />
-      </div>
-      <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }} title="Solo i preventivi con almeno un gioco che parte da una sede BFM">
-          <input type="checkbox" checked={filtroSoloBFM} onChange={(e) => setFiltroSoloBFM(e.target.checked)} /> Solo giochi BFM
-        </label>
+      <div className="filtro-group" style={{ flex: '1 1 220px' }}>
+        <label>Cerca:</label>
+        <input type="text" placeholder="Codice, referente, email o destinazione" value={filtroCerca} onChange={(e) => setFiltroCerca(e.target.value)} />
       </div>
       {conStato && (
         <div className="filtro-group" style={{ flex: '1 1 180px' }}>
@@ -2168,10 +2135,16 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
           </select>
         </div>
       )}
+      <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }} title="Solo i preventivi con almeno un gioco che parte da una sede BFM">
+          <input type="checkbox" checked={filtroSoloBFM} onChange={(e) => setFiltroSoloBFM(e.target.checked)} /> Solo giochi BFM
+        </label>
+      </div>
     </div>
   );
 
-  const tabellaPreventivi = (righe, messaggioVuoto, onApri) => (
+  // `fetta`: le righe di una pagina, prese dopo l'ordinamento. Senza, tutte (Gestione).
+  const tabellaPreventivi = (righe, messaggioVuoto, onApri, fetta = null) => (
     <div className="admin-table-box-full" style={{ marginTop: '20px' }}>
       <table className="storico-table tabella-prev" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
@@ -2189,7 +2162,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
         <tbody>
           {righe.length === 0
             ? <tr className="riga-vuota"><td colSpan={colonnePrev.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
-            : ordina(righe).map((p, index) => rigaTabellaPreventivo(p, index, onApri))}
+            : (fetta ? fetta(ordina(righe)) : ordina(righe)).map((p, index) => rigaTabellaPreventivo(p, index, onApri))}
         </tbody>
       </table>
     </div>
@@ -2652,7 +2625,7 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
         // prima che ha ancora qualcosa.
         const visibili = schede.filter(sc => sc.lista.length > 0);
         const attiva = visibili.find(sc => sc.chiave === gestioneTab) || visibili[0];
-        const filtriAttivi = !!(filtroId || filtroDestinazione || filtroReferente || filtroEmail || filtroMese || filtroSoloBFM);
+        const filtriAttivi = !!(filtroCerca || intervalloPrev || filtroSoloBFM);
         return (
           <div className="schermata-storico no-print">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -2697,7 +2670,8 @@ function Preventivatore({ user, onTrasformaInPrenotazione }) {
           {/* Stessa apertura di Gestione: l'overlay. Prima si passava alla scheda "Vendita", che
               da quando SCHEDE_LEGACY_VISIBILI è false non viene più renderizzata — la vista
               cambiava e non compariva niente, una schermata vuota senza nessun errore. */}
-          {tabellaPreventivi(preventiviFiltrati, "Nessun preventivo trovato con i filtri attuali.", apriPreventivoOverlay)}
+          {tabellaPreventivi(preventiviFiltrati, "Nessun preventivo trovato con i filtri attuali.", apriPreventivoOverlay, pagineStorico.fetta)}
+          <Paginazione {...pagineStorico} />
         </div>
       )}
 

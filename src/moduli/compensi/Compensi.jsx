@@ -6,7 +6,7 @@ import html2pdf from 'html2pdf.js'
 import { preventiviPerOperatore, rettificheForfait, importiRimborso, oreDiPartita, quotePartite, righeConsuntivo, trasfertePerData, giornataDelPeriodo } from './calcolo'
 import { scaricaExcel } from '../../lib/excel'
 import { toMinutes, righeResidenza, etichettaPartita } from '../../lib/utils'
-import { STATO_PREN, generaCompenso, etichettaStatoPrenDi, classeBadgeStatoDi, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
+import { STATO_PREN, generaCompenso, ePregressa, etichettaStatoPrenDi, classeBadgeStatoDi, CONSUNTIVA_OLD_ATTIVO, NOTA_OLD, ETICHETTA_OLD, eOld } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 
 // Parametri del calcolo compensi. I default replicano quelli in sql/compensi.sql: valgono solo
@@ -261,7 +261,9 @@ function Compensi({ user }) {
     // L'anagrafica no: se manca, il modulo deve continuare a funzionare e il documento lo dice
     // da sé che i dati fiscali non ci sono.
     if (ut.error) console.error('Compensi — anagrafica bubbler non caricata:', ut.error);
-    setPartite((pr.data || []).filter(p => generaCompenso(p) && (p.operatori || []).length > 0));
+    // Le pregresse sono già state pagate con la vecchia gestione (i loro periodi sono chiusi come
+    // pregresso): anche confermate, qui non c'è niente da consuntivare.
+    setPartite((pr.data || []).filter(p => !ePregressa(p) && generaCompenso(p) && (p.operatori || []).length > 0));
     setVoci(vc.data || []);
     setPeriodi(pe.data || []);
     setCampi(ca.data || []);

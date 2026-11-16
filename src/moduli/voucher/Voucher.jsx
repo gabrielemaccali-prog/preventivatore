@@ -6,6 +6,9 @@ import { formattaDataIT, formattaIndirizzoPulito, formattaDataGGMMAAAA, campiFat
 import { STATO_VOUCHER, etichettaStatoVoucher, classeBadgeStato, STATI_ESTERI } from '../../lib/costanti';
 import Icona from '../../components/Icona';
 import SuggerimentoEmail from '../../components/SuggerimentoEmail';
+import FiltroPeriodo from '../albatros/FiltroPeriodo';
+import Paginazione, { usePaginazione } from '../../components/Paginazione';
+import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo';
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella';
 import { prossimoCodiceVoucher } from '../../lib/voucher';
 import { sommaImporti, statoFatturazione, daFatturareVoucher } from '../../lib/fatturazione';
@@ -181,8 +184,9 @@ function Voucher({ user }) {
   const [datiPDF, setDatiPDF] = useState(null);
 
   // --- FILTRI STORICO ---
-  const [filtroCodice, setFiltroCodice] = useState("");
-  const [filtroNominativo, setFiltroNominativo] = useState("");
+  // Un campo solo per codice e nomi, e il periodo di emissione: come nelle Prenotazioni.
+  const [filtroCerca, setFiltroCerca] = useState("");
+  const [periodoVoucher, setPeriodoVoucher] = useState(() => ({ ...periodoIniziale(), tipo: 'tutto' }));
   const [filtroStato, setFiltroStato] = useState("");
   const [rigaEspansaId, setRigaEspansaId] = useState(null); // codice voucher con riga dettaglio espansa (Gestione/Storico)
 
@@ -640,7 +644,8 @@ function Voucher({ user }) {
     );
   };
 
-  const tabellaVoucher = (righe, messaggioVuoto) => (
+  // `fetta`: le righe di una pagina, prese dopo l'ordinamento. Senza, tutte (Gestione).
+  const tabellaVoucher = (righe, messaggioVuoto, fetta = null) => (
     <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
       <table className="storico-table tabella-voucher" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
@@ -658,19 +663,27 @@ function Voucher({ user }) {
         <tbody>
           {righe.length === 0
             ? <tr><td colSpan={COLONNE_VOUCHER.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
-            : ordina(righe).map(rigaTabellaVoucher)}
+            : (fetta ? fetta(ordina(righe)) : ordina(righe)).map(rigaTabellaVoucher)}
         </tbody>
       </table>
     </div>
   );
 
   // ====================== FILTRI STORICO ======================
+  const intervalloVoucher = periodoVoucher.tipo === 'tutto' ? null : intervalloPeriodo(periodoVoucher);
   const voucherFiltrati = voucherSalvati.filter(v => {
-    const mC = (v.codice || "").toLowerCase().includes(filtroCodice.toLowerCase());
-    const mN = (v.nominativo || "").toLowerCase().includes(filtroNominativo.toLowerCase());
+    // Il nome si cerca dove può stare: il festeggiato, chi va in fattura, l'azienda.
+    const cercato = filtroCerca.trim().toLowerCase();
+    const mC = !cercato || [v.codice, v.nominativo, v.ragioneSociale, `${v.fattNome || ''} ${v.fattCognome || ''}`, `${v.fattCognome || ''} ${v.fattNome || ''}`]
+      .some(x => (x || '').toLowerCase().includes(cercato));
+    const emissione = String(v.dataEmissione || '').slice(0, 10);
+    const mP = !intervalloVoucher || (!!emissione && emissione >= intervalloVoucher[0] && emissione <= intervalloVoucher[1]);
     const mS = filtroStato === "" || v.stato === filtroStato;
-    return mC && mN && mS;
+    return mC && mP && mS;
   });
+
+  // Lo Storico si legge a pagine da 50; cambiando i filtri si riparte dalla prima.
+  const pagineStorico = usePaginazione(voucherFiltrati.length, [filtroCerca, filtroStato, periodoVoucher]);
 
   const importoPDF = datiPDF ? (parseFloat(datiPDF.importo) || 0) : 0;
 
@@ -1128,13 +1141,13 @@ function Voucher({ user }) {
           <p className="descrizione-pagina">Consulta, completa, modifica, ristampa o elimina i voucher emessi.</p>
 
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Codice:</label>
-              <input type="text" placeholder="VCH-2026-..." value={filtroCodice} onChange={(e) => setFiltroCodice(e.target.value)} />
+            <div className="filtro-group" style={{ flex: '2 1 320px' }}>
+              <label>Periodo di emissione:</label>
+              <div><FiltroPeriodo periodo={periodoVoucher} onChange={setPeriodoVoucher} conTutto /></div>
             </div>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Nominativo:</label>
-              <input type="text" placeholder="Festeggiato" value={filtroNominativo} onChange={(e) => setFiltroNominativo(e.target.value)} />
+            <div className="filtro-group" style={{ flex: '1 1 220px' }}>
+              <label>Cerca:</label>
+              <input type="text" placeholder="Codice, festeggiato o chi va in fattura" value={filtroCerca} onChange={(e) => setFiltroCerca(e.target.value)} />
             </div>
             <div className="filtro-group" style={{ flex: '1 1 180px' }}>
               <label>Stato:</label>
@@ -1145,7 +1158,8 @@ function Voucher({ user }) {
             </div>
           </div>
 
-          {tabellaVoucher(voucherFiltrati, "Nessun voucher trovato.")}
+          {tabellaVoucher(voucherFiltrati, "Nessun voucher trovato.", pagineStorico.fetta)}
+          <Paginazione {...pagineStorico} />
         </div>
       )}
 

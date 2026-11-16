@@ -5,12 +5,15 @@ import { puoVedere } from '../../lib/permessi'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import Icona from '../../components/Icona'
 import { fineEventoDi, formattaDataGGMMAAAA, locationBreveDi, incassatoDi, statoIncassoDi } from '../../lib/utils'
-import { STATO_PREN, etichettaStatoPrenDi, etichettaStatoVoucher, classeBadgeStato, classeBadgeStatoDi, annullataConPenale, incassoTrattenutoDi } from '../../lib/costanti'
+import { ePregressa, STATO_PREN, etichettaStatoPrenDi, etichettaStatoVoucher, classeBadgeStato, classeBadgeStatoDi, annullataConPenale, incassoTrattenutoDi } from '../../lib/costanti'
 import {
   sommaImporti, statoFatturazione, daFatturarePrenotazione, daFatturareVoucher,
   righeClientiExport, leggiExportFatture, abbinaFatture,
 } from '../../lib/fatturazione'
 import Controparti from './Controparti'
+import FiltroPeriodo from '../albatros/FiltroPeriodo'
+import Paginazione, { usePaginazione } from '../../components/Paginazione'
+import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo'
 import Compensi from '../compensi/Compensi'
 
 // ============================================================
@@ -67,19 +70,10 @@ function Consuntivazione({ user }) {
   const [filtroStato, setFiltroStato] = useState('aperte');
   const [soloPassate, setSoloPassate] = useState(true);
   const [cerca, setCerca] = useState('');
-  // "aaaa-mm": il mese della partita, o della vendita per un voucher. Vuoto = tutti.
-  const [filtroMese, setFiltroMese] = useState('');
-  // Senza mese scelto le frecce partono dal mese corrente, come nel Cruscotto.
-  const spostaMese = (delta) => {
-    const [a, m] = filtroMese ? filtroMese.split('-').map(Number) : [new Date().getFullYear(), new Date().getMonth() + 1];
-    const d = new Date(a, m - 1 + delta, 1);
-    setFiltroMese(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  };
-  const etichettaMese = (mese) => {
-    const [a, m] = mese.split('-').map(Number);
-    const testo = new Date(a, m - 1, 1).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' });
-    return testo.charAt(0).toUpperCase() + testo.slice(1);
-  };
+  // Il periodo della partita, o della vendita per un voucher: come nelle Prenotazioni, anno, mese o
+  // settimana, oppure tutto.
+  const [periodo, setPeriodo] = useState(() => ({ ...periodoIniziale(), tipo: 'tutto' }));
+  const intervallo = periodo.tipo === 'tutto' ? null : intervalloPeriodo(periodo);
 
   const [espansa, setEspansa] = useState(null);
   const [nuova, setNuova] = useState(FATTURA_VUOTA);
@@ -131,7 +125,8 @@ function Consuntivazione({ user }) {
   // sua scheda di consuntivazione.
   // Ci sta anche una partita annullata fuori termine: non si e' giocata, ma l'acconto e' rimasto
   // a noi e quello va fatturato, per il trattenuto e non per il prezzo del pacchetto.
-  const fatturabili = useMemo(() => prenotazioni.filter(p => (p.stato === STATO_PREN.CONFERMATO || annullataConPenale(p)) && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
+  // Le pregresse sono già fatturate dalla vecchia gestione: restano fuori, anche ora che sono confermate.
+  const fatturabili = useMemo(() => prenotazioni.filter(p => !ePregressa(p) && (p.stato === STATO_PREN.CONFERMATO || annullataConPenale(p)) && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
   // Quanto di una prenotazione è stato incassato in contanti: non si fattura. Lo usano la tabella e
   // l'import, che devono dire lo stesso "da fatturare".
   const inContantiDi = useMemo(() => (id) => (pagamentiPer[`prenotazione|${id}`] || [])
@@ -167,7 +162,7 @@ function Consuntivazione({ user }) {
 
   const visibili = voci.filter(x => {
     if (filtroTipo && x.tipo !== filtroTipo) return false;
-    if (filtroMese && String(x.data || '').slice(0, 7) !== filtroMese) return false;
+    if (intervallo && !(String(x.data || '') >= intervallo[0] && String(x.data || '').slice(0, 10) <= intervallo[1])) return false;
     // "Già giocate" vale per le partite; un voucher, una volta venduto, è già fatturabile.
     if (soloPassate && x.tipo === 'prenotazione' && !(x.fine < oggi)) return false;
     if (filtroStato === 'aperte' && !(x.stato === 'daFatturare' || x.stato === 'parziale')) return false;
@@ -176,6 +171,8 @@ function Consuntivazione({ user }) {
     if (testo && !`${x.codice} ${x.intestatario} ${x.origine.nominativo || ''} ${x.location}`.toLowerCase().includes(testo)) return false;
     return true;
   });
+  // Le fatture si leggono a pagine da 50; cambiando i filtri si riparte dalla prima.
+  const pagineFatture = usePaginazione(visibili.length, [filtroTipo, filtroStato, soloPassate, cerca, periodo]);
   const totali = visibili.reduce((a, x) => ({ dovuto: a.dovuto + x.dovuto, fatturato: a.fatturato + x.fatturato }), { dovuto: 0, fatturato: 0 });
 
   const chiave = (x) => `${x.tipo}|${x.codice}`;
@@ -368,6 +365,14 @@ function Consuntivazione({ user }) {
         )}
 
         <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
+          <div className="filtro-group" style={{ flex: '2 1 320px' }} title="Il periodo della partita, o della vendita per un voucher">
+            <label>Periodo:</label>
+            <div><FiltroPeriodo periodo={periodo} onChange={setPeriodo} conTutto /></div>
+          </div>
+          <div className="filtro-group" style={{ flex: '1 1 220px' }}>
+            <label>Cerca:</label>
+            <input type="text" placeholder="Codice, cliente o location" value={cerca} onChange={(e) => setCerca(e.target.value)} />
+          </div>
           <div className="filtro-group" style={{ flex: '1 1 150px' }}>
             <label>Tipo:</label>
             <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)}>
@@ -383,24 +388,6 @@ function Consuntivazione({ user }) {
               <option value="fatturata">Fatturate</option>
               <option value="tutte">Tutte</option>
             </select>
-          </div>
-          {/* Lo stesso selettore del Cruscotto: si scorre di un mese per volta. */}
-          <div className="filtro-group" style={{ flex: '1 1 250px' }} title="Il mese della partita, o della vendita per un voucher">
-            <label>Mese:</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese precedente" onClick={() => spostaMese(-1)}>‹</button>
-              <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: filtroMese ? '#334155' : '#94a3b8' }}>
-                {filtroMese ? etichettaMese(filtroMese) : 'tutti'}
-              </span>
-              <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese successivo" onClick={() => spostaMese(1)}>›</button>
-              {filtroMese
-                ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per mese" onClick={() => setFiltroMese('')}>✕</button>
-                : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Mese corrente" onClick={() => spostaMese(0)}>Oggi</button>}
-            </div>
-          </div>
-          <div className="filtro-group" style={{ flex: '1 1 200px' }}>
-            <label>Cerca:</label>
-            <input type="text" placeholder="Codice, cliente o location" value={cerca} onChange={(e) => setCerca(e.target.value)} />
           </div>
           <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
@@ -427,7 +414,7 @@ function Consuntivazione({ user }) {
               {visibili.length === 0 && (
                 <tr><td colSpan={10} style={{ ...cella, textAlign: 'center', color: '#666', padding: '20px' }}>Nessuna voce con questi filtri.</td></tr>
               )}
-              {ordinaFatture(visibili).map(x => {
+              {pagineFatture.fetta(ordinaFatture(visibili)).map(x => {
                 const aperta = espansa === chiave(x);
                 return (
                   <Fragment key={chiave(x)}>
@@ -596,6 +583,7 @@ function Consuntivazione({ user }) {
               </tfoot>
             )}
           </table>
+          <Paginazione {...pagineFatture} />
         </div>
       </div>
 

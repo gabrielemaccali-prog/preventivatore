@@ -6,13 +6,16 @@ import { sommaImporti, statoFatturazione, daFatturarePrenotazione } from '../../
 import { puoVedere } from '../../lib/permessi'
 import { fracIva, costiCampoDi, allestimentoDi, costiCampoPrenotazione, partiChiuse, minutiAllestimentoDi } from '../../lib/campi'
 import { idBar } from '../../lib/fornitori'
-import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, etichettaStatoPrenDi, classeBadgeStatoDi, sfumata, OPZIONI_STATO_PREN, corrispondeStatoPren, FILTRO_SFUMATA, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO, categoriaAnnullamentoDi, ETICHETTA_OLD, giocata, annullataConPenale, incassoTrattenutoDi } from '../../lib/costanti'
+import { STATI_ESTERI, STATO_ITALIA, STATO_PREN, etichettaStatoPren, etichettaStatoPrenDi, classeBadgeStatoDi, sfumata, OPZIONI_STATO_PREN, corrispondeStatoPren, FILTRO_SFUMATA, STATO_VOUCHER, STATO_PREVENTIVO, COSTO_ANNULLAMENTO, ETICHETTA_COSTO_ANNULLAMENTO, categoriaAnnullamentoDi, ETICHETTA_OLD, giocata, ePregressa, annullataConPenale, incassoTrattenutoDi } from '../../lib/costanti'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import { formaNome, formaLuogo, formaRagioneSociale, formaEmail, formaCodice, formaTelefono } from '../../lib/maiuscole'
 import RicercaIndirizzo from '../../components/RicercaIndirizzo'
 import Icona from '../../components/Icona'
 import SuggerimentoEmail from '../../components/SuggerimentoEmail'
 import DialogoAnnullamento from '../../components/DialogoAnnullamento'
+import FiltroPeriodo from '../albatros/FiltroPeriodo'
+import Paginazione, { usePaginazione } from '../../components/Paginazione'
+import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo'
 import { prossimoCodiceVoucher, voucherDaPrenotazione } from '../../lib/voucher'
 
 // Il centro di ricavo non sta piu' qui: viaggia sul gioco, a catalogo. Un pacchetto dice la
@@ -374,11 +377,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   // da cui escono prezzo e costo della pratica, e un clic distratto non deve poterli spostare.
   const [dettaglioInModifica, setDettaglioInModifica] = useState(false);
   const [vociPrimaDellaModifica, setVociPrimaDellaModifica] = useState(null); // data in corso di aggiunta all'elenco dei giorni dell'evento
-  const [filtroPrenData, setFiltroPrenData] = useState("");
-  const [filtroPrenSettimana, setFiltroPrenSettimana] = useState(""); // lunedì (ISO) della settimana mostrata, "" = nessun filtro
+  // Il periodo dei filtri, come in Albatros: anno, mese o settimana, oppure tutto l'archivio.
+  const [periodoPren, setPeriodoPren] = useState(() => ({ ...periodoIniziale(), tipo: 'tutto' }));
   const [filtroPrenStato, setFiltroPrenStato] = useState("");
   const [filtroPrenNome, setFiltroPrenNome] = useState("");
-  const [filtroPrenId, setFiltroPrenId] = useState("");
   // Come sta la fattura: "" = tutte, altrimenti uno dei valori di statoFatturaDi.
   const [filtroPrenFattura, setFiltroPrenFattura] = useState("");
   // Nello storico le annullate partono nascoste: di solito si cerca cosa si e' giocato o si
@@ -1324,7 +1326,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             {formattaDataGGMMAA(p.createdAt) || '—'}
           </td>
-          <td style={{ padding: '8px 10px' }}><span className={`badge-stato badge-mini ${classeBadgeStatoDi(p)}`}>{etichettaStatoPrenDi(p)}</span></td>
+          <td style={{ padding: '8px 10px' }}>
+            <span className={`badge-stato badge-mini ${classeBadgeStatoDi(p)}`}>{etichettaStatoPrenDi(p)}</span>
+          </td>
           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
             <span className="riga-espandibile-chevron chevron-telefono" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             {formattaDataGGMMAA(p.data)}
@@ -1374,7 +1378,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
             <td colSpan={COLONNE_PREN.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
-                  <div><span style={{ color: '#94a3b8' }}>ID </span><strong>{p.id}</strong></div>
+                  <div><span style={{ color: '#94a3b8' }}>ID </span><strong>{p.id}</strong>
+                    {/* Una partita della vecchia gestione si dice qui, non nella riga: nell'elenco è una partita come le altre. */}
+                    {ePregressa(p) && <span className="badge-stato badge-mini pregressa" style={{ marginLeft: '6px' }} title="Partita della vecchia gestione, ricostruita dal vecchio foglio: già fatturata e pagata a campi e bubbler">{ETICHETTA_OLD}</span>}
+                  </div>
                   <div><span style={{ color: '#94a3b8' }}>Telefono </span>{p.telefono || '—'}</div>
                   <div><span style={{ color: '#94a3b8' }}>Email </span>{p.email || '—'}</div>
                   {p.tipoRinfresco && <div><span style={{ color: '#94a3b8' }}>Rinfresco </span>{p.tipoRinfresco}{p.numeroPartecipanti ? ` · ${p.numeroPartecipanti} pers` : ''}</div>}
@@ -1441,7 +1448,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   };
 
   // Tabella completa (intestazione + righe) condivisa da Storico e Gestione. Il pulsante "Apri" di ogni riga richiama sempre il form come overlay.
-  const tabellaPren = (righe, messaggioVuoto) => (
+  // `fetta`: le righe di una pagina, prese dopo l'ordinamento. Senza, tutte (Gestione).
+  const tabellaPren = (righe, messaggioVuoto, fetta = null) => (
     <div className="admin-table-box-full" style={{ marginTop: '20px', overflowX: 'auto' }}>
       <table className="storico-table tabella-pren" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem', background: '#fff' }}>
         <thead>
@@ -1459,7 +1467,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         <tbody>
           {righe.length === 0
             ? <tr className="riga-vuota"><td colSpan={COLONNE_PREN.length} style={{ textAlign: 'center', padding: '20px', color: '#666' }}>{messaggioVuoto}</td></tr>
-            : ordina(righe).map(rigaTabellaPren)}
+            : (fetta ? fetta(ordina(righe)) : ordina(righe)).map(rigaTabellaPren)}
         </tbody>
       </table>
     </div>
@@ -1484,26 +1492,18 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     XLSX.writeFile(wb, nomeFile);
   };
 
-  // Intervallo lunedì-domenica della settimana mostrata, calcolato una volta sola e non a ogni riga.
-  const settimanaFiltrata = filtroPrenSettimana
-    ? { da: filtroPrenSettimana, a: toISODate(addGiorni(dataOraLocale(filtroPrenSettimana), 6)) }
-    : null;
-
-  // Frecce di scorrimento: dalla settimana mostrata, o da quella di oggi se il filtro è spento.
-  const spostaSettimana = (delta) => {
-    const partenza = filtroPrenSettimana ? dataOraLocale(filtroPrenSettimana) : new Date();
-    setFiltroPrenSettimana(toISODate(addGiorni(inizioSettimana(partenza), delta * 7)));
-  };
+  // Primo e ultimo giorno del periodo scelto, calcolati una volta sola e non a ogni riga.
+  const intervalloPren = periodoPren.tipo === 'tutto' ? null : intervalloPeriodo(periodoPren);
 
   // I filtri di Storico e Gestione sono gli stessi, e lo stato e' condiviso: chi cerca "Rossi"
   // nello Storico e passa a Gestione continua a vedere Rossi, invece di ricominciare da capo.
   const passaFiltriPren = (p) => {
     // Valgono tutti i giorni dell'evento, non solo il primo.
     const giorniEvento = giorniEventoDi(p);
-    const mData = !filtroPrenData || giorniEvento.includes(filtroPrenData);
-    const mSettimana = !settimanaFiltrata || giorniEvento.some(g => g >= settimanaFiltrata.da && g <= settimanaFiltrata.a);
+    const mPeriodo = !intervalloPren || giorniEvento.some(g => g >= intervalloPren[0] && g <= intervalloPren[1]);
     // Lo stato scelto distingue le annullate vere dalle sfumate, che nel database sono lo stesso.
     const mStato = corrispondeStatoPren(p, filtroPrenStato);
+    // Un campo solo per il nome e per il codice: chi cerca ha in mano l'uno o l'altro.
     // Il nome si cerca dove un nome puo' stare: quello della prenotazione, quello di chi va in
     // fattura e la ragione sociale. Spesso sono cose diverse -- la festa e' intestata al bambino,
     // la fattura al genitore, e l'azienda ha un nome suo -- e chi cerca ne ha in mente una sola,
@@ -1511,12 +1511,11 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     // provano in tutti e due gli ordini, perche' "rossi mario" e "mario rossi" sono la stessa
     // persona per chi scrive e due stringhe diverse per il computer.
     const cercato = filtroPrenNome.trim().toLowerCase();
-    const mNome = !cercato || [
-      p.nominativo, p.ragioneSociale,
+    // Il codice si cerca anche a pezzi: chi ha in mano "1047" non deve scrivere tutto "PRN-2026-1047".
+    const mCerca = !cercato || [
+      p.id, p.nominativo, p.ragioneSociale,
       `${p.fattNome || ''} ${p.fattCognome || ''}`, `${p.fattCognome || ''} ${p.fattNome || ''}`,
     ].some(x => (x || '').toLowerCase().includes(cercato));
-    // Il codice si cerca anche a pezzi: chi ha in mano "1047" non deve scrivere tutto "PRN-2026-1047".
-    const mId = !filtroPrenId.trim() || String(p.id || "").toLowerCase().includes(filtroPrenId.trim().toLowerCase());
     // Se lo stato scelto e' proprio SFUMATA la spunta non le nasconde: vorrebbe dire chiedere una
     // cosa e toglierla nello stesso momento, e restare con un elenco vuoto senza capire perche'.
     const mSfumate = !nascondiSfumate || filtroPrenStato === FILTRO_SFUMATA || !sfumata(p);
@@ -1525,37 +1524,31 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     const statoFt = statoFatturaDi(p);
     const mFattura = !filtroPrenFattura || statoFt === filtroPrenFattura
       || (filtroPrenFattura === 'da fatturare' && statoFt === 'da controllare');
-    return mData && mSettimana && mStato && mNome && mId && mSfumate && mFattura;
+    return mPeriodo && mStato && mCerca && mSfumate && mFattura;
   };
-  // Le pregresse (vecchia gestione) hanno una scheda loro: nello Storico ci sono solo quelle dell'app.
-  const prenotazioniFiltrate = prenotazioni.filter(p => p.stato !== STATO_PREN.PREGRESSA && passaFiltriPren(p));
-  // Nella scheda Pregresso lo stato è uno solo: il filtro per stato non c'entra.
-  const pregresseFiltrate = prenotazioni.filter(p => p.stato === STATO_PREN.PREGRESSA && passaFiltriPren({ ...p, stato: filtroPrenStato || p.stato }));
+  // Lo Storico è tutto l'archivio, pregresse comprese: si riconoscono dall'etichetta nel dettaglio
+  // della riga, e il filtro per stato "Pregresso" le mostra da sole.
+  const prenotazioniFiltrate = prenotazioni.filter(p => passaFiltriPren(p));
+  // Lo Storico si legge a pagine da 50 (vedi components/Paginazione); cambiando i filtri si riparte dalla prima.
+  const pagineStorico = usePaginazione(prenotazioniFiltrate.length, [periodoPren, filtroPrenStato, filtroPrenNome, filtroPrenFattura, nascondiSfumate]);
 
   const filtriPrenotazioni = ({ conNascondiSfumate = true } = {}) => (
           <div className="filtri-storico" style={{ flexWrap: 'wrap' }}>
-            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
-              <label>Data:</label>
-              <input type="date" value={filtroPrenData} onChange={(e) => setFiltroPrenData(e.target.value)} />
+            <div className="filtro-group" style={{ flex: '2 1 320px' }}>
+              <label>Periodo:</label>
+              {/* In Albatros il selettore sta a destra (align-self): qui sta sempre a sinistra, anche
+                  quando con "Tutto" si restringe e non ha le frecce. */}
+              <div><FiltroPeriodo periodo={periodoPren} onChange={setPeriodoPren} conTutto /></div>
             </div>
-            <div className="filtro-group" style={{ flex: '1 1 250px' }}>
-              <label>Settimana:</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana precedente" onClick={() => spostaSettimana(-1)}>‹</button>
-                <span style={{ flex: 1, textAlign: 'center', fontSize: '0.8rem', whiteSpace: 'nowrap', color: settimanaFiltrata ? '#334155' : '#94a3b8' }}>
-                  {settimanaFiltrata ? `${formattaDataGGMMAA(settimanaFiltrata.da)} – ${formattaDataGGMMAA(settimanaFiltrata.a)}` : 'tutte'}
-                </span>
-                <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana successiva" onClick={() => spostaSettimana(1)}>›</button>
-                {settimanaFiltrata
-                  ? <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Togli il filtro per settimana" onClick={() => setFiltroPrenSettimana("")}>✕</button>
-                  : <button type="button" className="btn-chiudi" style={{ float: 'none', padding: '6px 12px' }} title="Settimana corrente" onClick={() => spostaSettimana(0)}>Oggi</button>}
-              </div>
+            <div className="filtro-group" style={{ flex: '1 1 220px' }}>
+              <label>Cerca:</label>
+              <input type="text" placeholder="Nome, azienda o codice (es. 1047)" title="Cerca nel codice della prenotazione, nel nominativo, in nome e cognome di fatturazione e nella ragione sociale" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} />
             </div>
             <div className="filtro-group" style={{ flex: '1 1 160px' }}>
               <label>Stato:</label>
               <select value={filtroPrenStato} onChange={(e) => setFiltroPrenStato(e.target.value)}>
                 <option value="">Tutti</option>
-                {OPZIONI_STATO_PREN.filter(o => o.valore !== STATO_PREN.PREGRESSA).map(o => <option key={o.valore} value={o.valore}>{o.etichetta}</option>)}
+                {OPZIONI_STATO_PREN.map(o => <option key={o.valore} value={o.valore}>{o.etichetta}</option>)}
               </select>
             </div>
             <div className="filtro-group" style={{ flex: '1 1 160px' }}>
@@ -1566,14 +1559,6 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                 <option value="fatturata">✓ Fatturate</option>
                 <option value="non dovuta">⊘ Senza fattura</option>
               </select>
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 180px' }}>
-              <label>Nominativo:</label>
-              <input type="text" placeholder="Prenotazione, fatturazione o azienda" title="Cerca nel nominativo della prenotazione, in nome e cognome di fatturazione e nella ragione sociale" value={filtroPrenNome} onChange={(e) => setFiltroPrenNome(e.target.value)} />
-            </div>
-            <div className="filtro-group" style={{ flex: '1 1 160px' }}>
-              <label>ID prenotazione:</label>
-              <input type="text" placeholder="Es. PRN-2026-1047" value={filtroPrenId} onChange={(e) => setFiltroPrenId(e.target.value)} />
             </div>
             {conNascondiSfumate && (
             <div className="filtro-group" style={{ flex: '0 1 auto', justifyContent: 'flex-end' }}>
@@ -2981,9 +2966,6 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         {puoVedere(user, 'prenotazioni', 'storico') && (
           <button className={`nav-btn ${currentView === 'storico' ? 'active' : ''}`} onClick={() => setCurrentView("storico")}><Icona nome="storico" />Storico</button>
         )}
-        {puoVedere(user, 'prenotazioni', 'pregresso') && (
-          <button className={`nav-btn ${currentView === 'pregresso' ? 'active' : ''}`} onClick={() => setCurrentView("pregresso")}><Icona nome="storico" />Pregresso</button>
-        )}
       </nav>
 
       {/* ===================== CONFIGURATORE ===================== */}
@@ -3106,30 +3088,16 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
 
           {filtriPrenotazioni()}
 
-          {tabellaPren(prenotazioniFiltrate, "Nessuna prenotazione trovata.")}
-        </div>
-      )}
-      {currentView === "pregresso" && puoVedere(user, 'prenotazioni', 'pregresso') && (
-        <div className="schermata-storico no-print">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <h2 style={{ margin: 0 }}>Prenotazioni pregresse</h2>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button onClick={() => esportaExcelPren(pregresseFiltrate, "Prenotazioni_Pregresse.xlsx")} style={{ padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📊 Esporta Excel</button>
-            </div>
-          </div>
-          <p className="descrizione-pagina" style={{ background: '#e2e8f0', border: '1px solid #64748b', color: '#334155', borderRadius: '6px', padding: '8px 12px' }}>
-            <strong>{ETICHETTA_OLD}</strong>: le partite della vecchia gestione, giocate prima dell'app e ricostruite dal vecchio foglio, dalle fatture, dalla prima nota, dall'estratto conto e dal calendario. Sono già fatturate, incassate e pagate a campi e bubbler: contano nei ricavi e nei costi, ma non entrano in Calendario, Compensi e Consuntivazione. In Gestione compaiono solo fra quelle da saldare, se resta un incasso aperto.
-          </p>
-
-          {filtriPrenotazioni({ conNascondiSfumate: false })}
-
-          {tabellaPren(pregresseFiltrate, "Nessuna prenotazione pregressa trovata.")}
+          {tabellaPren(prenotazioniFiltrate, "Nessuna prenotazione trovata.", pagineStorico.fetta)}
+          <Paginazione {...pagineStorico} />
         </div>
       )}
       {currentView === "gestione" && puoVedere(user, 'prenotazioni', 'gestione') && (() => {
         // Le liste partono dalle prenotazioni che passano i filtri: i contatori sulle schede dicono
         // quante ce ne sono fra quelle cercate, non in tutto l'archivio.
-        const base = prenotazioni.filter(p => passaFiltriPren(p));
+        // Le pregresse non sono lavoro di tutti i giorni: entrano solo fra quelle da saldare (vedi sotto).
+        const filtrate = prenotazioni.filter(p => passaFiltriPren(p));
+        const base = filtrate.filter(p => !ePregressa(p));
         // Una FORSE con la data gia' passata non aspetta piu' un pagamento ne' una conferma: la
         // partita non c'e' stata, e va chiusa. Si annulla -- e se un acconto era entrato, quei
         // soldi diventano un voucher. Esce dalle due liste delle FORSE e sta in una sua, cosi'
@@ -3167,7 +3135,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // Fra quelle da saldare ci sono anche le pregresse: la vecchia gestione ha lasciato qualche
         // incasso aperto, e va sollecitato come gli altri. Le altre schede restano senza: una
         // pregressa non ha più dati da completare né turni da coprire.
-        const daSaldare = base.filter(p => giocata(p) && mancaIncasso(p));
+        const daSaldare = filtrate.filter(p => giocata(p) && mancaIncasso(p));
         // Le annullate non hanno una scheda qui: Gestione e' il lavoro da fare, e su una partita
         // annullata non ce n'e'. Si trovano nello Storico -- e quelle diventate un voucher si
         // ritrovano nei Voucher, che e' dove aspettano il cliente.
@@ -3188,7 +3156,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // la esclude -- si passa alla prima che ha ancora qualcosa, invece di restare su una lista vuota
         // che nel menu non c'e' piu'.
         const attiva = visibili.find(sc => sc.chiave === gestioneTab) || visibili[0];
-        const filtriAttivi = !!(filtroPrenData || filtroPrenSettimana || filtroPrenStato || filtroPrenNome || filtroPrenFattura);
+        const filtriAttivi = !!(intervalloPren || filtroPrenStato || filtroPrenNome || filtroPrenFattura);
         return (
           <div className="schermata-storico no-print">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -3223,7 +3191,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // farebbe sembrare pieno uno slot che e' libero. Vale anche per quella diventata un
         // voucher: la data nuova sara' di un'altra prenotazione, e sara' lei a prendersi lo slot.
         const prenDelGiorno = (iso) => prenotazioni
-          .filter(p => p.stato !== STATO_PREN.ANNULLATA && p.stato !== STATO_PREN.PREGRESSA && giorniEventoDi(p).includes(iso))
+          .filter(p => p.stato !== STATO_PREN.ANNULLATA && !ePregressa(p) && giorniEventoDi(p).includes(iso))
           .sort((a, b) => (a.oraInizio || '').localeCompare(b.oraInizio || ''));
 
         // --- Griglia oraria (viste Settimana/Giorno): posiziona ogni prenotazione in base a orario e durata reali ---
@@ -3597,7 +3565,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         const fine = addGiorni(inizio, 6);
         const isoSettimana = new Set(Array.from({ length: 7 }, (_, i) => toISODate(addGiorni(inizio, i))));
         // Stessa regola dei promemoria: a un campo non si annuncia una partita annullata.
-        const righeSettimana = prenotazioni.filter(p => p.stato !== STATO_PREN.ANNULLATA && p.stato !== STATO_PREN.PREGRESSA && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
+        const righeSettimana = prenotazioni.filter(p => !ePregressa(p) && p.stato !== STATO_PREN.ANNULLATA && isoSettimana.has(p.data)).sort((a, b) => `${a.data}${a.oraInizio || ''}`.localeCompare(`${b.data}${b.oraInizio || ''}`));
         const locLabelRiep = (p) => p.campoNome || luogoLiberoDi(p) || '—';
 
         // Come si legge un evento in un promemoria: cosa si gioca, e -- solo nel messaggio al
