@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { validaCF, errorePIva, formattaDataGGMMAAAA, campiFatturazioneMancanti, anagraficaFatturazioneAPosto, senzaFatturaDaEmettere, partitaInCompensazione, statoIncassoDi, contantiDaRitirareDi, incassatoDi, daIncassareDi, toMinutes, oreDaOrari, fineEventoDi, giorniEventoDi, siglaProvincia, provinciaValida, formattaOraInput, normalizzaOra24, etichettaPartita, etichettaGiochiBreve, arrotondaAllaDecina, locationBreveDi } from '../../lib/utils'
@@ -398,6 +398,27 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   }, []);
+  // Il mese deve stare tutto a schermo: un calendario che si scorre non e' un calendario, perche'
+  // la domanda a cui risponde -- com'e' pieno il mese -- si legge in un colpo d'occhio o non si
+  // legge. Quindi l'altezza della griglia non e' un numero scelto: e' quello che resta sotto la
+  // barra di navigazione, e si misura invece di stimarlo, perche' sopra al calendario ci sono il
+  // menu, il titolo e la legenda, che cambiano altezza col ruolo di chi guarda e con la larghezza
+  // della finestra. Si scrive in una variabile CSS: nessuno stato React, nessun rendering in piu'.
+  const rifMese = useRef(null);
+  useEffect(() => {
+    const el = rifMese.current;
+    if (!el) return undefined;
+    const adatta = () => {
+      // In coordinate del documento, cosi' la misura vale anche se la pagina e' stata scorsa.
+      const sopra = el.getBoundingClientRect().top + (document.documentElement.scrollTop || document.body.scrollTop || 0);
+      // Il minimo tiene in piedi il caso di una finestra bassa: li' si torna a scorrere, ma le
+      // celle restano leggibili invece di schiacciarsi a una riga.
+      el.style.setProperty('--spazio-mese', `${Math.max(380, Math.round(window.innerHeight - sopra - 14))}px`);
+    };
+    adatta();
+    window.addEventListener('resize', adatta);
+    return () => window.removeEventListener('resize', adatta);
+  }, [currentView, calView, calMobile, calDate]);
   const [prenSelezionata, setPrenSelezionata] = useState(null);
   const [prenConferma, setPrenConferma] = useState(null); // prenotazione di cui preparare la mail di conferma da copiare
   const [formCostiAnnullamento, setFormCostiAnnullamento] = useState(null); // { p, scelte: [] } -- quali costi restano su un'annullata
@@ -3276,6 +3297,22 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         // e mostra solo l'orario di ciascuna prenotazione in una mini-etichetta colorata per stato,
         // così l'intero mese entra senza scroll orizzontale ma resta comunque leggibile un minimo di informazione.
         const calendarioMobileStyles = `
+          /* Da tablet in su il mese riempie lo spazio che ha, invece di avere celle alte in modo
+             fisso: sei righe da 150px fanno 900px, e con la barra sopra non ci stanno in uno
+             schermo da 1080. Le righe si dividono quello che c'e' (minmax(0, 1fr), senza il quale
+             una cella piena allargherebbe la riga), e la giornata affollata scorre dentro la sua
+             cella -- che e' il posto giusto dove scorrere, perche' il mese resta fermo. */
+          @media (min-width: 769px) {
+            .cal-mese-wrap { height: var(--spazio-mese, 72vh); overflow: hidden; }
+            .cal-mese-grid { height: 100%; }
+            .cal-mese-giorno { min-height: 0 !important; display: flex; flex-direction: column; overflow: hidden; }
+            .cal-mese-numero { flex-shrink: 0; }
+            .cal-mese-chips { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+            /* Una barra di scorrimento sottile dentro una cella da due centimetri: quella di
+               sistema si mangerebbe lo spazio del testo. */
+            .cal-mese-chips::-webkit-scrollbar { width: 5px; }
+            .cal-mese-chips::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+          }
           @media (max-width: 768px) {
             .cal-mese-grid { min-width: 0 !important; grid-template-columns: 16px repeat(7, 1fr) !important; gap: 2px !important; }
             .cal-mese-giorno { min-height: 40px !important; padding: 2px !important; }
@@ -3318,12 +3355,18 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
             </div>
 
             {/* MESE */}
-            {calView === 'mese' && (
-              <div className="cal-mese-wrap" style={{ overflowX: 'auto' }}>
-                <div className="cal-mese-grid" style={{ display: 'grid', gridTemplateColumns: '44px repeat(7, 1fr)', gap: '4px', minWidth: '640px' }}>
+            {calView === 'mese' && (() => {
+              // Le sei settimane della griglia coprono qualunque mese, ma quasi nessun mese le
+              // riempie: una settimana che non contiene nemmeno un giorno di questo mese non si
+              // disegna, ed e' un sesto di altezza in piu' per quelle che restano.
+              const settimane = Array.from({ length: 6 }, (_, w) => Array.from({ length: 7 }, (_, d) => addGiorni(inizioSettimana(new Date(calDate.getFullYear(), calDate.getMonth(), 1)), w * 7 + d)))
+                .filter(sett => sett.some(g => g.getMonth() === calDate.getMonth()));
+              return (
+              <div className="cal-mese-wrap" ref={rifMese} style={{ overflowX: 'auto' }}>
+                <div className="cal-mese-grid" style={{ display: 'grid', gridTemplateColumns: '44px repeat(7, 1fr)', ...(calMobile ? {} : { gridTemplateRows: `auto repeat(${settimane.length}, minmax(0, 1fr))` }), gap: '4px', minWidth: '640px' }}>
                   <div className="cal-mese-settimana-label" style={{ fontSize: '0.7rem', color: '#94a3b8', textAlign: 'center', padding: '6px 0' }}>Sett.</div>
                   {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'].map(g => <div key={g} className="cal-mese-giorno-header" style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#64748b', textAlign: 'center', padding: '6px 0' }}>{g}</div>)}
-                  {Array.from({ length: 6 }, (_, w) => Array.from({ length: 7 }, (_, d) => addGiorni(inizioSettimana(new Date(calDate.getFullYear(), calDate.getMonth(), 1)), w * 7 + d))).map((settimana, wi) => (
+                  {settimane.map((settimana, wi) => (
                     <Fragment key={wi}>
                       <div onClick={() => { setCalDate(settimana[0]); setCalView('settimana'); }} title="Apri settimana" className="cal-mese-settimana" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 'bold', color: '#64748b' }}>{numeroSettimana(settimana[3])}</div>
                       {settimana.map((giorno, di) => {
@@ -3331,7 +3374,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                         const fuoriMese = giorno.getMonth() !== calDate.getMonth();
                         const lista = prenDelGiorno(iso);
                         return (
-                          <div key={di} onClick={() => { setCalDate(giorno); setCalView('giorno'); }} title="Apri giorno" className="cal-mese-giorno" style={{ cursor: 'pointer', minHeight: '150px', border: iso === oggiIso ? '2px solid #2563eb' : '1px solid #e2e8f0', borderRadius: '6px', padding: '4px', background: iso === oggiIso ? '#eff6ff' : (fuoriMese ? '#f8fafc' : '#fff'), opacity: fuoriMese ? 0.55 : 1 }}>
+                          <div key={di} onClick={() => { setCalDate(giorno); setCalView('giorno'); }} title="Apri giorno" className="cal-mese-giorno" style={{ cursor: 'pointer', border: iso === oggiIso ? '2px solid #2563eb' : '1px solid #e2e8f0', borderRadius: '6px', padding: '4px', background: iso === oggiIso ? '#eff6ff' : (fuoriMese ? '#f8fafc' : '#fff'), opacity: fuoriMese ? 0.55 : 1 }}>
                             <div className="cal-mese-numero" style={{ textAlign: 'right' }}>
                               <span style={iso === oggiIso ? { display: 'inline-block', fontSize: '0.75rem', fontWeight: 'bold', color: '#fff', background: '#2563eb', borderRadius: '50%', width: '20px', height: '20px', lineHeight: '20px', textAlign: 'center' } : { fontSize: '0.75rem', fontWeight: 'normal', color: '#475569' }}>{giorno.getDate()}</span>
                             </div>
@@ -3357,7 +3400,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                   ))}
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* SETTIMANA (griglia oraria 06:00 -> 00:00, blocchi proporzionali alla durata; su mobile mini-agenda a puntini per stare a schermo senza scroll) */}
             {calView === 'settimana' && (() => {
