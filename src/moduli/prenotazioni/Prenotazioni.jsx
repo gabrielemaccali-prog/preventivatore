@@ -44,7 +44,8 @@ const lordoConContanti = (netto, contanti, iva) => {
 // promemoria lo dice a chiunque ci vada, e chi li prende davvero si registra a evento concluso.
 const contantiDiOperatore = (p, operatoreId) => (p?.pagamenti || [])
   .filter(pg => {
-    if (!pg.contanti) return false;
+    // Consegnati a BFM: non sono più in mano a nessun operatore.
+    if (!pg.contanti || pg.consegnatiBfmIl || pg.consegnati_bfm_il) return false;
     const ritira = String(pg.ritiratoDa ?? pg.ritirato_da ?? '');
     if (ritira) return ritira === String(operatoreId);
     return (p.operatori || []).some(o => String(o.id) === String(operatoreId));
@@ -453,7 +454,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       setColonnaGruppo(righePag.length > 0 && 'gruppo' in righePag[0]);
       const conPagamenti = pr.data.map(p => ({
         ...p,
-        pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", contanti: !!x.contanti, ritiratoDa: x.ritirato_da ?? "", gruppo: x.gruppo || null, movimentoId: x.movimento_id ?? null })),
+        pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", contanti: !!x.contanti, ritiratoDa: x.ritirato_da ?? "", consegnatiBfmIl: x.consegnati_bfm_il || null, gruppo: x.gruppo || null, movimentoId: x.movimento_id ?? null })),
         // valore dell'eventuale voucher usato: conta come pagamento pur non essendo una riga di pagamenti
         voucherValore: parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherCodice))?.importo) || 0
       }));
@@ -1660,9 +1661,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   const nomeOperatoreDi = (id) => operatori.find(o => String(o.id) === String(id))?.nome || '';
   // Chi ha in mano i contanti di una prenotazione, per esteso: può essere più d'uno se gli incassi
   // in contanti sono stati ritirati in momenti diversi da persone diverse.
+  // Chi ha in mano i contanti: il bubbler che li ha ritirati, o BFM se glieli ha già consegnati.
   const nomiRitiroContanti = (p) => [...new Set((p.pagamenti || [])
-    .filter(pg => pg.contanti && pg.ritiratoDa)
-    .map(pg => nomeOperatoreDi(pg.ritiratoDa))
+    .filter(pg => pg.contanti && (pg.ritiratoDa || pg.consegnatiBfmIl))
+    .map(pg => (pg.consegnatiBfmIl ? 'BFM' : nomeOperatoreDi(pg.ritiratoDa)))
     .filter(Boolean))].join(', ');
 
   const valoreVoucherDi = (codice) => {
@@ -1776,6 +1778,8 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         contanti: !!pg.contanti,
         // Chi li tiene vale solo sui contanti: su un bonifico non c'è nessuno a cui chiederli.
         ritirato_da: pg.contanti && pg.ritiratoDa ? Number(pg.ritiratoDa) : null,
+        // Consegnati a BFM: il segno resta salvando la prenotazione, che riscrive i pagamenti da capo.
+        ...(pg.contanti && pg.consegnatiBfmIl ? { consegnati_bfm_il: pg.consegnatiBfmIl } : {}),
         // La quota di un bonifico su più prenotazioni resta legata agli altri pezzi.
         ...(colonnaGruppo ? { gruppo: pg.gruppo || null } : {}),
         // E il legame con l'accredito della banca (scheda Spese › Incassi), che non va perso salvando.
@@ -2821,7 +2825,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
                         <td style={{ padding: '4px' }}>{formattaDataGGMMAAAA(pg.data)}</td>
                         <td style={{ padding: '4px' }}>
                           €{(parseFloat(pg.importo) || 0).toFixed(2)}
-                          {pg.contanti && <span title={nomeOperatoreDi(pg.ritiratoDa) ? `Contanti ritirati da ${nomeOperatoreDi(pg.ritiratoDa)}` : 'Contanti: operatore da indicare'} style={{ marginLeft: '6px' }}>💶</span>}
+                          {pg.contanti && <span title={pg.consegnatiBfmIl
+                            ? `Contanti in mano a BFM dal ${formattaDataGGMMAAAA(pg.consegnatiBfmIl)}${nomeOperatoreDi(pg.ritiratoDa) ? `, ritirati da ${nomeOperatoreDi(pg.ritiratoDa)}` : ''}`
+                            : nomeOperatoreDi(pg.ritiratoDa) ? `Contanti ritirati da ${nomeOperatoreDi(pg.ritiratoDa)}` : 'Contanti: operatore da indicare'} style={{ marginLeft: '6px' }}>💶</span>}
+                          {pg.contanti && pg.consegnatiBfmIl && <span style={{ marginLeft: '6px', fontSize: '0.72rem', fontWeight: 'bold', color: '#166534' }}>in mano a BFM</span>}
                         </td>
                         <td style={{ padding: '4px' }}>
                           {!pg.contanti ? (pg.nominativo || '—')

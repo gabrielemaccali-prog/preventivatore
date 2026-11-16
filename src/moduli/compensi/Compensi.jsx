@@ -270,9 +270,10 @@ function Compensi({ user }) {
     setPagamenti(Array.isArray(pag) ? pag : (pag?.data || []));
   };
 
+  // Solo quelli che ha ancora in mano: i contanti consegnati a BFM non sono più suoi.
   const contantiPerPartita = useMemo(() => {
     const m = {};
-    pagamenti.filter(pg => pg.contanti && pg.ritirato_da).forEach(pg => {
+    pagamenti.filter(pg => pg.contanti && pg.ritirato_da && !pg.consegnati_bfm_il).forEach(pg => {
       const k = `${pg.riferimento}|${pg.ritirato_da}`;
       m[k] = (m[k] || 0) + (parseFloat(pg.importo) || 0);
     });
@@ -282,6 +283,26 @@ function Compensi({ user }) {
   const contantiTotaliDi = useCallback((op) => op.giornate
     .flatMap(g => g.blocchi.flatMap(b => b.partite))
     .reduce((s, x) => s + contantiDi(op.id, x.partita.id), 0), [contantiDi]);
+
+  // Ritirare i contanti da un bubbler: passano in mano a BFM, e la prenotazione lo dice. Non si
+  // tiene altro -- né a chi sono stati dati né dove sono finiti: BFM li ha, e basta.
+  const ritiraContanti = async (operatoreId, partiteIds, importo) => {
+    if (!(importo > 0)) return;
+    if (!window.confirm(`Ritirare ${euro(importo)} in contanti da ${nomeOperatore(operatoreId)}?\n\nPassano in mano a BFM, anche sulle prenotazioni.`)) return;
+    setInCorso(`contanti-${operatoreId}`);
+    const { error } = await supabase.from('pagamenti').update({ consegnati_bfm_il: oggiIso() })
+      .eq('tipo', 'prenotazione').eq('contanti', true).eq('ritirato_da', operatoreId)
+      .is('consegnati_bfm_il', null).in('riferimento', partiteIds.map(String));
+    setInCorso(null);
+    if (error) {
+      console.error(error);
+      return alert(/consegnati_bfm_il/.test(error.message || '')
+        ? "Per ritirare i contanti esegui prima sql/contanti_consegnati_bfm.sql nell'SQL Editor di Supabase."
+        : "Errore nel ritiro dei contanti.");
+    }
+    fetchPartite();
+  };
+  const idPartiteDi = (op) => op.giornate.flatMap(g => g.blocchi.flatMap(b => b.partite)).map(x => x.partita.id);
 
   // Anche gli indicatori leggono i periodi, quindi devono far scattare lo scarico: senza,
   // chi apre la scheda senza passare dalla gestione vedrebbe zero e crederebbe di non aver pagato.
@@ -1098,7 +1119,16 @@ function Compensi({ user }) {
                       {/* Non entra nei totali del compenso: sono soldi del cliente che stanno in
                           tasca al bubbler, non qualcosa che gli dobbiamo. */}
                       <td style={{ padding: '7px 10px', textAlign: 'right', color: contantiDi(op.id, x.partita.id) > 0 ? '#166534' : '#ccc' }}>
-                        {contantiDi(op.id, x.partita.id) > 0 ? `💶 ${euro(contantiDi(op.id, x.partita.id))}` : '—'}
+                        {contantiDi(op.id, x.partita.id) > 0 ? (
+                          <button
+                            type="button" disabled={inCorso === `contanti-${op.id}`}
+                            title="Clic per ritirarli: passano in mano a BFM"
+                            onClick={() => ritiraContanti(op.id, [x.partita.id], contantiDi(op.id, x.partita.id))}
+                            style={{ color: '#166534', background: 'none', border: '1px dashed #86efac', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', fontSize: '0.8rem' }}
+                          >
+                            💶 {euro(contantiDi(op.id, x.partita.id))}
+                          </button>
+                        ) : '—'}
                       </td>
                       <td style={{ padding: '7px 10px', textAlign: 'right' }}>{euro(x.compenso)}</td>
 
@@ -1680,9 +1710,14 @@ function Compensi({ user }) {
                           {/* Quello che ha gia' in tasca, accanto a quello che gli dobbiamo: sono
                               due numeri che si guardano insieme quando si decide quanto versargli. */}
                           {contantiTotaliDi(s) > 0 && (
-                            <span title="Incassi in contanti che ha ritirato dai clienti: non sono un compenso" style={{ color: '#166534' }}>
+                            <button
+                              type="button" disabled={inCorso === `contanti-${op.id}`}
+                              title="Incassi in contanti che ha ritirato dai clienti: non sono un compenso. Clic per ritirarli: passano in mano a BFM"
+                              onClick={(e) => { e.stopPropagation(); ritiraContanti(op.id, idPartiteDi(s), contantiTotaliDi(s)); }}
+                              style={{ color: '#166534', background: 'none', border: '1px dashed #86efac', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '0.85rem' }}
+                            >
                               💶 <strong>{euro(contantiTotaliDi(s))}</strong> in mano
-                            </span>
+                            </button>
                           )}
                           <span><strong>{euro(s.compenso + s.spese)}</strong> da pagare</span>
                           <button
