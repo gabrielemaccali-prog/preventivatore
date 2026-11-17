@@ -9,7 +9,7 @@
 // Niente React e niente Supabase: funzioni pure, come in fatturazione.js.
 // ============================================================
 import { siglaProvincia } from './utils.js';
-import { STATO_PREN, STATO_VOUCHER, statoPreventivoDi, annullataConPenale, etichettaStatoPrenDi, classeBadgeStatoDi } from './costanti.js';
+import { STATO_PREN, STATO_VOUCHER, statoPreventivoDi, annullataConPenale, trasformataInVoucher, etichettaStatoPrenDi, classeBadgeStatoDi } from './costanti.js';
 import { daFatturarePrenotazione } from './fatturazione.js';
 
 const pulito = (v) => String(v ?? '').trim();
@@ -24,7 +24,7 @@ const cifreTelefono = (v) => {
 
 // Un documento ridotto a quello che dice del cliente. `importo` è quello che il cliente ha
 // davvero speso: zero sui preventivi, che sono proposte, e sulle partite non confermate.
-const daPrenotazione = (p, valoreVoucher) => {
+const daPrenotazione = (p, valoreVoucher, valoreVoucherGenerato = 0) => {
   const azienda = p.fattTipo === 'azienda';
   return {
     fonte: 'prenotazione', rif: String(p.id), data: pulito(p.data).slice(0, 10), stato: p.stato || '',
@@ -44,8 +44,9 @@ const daPrenotazione = (p, valoreVoucher) => {
     citta: pulito(azienda ? p.aziCitta : p.fattCitta),
     provincia: siglaProvincia(azienda ? p.aziProvincia : p.fattProvincia),
     // Il voucher usato è già contato quando è stato venduto: qui va solo il saldo. Un'annullata
-    // fuori termine ci entra: la partita non si è giocata, ma il cliente quei soldi li ha spesi.
-    importo: (p.stato === STATO_PREN.CONFERMATO || annullataConPenale(p)) ? daFatturarePrenotazione(p, valoreVoucher) : 0,
+    // fuori termine ci entra: la partita non si è giocata, ma il cliente quei soldi li ha spesi. E
+    // anche quella diventata voucher: i soldi stanno lì, il voucher è solo il buono.
+    importo: (p.stato === STATO_PREN.CONFERMATO || annullataConPenale(p) || trasformataInVoucher(p)) ? daFatturarePrenotazione(p, valoreVoucher, 0, valoreVoucherGenerato) : 0,
   };
 };
 
@@ -58,7 +59,8 @@ const daVoucher = (v) => ({
   email: pulito(v.email).toLowerCase(), telefono: pulito(v.telefono),
   piva: '', cf: pulito(v.fattCF).toUpperCase(), sdi: '',
   indirizzo: pulito(v.fattIndirizzo), cap: pulito(v.fattCap), citta: pulito(v.fattCitta), provincia: siglaProvincia(v.fattProvincia),
-  importo: v.stato === STATO_VOUCHER.INCOMPLETO ? 0 : (parseFloat(v.importo) || 0),
+  // Un voucher nato da una partita annullata non è una spesa in più: i soldi sono già sulla partita.
+  importo: v.stato === STATO_VOUCHER.INCOMPLETO || v.daPosticipo ? 0 : (parseFloat(v.importo) || 0),
 });
 
 const daPreventivo = (pv) => ({
@@ -124,7 +126,7 @@ export const costruisciClienti = ({ prenotazioni = [], voucher = [], preventivi 
   const valoreVoucher = Object.fromEntries(voucher.map(v => [String(v.codice), parseFloat(v.importo) || 0]));
   const documenti = [
     ...prenotazioni.filter(p => !p.clienteSedeId && !p.clienteCampoId)
-      .map(p => daPrenotazione(p, p.voucherCodice ? valoreVoucher[String(p.voucherCodice)] || 0 : 0)),
+      .map(p => daPrenotazione(p, p.voucherCodice ? valoreVoucher[String(p.voucherCodice)] || 0 : 0, p.voucherGenerato ? valoreVoucher[String(p.voucherGenerato)] || 0 : 0)),
     ...voucher.map(daVoucher),
     ...preventivi.map(daPreventivo),
   ].filter(d => d.denominazione || d.email || d.telefono);

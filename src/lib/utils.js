@@ -1,4 +1,4 @@
-import { MOLTIPLICATORE_TARGET, SIGLE_PROVINCE, STATO_PREN, incassoTrattenutoDi } from './costanti.js';
+import { MOLTIPLICATORE_TARGET, SIGLE_PROVINCE, STATO_PREN, incassoTrattenutoDi, trasformataInVoucher } from './costanti.js';
 
 // Confronto "morbido" fra nomi di provincia: senza accenti, spazi, trattini e apostrofi, così
 // "Forlì-Cesena", "forli cesena" e "FORLI-CESENA" finiscono tutti sulla stessa chiave.
@@ -242,10 +242,12 @@ export const contantiIncassatiDi = (p) => (p?.pagamenti || [])
 
 // Di una partita annullata non c'e' niente da fatturare: non si e' giocata. Tranne quando e'
 // stata annullata fuori termine -- li' la fattura ce l'ha eccome, ma per il denaro trattenuto,
-// non per il prezzo del pacchetto.
+// non per il prezzo del pacchetto. E tranne quando e' diventata un voucher: i soldi incassati e la
+// loro fattura restano sulla partita (il voucher e' solo il buono), e un voucher nasce solo se un
+// incasso c'era.
 export const senzaFatturaDaEmettere = (p) => partitaInCompensazione(p)
   || (p?.stato === STATO_PREN.ANNULLATA
-    ? incassoTrattenutoDi(p) <= 0.01
+    ? !trasformataInVoucher(p) && incassoTrattenutoDi(p) <= 0.01
     : (parseFloat(p?.prezzoVendita) || 0) - (parseFloat(p?.voucherValore) || 0) - contantiIncassatiDi(p) <= 0.01);
 
 // L'anagrafica di fatturazione serve solo se una fattura va emessa.

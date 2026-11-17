@@ -7,7 +7,7 @@
 // Niente React e niente Supabase: funzioni pure, così l'abbinamento si può provare da solo.
 // ============================================================
 import { siglaProvincia } from './utils.js';
-import { STATO_ITALIA, STATO_PREN, incassoTrattenutoDi } from './costanti.js';
+import { STATO_ITALIA, STATO_PREN, incassoTrattenutoDi, trasformataInVoucher } from './costanti.js';
 
 // Sotto il centesimo due importi sono uguali: i lordi arrivano da conti con l'IVA e 1610,40 può
 // valere 1610,3999999.
@@ -27,14 +27,20 @@ export const sommaImporti = (righe) => (righe || []).reduce((s, r) => s + (parse
 // eccezione l'annullamento fuori termine, dove quello che si fattura e' il denaro trattenuto --
 // gia' al netto del voucher speso (fatturato a suo tempo) e dei contanti che nessuno ritirera'
 // mai, perche' e' quello che era davvero in cassa il giorno dell'annullamento.
-export const daFatturarePrenotazione = (p, valoreVoucher = 0, incassatoInContanti = 0) =>
+//
+// L'altra eccezione e' la partita annullata nei termini, diventata un voucher: i soldi incassati
+// restano suoi, con i loro pagamenti e la loro fattura, e il voucher e' solo il buono che il cliente
+// usera' riprenotando. Si fattura per quanto vale quel voucher (`valoreVoucherGenerato`), che e'
+// quello che era in cassa: il voucher non si fattura una seconda volta (vedi daFatturareVoucher).
+export const daFatturarePrenotazione = (p, valoreVoucher = 0, incassatoInContanti = 0, valoreVoucherGenerato = 0) =>
   p?.stato === STATO_PREN.ANNULLATA
-    ? incassoTrattenutoDi(p)
+    ? (trasformataInVoucher(p) ? (parseFloat(valoreVoucherGenerato) || 0) : incassoTrattenutoDi(p))
     : Math.max((parseFloat(p?.prezzoVendita) || 0) - (parseFloat(valoreVoucher) || 0) - (parseFloat(incassatoInContanti) || 0), 0);
 
 // Un voucher si fattura per il suo valore. Quelli pregressi sono stati venduti col vecchio
-// sistema e lì sono stati fatturati: qui non c'è niente da fare.
-export const daFatturareVoucher = (v) => (v?.pregresso ? 0 : (parseFloat(v?.importo) || 0));
+// sistema e lì sono stati fatturati: qui non c'è niente da fare. Nemmeno quelli nati da una partita
+// annullata (POST): il denaro e la sua fattura stanno sulla partita, il voucher è solo il buono.
+export const daFatturareVoucher = (v) => (v?.pregresso || v?.daPosticipo ? 0 : (parseFloat(v?.importo) || 0));
 
 // A che punto è la fatturazione. "fatturata" solo quando le fatture coprono tutto: è l'unico
 // caso in cui si mostra la spunta blu.
@@ -231,7 +237,7 @@ export const abbinaFatture = (lette, { prenotazioni = [], voucher = [], fatture 
     ...prenotazioni.map(p => ({
       tipo: 'prenotazione', riferimento: String(p.id), nome: p.nominativo || '', data: String(p.data || ''),
       chiavi: chiaviPren(p), nomi: nomiPren(p),
-      dovuto: daFatturarePrenotazione(p, p.voucherCodice ? valoreVoucher(p.voucherCodice) : 0, inContanti(String(p.id))),
+      dovuto: daFatturarePrenotazione(p, p.voucherCodice ? valoreVoucher(p.voucherCodice) : 0, inContanti(String(p.id)), p.voucherGenerato ? valoreVoucher(p.voucherGenerato) : 0),
     })),
     ...voucher.map(v => ({
       tipo: 'voucher', riferimento: String(v.codice), nome: v.nominativo || '', data: String(v.dataEmissione || '').slice(0, 10),

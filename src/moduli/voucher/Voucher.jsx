@@ -124,6 +124,10 @@ const dataValidita = (dataEmissione) => {
   base.setFullYear(base.getFullYear() + 1);
   return base.toISOString();
 };
+// Scaduto: passato l'anno di validità senza essere usato. Non è uno stato salvato: lo dice la data,
+// come per i preventivi. Un voucher usato non scade più: ha già fatto il suo lavoro.
+const oggiISO = () => new Date().toISOString().slice(0, 10);
+const scadutoVoucher = (v) => v.stato !== STATO_VOUCHER.USATO && !!v.dataEmissione && dataValidita(v.dataEmissione).slice(0, 10) < oggiISO();
 
 // Colonne della tabella voucher (Gestione e Storico): etichetta mostrata e valore su cui ordinare.
 // "Pagato / Totale" ordina sul totale, cioè sul valore del voucher.
@@ -133,14 +137,17 @@ const COLONNE_VOUCHER = [
   { chiave: 'stato', label: 'Stato', valore: (v) => v.stato || '' },
   { chiave: 'intestatario', label: 'Intestatario', valore: (v) => v.nominativo || '' },
   { chiave: 'pacchetto', label: 'Pacchetto', valore: (v) => v.pacchettoNome || '' },
-  { chiave: 'importo', label: 'Pagato / Totale / FT', valore: (v) => parseFloat(v.importo) || 0 },
+  { chiave: 'importo', label: 'Pagato / Totale', valore: (v) => parseFloat(v.importo) || 0 },
+  // Come sta la fattura, come nelle prenotazioni. Il valore di ordinamento viene sostituito nel
+  // componente, dove si sa quali fatture sono state emesse.
+  { chiave: 'fattura', label: 'FT', valore: () => '' },
 ];
 const VALORI_ORDINAMENTO_VOUCHER = Object.fromEntries(COLONNE_VOUCHER.map(c => [c.chiave, c.valore]));
 
 function Voucher({ user }) {
   const primaSchedaVoucher = ['gestione', 'config', 'storico'].find(s => puoVedere(user, 'voucher', s)) || 'gestione';
   const [currentView, setCurrentView] = useState(primaSchedaVoucher); // config | gestione | storico
-  const [gestioneTab, setGestioneTab] = useState("incompleti"); // incompleti | emessi | usati
+  const [gestioneTab, setGestioneTab] = useState("incompleti"); // incompleti | emessi | scaduti
   const [showFormVoucher, setShowFormVoucher] = useState(false); // form Nuovo/Modifica voucher come overlay
   const [mostraErroriValidazione, setMostraErroriValidazione] = useState(false); // evidenzia di rosso i campi obbligatori mancanti, solo dopo un tentativo di salvataggio
 
@@ -154,9 +161,22 @@ function Voucher({ user }) {
     supabase.from('fatture').select('riferimento, importo').eq('tipo', 'voucher')
       .then(({ data }) => setFattureVoucher(data || []));
   }, [voucherSalvati]);
-  const fatturatoPerIntero = (v) => statoFatturazione(
-    daFatturareVoucher(v), sommaImporti(fattureVoucher.filter(f => f.riferimento === String(v.codice)))
-  ) === 'fatturata';
+  const fatturatoDi = (v) => sommaImporti(fattureVoucher.filter(f => f.riferimento === String(v.codice)));
+  const fatturatoPerIntero = (v) => statoFatturazione(daFatturareVoucher(v), fatturatoDi(v)) === 'fatturata';
+  // Fatturato più di quello che c'era da fatturare: anche quando non c'era niente da fatturare.
+  const eccedenzaFatturata = (v) => fatturatoDi(v) - daFatturareVoucher(v);
+  // Un voucher può non avere niente da fatturare: si dice perché, come nelle prenotazioni.
+  const motivoNienteFattura = (v) => (v.pregresso
+    ? 'Venduto col vecchio sistema: è stato fatturato lì'
+    : v.daPosticipo
+      ? `Nato dalla partita annullata ${v.prenotazioneOrigine || ''}: la fattura è sulla partita`
+      : "Valore zero: non c'è niente da fatturare");
+  // Come sta la fattura, in una parola: ordina la colonna FT e decide il simbolo.
+  const statoFatturaVoucher = (v) => {
+    if (eccedenzaFatturata(v) > 0.01) return 'da controllare';
+    if (daFatturareVoucher(v) <= 0.01) return 'non dovuta';
+    return fatturatoPerIntero(v) ? 'fatturata' : 'da fatturare';
+  };
   const [prenotazioni, setPrenotazioni] = useState([]); // serve solo per sapere dove è stato usato un voucher
   const [nuovoPagamento, setNuovoPagamento] = useState(PAGAMENTO_VUOTO);
   // Un pagamento digitato ma non ancora aggiunto con "+ Pagamento" è una modifica a tutti gli
@@ -388,7 +408,7 @@ function Voucher({ user }) {
       pIva: formaCodice(form.pIva) || null,
       cfAzienda: formaCodice(form.cfAzienda) || null,
       sdi: formaCodice(form.sdi) || null,
-      statoPagamento: statoPagamentoDi(form.pagamenti, form.importo),
+      statoPagamento: form.daPosticipo ? 'saldato' : statoPagamentoDi(form.pagamenti, form.importo),
       stato
     };
 
@@ -412,7 +432,7 @@ function Voucher({ user }) {
       if (error) { console.error(error); setSalvataggioVoucher(false); alert("Errore durante l'aggiornamento del voucher."); return; }
     }
 
-    await sincronizzaPagamenti(codiceFinale, form.pagamenti);
+    if (!form.daPosticipo) await sincronizzaPagamenti(codiceFinale, form.pagamenti);
 
     const salvato = { ...form, stato, dataEmissione: form.dataEmissione || new Date().toISOString() };
     setForm(salvato);
@@ -560,7 +580,11 @@ function Voucher({ user }) {
   };
 
   // Ordinamento condiviso da Gestione e Storico: la tabella è la stessa, quindi lo è anche il criterio scelto.
-  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella(VALORI_ORDINAMENTO_VOUCHER);
+  const { ordina, propsTestata, frecciaOrdinamento } = useOrdinamentoTabella({
+    ...VALORI_ORDINAMENTO_VOUCHER,
+    // Ordinando per FT vengono prima quelli da fatturare, che sono il lavoro da fare.
+    fattura: (v) => statoFatturaVoucher(v),
+  });
 
   // ====================== TABELLA CONDIVISA (Gestione / Storico) ======================
   // Il clic sulla riga espande il pannello con i dettagli di fatturazione e le azioni.
@@ -579,27 +603,36 @@ function Voucher({ user }) {
           <td style={{ padding: '12px' }}>
             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             <strong>{v.codice}</strong>
-            {v.pregresso && <span className="badge-stato pregresso" style={{ marginLeft: '6px' }}>pregresso</span>}
+            {/* Non è uno stato a parte -- vive come tutti gli altri -- ma dice da dove arriva: non un
+                regalo comprato, una partita annullata che tornerà. */}
+            {v.daPosticipo && <span className="badge-stato badge-mini" style={{ marginLeft: '6px', background: '#ede9fe', color: '#5b21b6' }} title={`Nato dalla partita annullata ${v.prenotazioneOrigine || ''}`}>POST</span>}
           </td>
           <td style={{ padding: '12px', color: '#777', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{formattaDataIT(v.dataEmissione)}</td>
           <td style={{ padding: '12px' }}>
             <span className={`badge-stato badge-mini ${classeBadgeStato(v.stato)}`}>{etichettaStatoVoucher(v.stato)}</span>
-            {/* Non è uno stato a parte -- vive come tutti gli altri -- ma dice da dove arriva il
-                denaro: non un regalo comprato, una partita saltata che tornerà. */}
-            {v.daPosticipo && <span className="badge-stato badge-mini" style={{ marginLeft: '4px', background: '#ede9fe', color: '#5b21b6' }} title={`Nato dal posticipo di ${v.prenotazioneOrigine || 'una prenotazione'}`}>POST</span>}
+            {scadutoVoucher(v) && <span className="badge-stato badge-mini" style={{ marginLeft: '4px', background: '#fee2e2', color: '#991b1b' }} title={`Valido fino al ${formattaDataIT(dataValidita(v.dataEmissione))}`}>SCADUTO</span>}
           </td>
           <td style={{ padding: '12px' }}>👤 {v.nominativo}</td>
           <td style={{ padding: '12px', fontSize: '0.85rem', color: '#555' }}>{v.pacchettoNome ? `${v.pacchettoNome} — ` : ''}€{(parseFloat(v.importo) || 0).toFixed(2)}</td>
           <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
             {v.pregresso ? (
               <span style={{ color: '#94a3b8' }}>incassato col vecchio sistema</span>
+            ) : v.daPosticipo ? (
+              <span style={{ color: '#94a3b8' }}>incassato su {v.prenotazioneOrigine || 'la partita annullata'}</span>
             ) : (
               <>
                 <span title={`pagamento ${statoPag}`} style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: pagColore, marginRight: '6px' }}></span>
                 €{totPagato.toFixed(2)} <span style={{ color: '#94a3b8' }}>/ €{(parseFloat(v.importo) || 0).toFixed(2)}</span>
-                {fatturatoPerIntero(v) && <span title="Fatturato per intero" style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: '#0284c7', marginLeft: '6px' }}></span>}
               </>
             )}
+          </td>
+          {/* FT: il rosso viene prima di tutto, poi "non si fattura" col suo perché, poi il pallino blu. */}
+          <td style={{ padding: '12px', whiteSpace: 'nowrap', textAlign: 'center' }}>
+            {statoFatturaVoucher(v) === 'da controllare'
+              ? <span title={`Fatturato €${fatturatoDi(v).toFixed(2)} a fronte di €${daFatturareVoucher(v).toFixed(2)} da fatturare: €${eccedenzaFatturata(v).toFixed(2)} di troppo`} style={{ color: '#dc2626', fontWeight: 'bold' }}>⚠</span>
+              : statoFatturaVoucher(v) === 'non dovuta'
+                ? <span title={motivoNienteFattura(v)} style={{ color: '#94a3b8', fontWeight: 'bold' }}>⊘</span>
+                : fatturatoPerIntero(v) && <span title="Fatturato per intero" style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: '#0284c7' }}></span>}
           </td>
         </tr>
         {espansa && (
@@ -607,7 +640,13 @@ function Voucher({ user }) {
             <td colSpan={COLONNE_VOUCHER.length} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.82rem', color: '#334155' }}>
-                  <div><span style={{ color: '#94a3b8' }}>Codice </span><strong>{v.codice}</strong></div>
+                  {v.stato !== STATO_VOUCHER.USATO && v.dataEmissione && (
+                    <div><span style={{ color: '#94a3b8' }}>{scadutoVoucher(v) ? 'Scaduto il ' : 'Valido fino al '}</span>{formattaDataIT(dataValidita(v.dataEmissione))}</div>
+                  )}
+                  <div><span style={{ color: '#94a3b8' }}>Codice </span><strong>{v.codice}</strong>
+                    {/* Un buono del vecchio sistema si dice qui, non nella riga: nell'elenco è un voucher come gli altri. */}
+                    {v.pregresso && <span className="badge-stato badge-mini pregresso" style={{ marginLeft: '6px' }}>pregresso</span>}
+                  </div>
                   {(v.telefono || v.email) && (
                     <div><span style={{ color: '#94a3b8' }}>Contatti </span>{[v.telefono, v.email].filter(Boolean).join(' · ')}</div>
                   )}
@@ -620,11 +659,12 @@ function Voucher({ user }) {
                         : (v.fattNome || v.fattCognome ? `${v.fattNome || ''} ${v.fattCognome || ''}`.trim() : <em style={{ color: '#999' }}>Da completare</em>)}</div>
                       {(v.fattNome || v.fattCognome) && v.fattIndirizzo && <div><span style={{ color: '#94a3b8' }}>Indirizzo </span>{v.fattIndirizzo}</div>}
                       {(v.fattNome || v.fattCognome) && v.fattCF && <div><span style={{ color: '#94a3b8' }}>Codice fiscale </span>{v.fattCF}</div>}
-                      <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(v.pagamenti && v.pagamenti.length > 0) ? v.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${formattaDataGGMMAAAA(pg.data)}`).join(', ') : 'nessuno'} <em style={{ color: '#94a3b8' }}>({statoPag})</em></div>
+                      {!v.daPosticipo && <div><span style={{ color: '#94a3b8' }}>Pagamenti </span>{(v.pagamenti && v.pagamenti.length > 0) ? v.pagamenti.map(pg => `€${(parseFloat(pg.importo) || 0).toFixed(2)} il ${formattaDataGGMMAAAA(pg.data)}`).join(', ') : 'nessuno'} <em style={{ color: '#94a3b8' }}>({statoPag})</em></div>}
                     </>
                   )}
                   {v.daPosticipo && (
-                    <div><span style={{ color: '#94a3b8' }}>Da posticipo </span>{v.prenotazioneOrigine || <em style={{ color: '#999' }}>prenotazione non indicata</em>}</div>
+                    <div><span style={{ color: '#94a3b8' }}>Da posticipo </span>{v.prenotazioneOrigine || <em style={{ color: '#999' }}>prenotazione non indicata</em>}
+                      <span style={{ color: '#94a3b8' }}> · pagamenti e fattura sono sulla partita</span></div>
                   )}
                   {v.stato === STATO_VOUCHER.USATO && (
                     <div><span style={{ color: '#94a3b8' }}>Usato su </span>{prenUso ? `${prenUso.id} — ${prenUso.nominativo || ''} (${prenUso.data || ''})` : <em style={{ color: '#999' }}>prenotazione non trovata</em>}</div>
@@ -883,8 +923,9 @@ function Voucher({ user }) {
           </div>
         </div>
 
-        {/* Pagamenti del voucher: righe della tabella unica "pagamenti" (nessun voucher usabile come pagamento, ovviamente) */}
-        <div className="sezione">
+        {/* Pagamenti del voucher: righe della tabella unica "pagamenti" (nessun voucher usabile come pagamento, ovviamente).
+            Un voucher POST non ne ha: i soldi stanno sulla partita annullata da cui è nato. */}
+        {!form.daPosticipo && <div className="sezione">
           <h2>Pagamenti</h2>
           <div className="sotto-sezione" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
             <h3>Stato pagamento: <span style={{ fontSize: '0.8rem', fontWeight: 'bold', padding: '3px 10px', borderRadius: '10px', textTransform: 'none', letterSpacing: 0, background: statoPag === 'saldato' ? '#dcfce7' : statoPag === 'acconto' ? '#fef9c3' : '#fee2e2', color: statoPag === 'saldato' ? '#166534' : statoPag === 'acconto' ? '#854d0e' : '#991b1b' }}>{statoPag}</span></h3>
@@ -931,7 +972,7 @@ function Voucher({ user }) {
               </p>
             )}
           </div>
-        </div>
+        </div>}
 
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn-preventivo btn-accent" style={{ width: 'auto', flex: '1 1 auto', marginTop: 0 }} onClick={salvaVoucher} disabled={salvataggioVoucher}>{salvataggioVoucher ? 'Salvataggio…' : (codiceInModifica ? '💾 Salva modifiche' : '💾 Salva Voucher')}</button>
@@ -1103,15 +1144,20 @@ function Voucher({ user }) {
 
       {/* ===================== GESTIONE (sotto-schede per stato) ===================== */}
       {currentView === "gestione" && puoVedere(user, 'voucher', 'gestione') && (() => {
-        const incompleti = voucherSalvati.filter(v => v.stato === STATO_VOUCHER.INCOMPLETO);
-        const emessi = voucherSalvati.filter(v => v.stato === STATO_VOUCHER.EMESSO);
-        const usati = voucherSalvati.filter(v => v.stato === STATO_VOUCHER.USATO);
-        const liste = { incompleti, emessi, usati };
-        const messaggiVuoto = {
-          incompleti: "Nessun voucher da completare.",
-          emessi: "Nessun voucher emesso in attesa di essere usato.",
-          usati: "Nessun voucher usato.",
-        };
+        // I voucher hanno un anno di validità: quelli scaduti senza essere usati stanno a parte, fuori
+        // da Incompleti ed Emessi. Gli usati non servono qui: sono nello Storico.
+        const incompleti = voucherSalvati.filter(v => v.stato === STATO_VOUCHER.INCOMPLETO && !scadutoVoucher(v));
+        const emessi = voucherSalvati.filter(v => v.stato === STATO_VOUCHER.EMESSO && !scadutoVoucher(v));
+        const scaduti = voucherSalvati.filter(scadutoVoucher);
+        // Come nelle prenotazioni: una sotto-scheda vuota non si mostra, e se quella scelta si svuota
+        // si passa alla prima che ha ancora qualcosa.
+        const schede = [
+          { chiave: 'incompleti', etichetta: 'Incompleti', icona: 'daCompletare', lista: incompleti },
+          { chiave: 'emessi', etichetta: 'Emessi', icona: 'nuovoVoucher', lista: emessi },
+          { chiave: 'scaduti', etichetta: 'Scaduti', icona: 'calendario', lista: scaduti },
+        ];
+        const visibili = schede.filter(sc => sc.lista.length > 0);
+        const attiva = visibili.find(sc => sc.chiave === gestioneTab) || visibili[0];
         return (
           <div className="schermata-storico no-print">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -1123,13 +1169,19 @@ function Voucher({ user }) {
                 <button className="btn-preventivo btn-accent" style={{ width: 'auto', marginTop: 0, padding: '8px 16px' }} onClick={nuovoVoucherOverlay}>➕ Nuovo</button>
               </div>
             </div>
-            <p className="descrizione-pagina">Voucher raggruppati per stato: completa i dati di fatturazione e registra i pagamenti. Un voucher passa a <strong>usato</strong> solo quando viene selezionato su una prenotazione.{user.isAdmin && <> I buoni del vecchio sistema si registrano con <strong>Pregresso</strong>, quando il cliente li vuole usare.</>}</p>
-            <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
-              <button className={`nav-btn ${gestioneTab === 'incompleti' ? 'active' : ''}`} onClick={() => setGestioneTab('incompleti')}><Icona nome="daCompletare" />Incompleti ({incompleti.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'emessi' ? 'active' : ''}`} onClick={() => setGestioneTab('emessi')}><Icona nome="nuovoVoucher" />Emessi ({emessi.length})</button>
-              <button className={`nav-btn ${gestioneTab === 'usati' ? 'active' : ''}`} onClick={() => setGestioneTab('usati')}><Icona nome="completate" />Usati ({usati.length})</button>
-            </nav>
-            {tabellaVoucher(liste[gestioneTab], messaggiVuoto[gestioneTab])}
+            <p className="descrizione-pagina">Voucher raggruppati per stato: completa i dati di fatturazione e registra i pagamenti. Un voucher passa a <strong>usato</strong> solo quando viene selezionato su una prenotazione (gli usati sono nello Storico); vale un anno dall'emissione, poi è <strong>scaduto</strong>.{user.isAdmin && <> I buoni del vecchio sistema si registrano con <strong>Pregresso</strong>, quando il cliente li vuole usare.</>}</p>
+            {visibili.length > 0 && (
+              <nav className="modulo-subnav subnav-segmented" style={{ margin: '10px 0' }}>
+                {visibili.map(sc => (
+                  <button key={sc.chiave} className={`nav-btn ${attiva?.chiave === sc.chiave ? 'active' : ''}`} onClick={() => setGestioneTab(sc.chiave)}>
+                    <Icona nome={sc.icona} />{sc.etichetta} ({sc.lista.length})
+                  </button>
+                ))}
+              </nav>
+            )}
+            {attiva
+              ? tabellaVoucher(attiva.lista, '')
+              : <p style={{ color: '#666', padding: '20px 0' }}>Nessun voucher da gestire: tutto in ordine.</p>}
           </div>
         );
       })()}

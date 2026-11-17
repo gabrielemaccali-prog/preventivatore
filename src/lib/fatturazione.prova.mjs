@@ -2,7 +2,7 @@
 // si esegue con
 //   npm run prova:fatturazione
 // Gira in Node senza dev server né browser, perché fatturazione.js è fatto di sole funzioni pure.
-import { abbinaFatture, daFatturarePrenotazione } from './fatturazione.js';
+import { abbinaFatture, daFatturarePrenotazione, daFatturareVoucher } from './fatturazione.js';
 import { STATO_PREN } from './costanti.js';
 
 const esiti = [];
@@ -45,7 +45,7 @@ verifica('il contante esce dal resto, come nella tabella', [['PRN-1', 250], ['PR
 // ragione sociale, e il voucher si deve riconoscere lo stesso.
 const voucherAzienda = {
   codice: 'VCH-2026-1001', dataEmissione: '2026-10-20', importo: 300, nominativo: 'Rossi Anna',
-  fattTipo: 'azienda', ragioneSociale: 'Acme Srl', pIva: '12345678903', daPosticipo: true,
+  fattTipo: 'azienda', ragioneSociale: 'Acme Srl', pIva: '12345678903',
 };
 const perAzienda = abbinaFatture(
   [{ data: '2026-10-22', numero: '201', cliente: 'Acme Srl', cf: '', piva: '12345678903', centro: '', importo: 300 }],
@@ -83,6 +83,17 @@ verifica('il trattenuto non si scala di nuovo del voucher ne dei contanti', 100,
 // l'acconto se n'e' andato nel voucher, che si fattura per conto suo.
 verifica('annullata senza trattenuto: niente da fatturare', 0, daFatturarePrenotazione({ ...fuoriTermine, incassoTrattenuto: null }, 0, 0));
 verifica('confermata: dal prezzo si tolgono voucher e contanti', 120, daFatturarePrenotazione({ ...fuoriTermine, stato: STATO_PREN.CONFERMATO, incassoTrattenuto: null }, 60, 40));
+// ---------- annullata diventata voucher: soldi e fattura restano sulla partita ----------
+const diventataVoucher = { ...fuoriTermine, incassoTrattenuto: null, voucherGenerato: 'BR20261107' };
+verifica('annullata diventata voucher: si fattura il valore del voucher', 150, daFatturarePrenotazione(diventataVoucher, 0, 0, 150));
+verifica('annullata diventata voucher: il prezzo del pacchetto non conta', 150, daFatturarePrenotazione(diventataVoucher, 60, 40, 150));
+verifica('il voucher nato da una partita annullata non si fattura', 0, daFatturareVoucher({ importo: 150, daPosticipo: true }));
+verifica('un voucher venduto si fattura per il suo valore', 150, daFatturareVoucher({ importo: 150 }));
+const conVoucherPost = abbinaFatture(
+  [{ data: '2026-11-08', numero: '210', cliente: 'Rossi Mario', cf: cliente.fattCF, piva: '', centro: '', importo: 150 }],
+  { prenotazioni: [diventataVoucher], voucher: [{ codice: 'BR20261107', importo: 150, daPosticipo: true, nominativo: 'Rossi Mario', fattCF: cliente.fattCF }], valoreVoucher: () => 150 },
+).proposte[0];
+verifica('la fattura di una partita diventata voucher va sulla partita', [['PRN-9', 150]], parti(conVoucherPost));
 verifica('confermata: si fattura il prezzo, come sempre', 220, daFatturarePrenotazione({ ...fuoriTermine, stato: STATO_PREN.CONFERMATO, incassoTrattenuto: null }));
 
 // E l'abbinamento la trova: la fattura della penale arriva come tutte le altre.

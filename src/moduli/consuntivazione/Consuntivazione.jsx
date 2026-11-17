@@ -5,7 +5,7 @@ import { puoVedere } from '../../lib/permessi'
 import { useOrdinamentoTabella } from '../../lib/ordinamentoTabella'
 import Icona from '../../components/Icona'
 import { fineEventoDi, formattaDataGGMMAAAA, locationBreveDi, incassatoDi, statoIncassoDi } from '../../lib/utils'
-import { ePregressa, STATO_PREN, etichettaStatoPrenDi, etichettaStatoVoucher, classeBadgeStato, classeBadgeStatoDi, annullataConPenale, incassoTrattenutoDi } from '../../lib/costanti'
+import { ePregressa, STATO_PREN, etichettaStatoPrenDi, etichettaStatoVoucher, classeBadgeStato, classeBadgeStatoDi, annullataConPenale, incassoTrattenutoDi, trasformataInVoucher } from '../../lib/costanti'
 import {
   sommaImporti, statoFatturazione, daFatturarePrenotazione, daFatturareVoucher,
   righeClientiExport, leggiExportFatture, abbinaFatture,
@@ -126,7 +126,8 @@ function Consuntivazione({ user }) {
   // Ci sta anche una partita annullata fuori termine: non si e' giocata, ma l'acconto e' rimasto
   // a noi e quello va fatturato, per il trattenuto e non per il prezzo del pacchetto.
   // Le pregresse sono già fatturate dalla vecchia gestione: restano fuori, anche ora che sono confermate.
-  const fatturabili = useMemo(() => prenotazioni.filter(p => !ePregressa(p) && (p.stato === STATO_PREN.CONFERMATO || annullataConPenale(p)) && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
+  // E una partita annullata diventata voucher: i soldi e la fattura restano suoi, il voucher è solo il buono.
+  const fatturabili = useMemo(() => prenotazioni.filter(p => !ePregressa(p) && (p.stato === STATO_PREN.CONFERMATO || annullataConPenale(p) || trasformataInVoucher(p)) && !p.clienteSedeId && !p.clienteCampoId), [prenotazioni]);
   // Quanto di una prenotazione è stato incassato in contanti: non si fattura. Lo usano la tabella e
   // l'import, che devono dire lo stesso "da fatturare".
   const inContantiDi = useMemo(() => (id) => (pagamentiPer[`prenotazione|${id}`] || [])
@@ -136,17 +137,19 @@ function Consuntivazione({ user }) {
     const valore = (codice) => parseFloat(voucherPerCodice[String(codice)]?.importo) || 0;
     const daPrenotazioni = fatturabili.map(p => {
       const lista = fatturePer[`prenotazione|${p.id}`] || [];
-      const dovuto = daFatturarePrenotazione(p, p.voucherCodice ? valore(p.voucherCodice) : 0, inContantiDi(p.id));
+      const generato = p.voucherGenerato ? valore(p.voucherGenerato) : 0;
+      const dovuto = daFatturarePrenotazione(p, p.voucherCodice ? valore(p.voucherCodice) : 0, inContantiDi(p.id), generato);
       const fatturato = sommaImporti(lista);
       return {
         tipo: 'prenotazione', codice: String(p.id), data: p.data, fine: fineEventoDi(p), intestatario: intestatarioPren(p),
-        descrizione: [p.pacchettoNome || '', annullataConPenale(p) ? 'penale di annullamento' : ''].filter(Boolean).join(' · '),
-        location: locationBreveDi(p), totale: annullataConPenale(p) ? incassoTrattenutoDi(p) : (parseFloat(p.prezzoVendita) || 0),
+        descrizione: [p.pacchettoNome || '', annullataConPenale(p) ? 'penale di annullamento' : '', trasformataInVoucher(p) ? `annullata, diventata il voucher ${p.voucherGenerato}` : ''].filter(Boolean).join(' · '),
+        location: locationBreveDi(p), totale: annullataConPenale(p) ? incassoTrattenutoDi(p) : trasformataInVoucher(p) ? generato : (parseFloat(p.prezzoVendita) || 0),
         voucher: p.voucherCodice ? { codice: p.voucherCodice, valore: valore(p.voucherCodice) } : null,
         dovuto, fatturato, fatture: lista, stato: statoFatturazione(dovuto, fatturato), origine: p,
       };
     });
-    const daVoucher = voucher.filter(v => !v.pregresso).map(v => {
+    // Un voucher nato da una partita annullata si fattura sulla partita, non qui.
+    const daVoucher = voucher.filter(v => !v.pregresso && !v.daPosticipo).map(v => {
       const lista = fatturePer[`voucher|${v.codice}`] || [];
       const dovuto = daFatturareVoucher(v);
       const fatturato = sommaImporti(lista);
@@ -279,7 +282,7 @@ function Consuntivazione({ user }) {
       const lette = leggiExportFatture(XLSX, await file.arrayBuffer());
       const esito = abbinaFatture(lette, {
         prenotazioni: fatturabili,
-        voucher: voucher.filter(v => !v.pregresso),
+        voucher: voucher.filter(v => !v.pregresso && !v.daPosticipo),
         fatture,
         valoreVoucher,
         inContanti: inContantiDi,

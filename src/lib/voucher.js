@@ -52,7 +52,8 @@ export const voucherDaPrenotazione = (p, importo) => ({
   ragioneSociale: p.ragioneSociale || null, aziIndirizzo: p.aziIndirizzo || null, aziCap: p.aziCap || null,
   aziCitta: p.aziCitta || null, aziProvincia: p.aziProvincia || null,
   pIva: p.pIva || null, cfAzienda: p.cfAzienda || null, sdi: p.sdi || null,
-  // I soldi ci sono già: è il motivo per cui il voucher esiste.
+  // I soldi ci sono già, ma restano sulla partita annullata con i loro pagamenti e la loro fattura:
+  // il voucher non ha pagamenti suoi, e si dice saldato perché il cliente non deve niente.
   statoPagamento: 'saldato',
   stato: campiFatturazioneMancanti(p).length === 0 ? STATO_VOUCHER.EMESSO : STATO_VOUCHER.INCOMPLETO,
   daPosticipo: true,

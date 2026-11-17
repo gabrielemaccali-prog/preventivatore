@@ -479,7 +479,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         ...p,
         pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", contanti: !!x.contanti, ritiratoDa: x.ritirato_da ?? "", consegnatiBfmIl: x.consegnati_bfm_il || null, gruppo: x.gruppo || null, movimentoId: x.movimento_id ?? null })),
         // valore dell'eventuale voucher usato: conta come pagamento pur non essendo una riga di pagamenti
-        voucherValore: parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherCodice))?.importo) || 0
+        voucherValore: parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherCodice))?.importo) || 0,
+        // valore del voucher nato da questa partita annullata: è quanto la partita deve fatturare
+        voucherGeneratoValore: p.voucherGenerato ? parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherGenerato))?.importo) || 0 : 0
       }));
       setPrenotazioni(conPagamenti.sort((a, b) => `${b.data}T${b.oraInizio || '00:00'}`.localeCompare(`${a.data}T${a.oraInizio || '00:00'}`)));
     }
@@ -1124,12 +1126,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     setDialogoAnnullamento({ p, nuovoStato, spiegazione, incassato });
   };
 
-  // Il voucher che nasce da una partita saltata, e il denaro che gli va dietro.
-  //
-  // Pagamenti e fatture si spostano invece di essere ricopiati: lo stesso incasso non puo' stare
-  // in due posti, o verrebbe contato due volte -- una sulla partita annullata e una sulla
-  // prenotazione nuova, quando il voucher si usa. La fattura, se c'era, resta una sola e segue i
-  // soldi: non se ne emette un'altra.
+  // Il voucher che nasce da una partita saltata. È solo il buono che il cliente userà riprenotando:
+  // il denaro resta sulla partita annullata, con i suoi pagamenti (legati alla banca) e la sua
+  // fattura, ed è lì che si fattura per il valore del voucher (vedi daFatturarePrenotazione). Il
+  // voucher non ha pagamenti suoi e non si fattura: quando si usa, la partita nuova fattura solo il resto.
   const creaVoucherDaPosticipo = async (p, importo) => {
     const codice = await prossimoCodiceVoucher(supabase);
     const { error } = await supabase.from('voucher').insert([{ codice, ...voucherDaPrenotazione(p, importo) }]);
@@ -1140,14 +1140,6 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
     }
     return codice;
   };
-  const spostaIncassiSulVoucher = async (p, codice) => {
-    const pag = await supabase.from('pagamenti').update({ tipo: 'voucher', riferimento: codice }).eq('tipo', 'prenotazione').eq('riferimento', p.id);
-    const fat = await supabase.from('fatture').update({ tipo: 'voucher', riferimento: codice }).eq('tipo', 'prenotazione').eq('riferimento', p.id);
-    if (pag.error || fat.error) {
-      console.error(pag.error || fat.error);
-      alert(`Il voucher ${codice} è stato creato, ma pagamenti o fattura di ${p.id} non si sono spostati. Vanno spostati a mano.`);
-    }
-  };
   // Su una partita gia' annullata si cambia solo il perche': lo stato resta quello, e
   // i costi da sostenere non si richiedono (si erano gia' chiesti annullandola).
   const cambiaMotivoAnnullamento = (p) => setDialogoAnnullamento({ p, nuovoStato: p.stato, modifica: true });
@@ -1155,13 +1147,12 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   const confermaAnnullamento = async ({ categoria, nota, destinazione = 'voucher' }) => {
     const { p, nuovoStato, modifica, incassato = 0 } = dialogoAnnullamento;
     const modifiche = { stato: nuovoStato, categoriaAnnullamento: categoria, motivoAnnullamento: nota || null };
-    // Fuori termine non si crea e non si sposta niente: pagamenti e fattura restano dove sono,
-    // sulla prenotazione, perche' e' la prenotazione che va fatturata. Un voucher speso su questa
+    // Pagamenti e fattura restano sempre dove sono, sulla prenotazione, perche' e' la prenotazione
+    // che va fatturata: fuori termine per il trattenuto, nei termini per il valore del voucher. Un voucher speso su questa
     // partita non torna disponibile: anche quello se l'e' giocato.
     const trattiene = !modifica && incassato > 0 && destinazione === 'trattenuto';
     if (trattiene) modifiche.incassoTrattenuto = incassato;
-    // Prima il voucher: se non riesce non si e' toccato niente e si puo' riprovare. I soldi si
-    // spostano solo dopo che la prenotazione e' stata annullata davvero.
+    // Prima il voucher: se non riesce non si e' toccato niente e si puo' riprovare.
     let codiceVoucher = null;
     if (!modifica && incassato > 0 && !trattiene) {
       codiceVoucher = await creaVoucherDaPosticipo(p, incassato);
@@ -1176,13 +1167,12 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       return alert(`Errore nell'annullamento: ${error.message}\n\nServono gli script sql/voucher_da_posticipo.sql e sql/prenotazioni_incasso_trattenuto.sql.`);
     }
     if (codiceVoucher) {
-      await spostaIncassiSulVoucher(p, codiceVoucher);
       // Un voucher usato su questa partita torna disponibile: il cliente non l'ha speso.
       if (p.voucherCodice) {
         await supabase.from('voucher').update({ stato: STATO_VOUCHER.EMESSO }).eq('codice', p.voucherCodice);
         await supabase.from('prenotazioni').update({ voucherCodice: null }).eq('id', p.id);
       }
-      alert(`${p.id} annullata. I €${incassato.toFixed(2)} già incassati sono diventati il voucher ${codiceVoucher}.`);
+      alert(`${p.id} annullata. Il cliente ha il voucher ${codiceVoucher} da €${incassato.toFixed(2)}: i pagamenti e la fattura restano su ${p.id}.`);
     }
     if (trattiene) {
       alert(`${p.id} annullata fuori termine. I €${incassato.toFixed(2)} già incassati restano a noi: la prenotazione va fatturata per quell'importo.`);
@@ -1275,7 +1265,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   // Quanto c'e' da fatturare: il prezzo meno il voucher -- gia' fatturato quando e' stato venduto
   // -- e meno i contanti, che in fattura non ci vanno. Senza togliere i contanti una partita
   // incassata meta' in contanti e fatturata per il resto risultava sempre incompleta.
-  const dovutoDaFatturare = (p) => daFatturarePrenotazione(p, p.voucherValore, contantiDi(p));
+  const dovutoDaFatturare = (p) => daFatturarePrenotazione(p, p.voucherValore, contantiDi(p), p.voucherGeneratoValore);
   const fatturatoDi = (p) => sommaImporti(fatturePren.filter(f => f.riferimento === String(p.id)));
   // Spunta blu solo quando le fatture coprono tutto quello che c'e' da fatturare.
   const fatturataPerIntero = (p) => statoFatturazione(dovutoDaFatturare(p), fatturatoDi(p)) === 'fatturata';
@@ -1284,7 +1274,7 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
   // Il motivo si dice per esteso, perche' "non si fattura" senza il perche' sembra una dimenticanza.
   const motivoNienteFattura = (p) => {
     if (p.stato === STATO_PREN.ANNULLATA) return p.voucherGenerato
-      ? `Annullata: l'incasso è diventato il voucher ${p.voucherGenerato}, che si fattura per conto suo`
+      ? `Annullata: il cliente ha il voucher ${p.voucherGenerato}, ma l'incasso e la fattura restano qui`
       : 'Annullata: la partita non si è giocata, non c\'è niente da fatturare';
     if (partitaInCompensazione(p)) return 'In compensazione con il cliente: non si fattura, si scala dal suo conto';
     if ((parseFloat(p.prezzoVendita) || 0) <= 0.01) return 'Prezzo zero (omaggio o promozionale): non c\'è niente da fatturare';
