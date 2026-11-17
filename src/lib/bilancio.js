@@ -5,7 +5,8 @@
 // ignorato) finisce in una riga sola, quindi il risultato finale è la variazione del saldo. Se non lo
 // è, qualcosa non è classificato, e lo dice la riga "Da classificare".
 //
-//   ricavi operativi   accrediti abbinati ai pagamenti di prenotazioni e voucher
+//   ricavi operativi   accrediti abbinati ai pagamenti di prenotazioni e voucher; le prenotazioni
+//                      per chi fa il gioco (BFM o un'altra sede), pacchetto o noleggio, e gioco
 //   costi operativi    spese operative: compensi dei bubbler, affitti dei campi, fornitori
 //   = risultato operativo
 //   altri ricavi       accrediti generali, per categoria degli incassi
@@ -58,6 +59,39 @@ const ordina = (voce) => {
   return voce;
 };
 
+// Come si legge l'incasso di una prenotazione: da chi fa il gioco, poi pacchetto o noleggio, poi il
+// gioco (deciso dall'utente il 17/11/2026):
+//   BFM › Pacchetti › gioco          i pacchetti da campo, coi giochi nostri
+//   BFM › Noleggi › gioco            le righe dei noleggi coi giochi nostri, e i servizi extra
+//   Altre sedi › sede › gioco        le righe dei noleggi coi giochi di un fornitore
+// Una prenotazione con le righe (un noleggio da preventivo, o due giochi) si divide fra le righe in
+// proporzione al loro ricavo; senza righe è tutta del suo gioco. Restituisce [{ percorso, peso }].
+export const ripartizionePrenotazione = (p, { pacchetti = [], giochi = [], sedi = [] } = {}) => {
+  const pacchetto = pacchetti.find(k => k.id === p?.pacchettoId);
+  const righe = (p?.voci || []).filter(v => (Number(v.ricavo) || 0) > 0);
+  // Un noleggio è un pacchetto a location libera; senza pacchetto, lo dice l'avere le righe.
+  const tipo = (pacchetto ? pacchetto.locationTipo !== 'campi' : righe.length > 0) ? 'Noleggi' : 'Pacchetti';
+  const nomeGioco = (id) => giochi.find(g => String(g.id) === String(id))?.nome;
+  if (righe.length === 0) return [{ percorso: ['BFM', tipo, nomeGioco(p?.giocoId) || p?.pacchettoNome || 'Gioco non indicato'], peso: 1 }];
+  return righe.map(v => {
+    const sede = sedi.find(x => (v.sedeId && x.id === v.sedeId) || (!v.sedeId && v.sede && x.nome === v.sede));
+    const nome = nomeGioco(v.giocoId) || v.nome || 'Gioco non indicato';
+    // Una riga senza sede (un servizio extra) la facciamo noi.
+    return { percorso: !sede || sede.bfm ? ['BFM', tipo, nome] : ['Altre sedi', sede.nome, nome], peso: Number(v.ricavo) || 0 };
+  });
+};
+// Un importo diviso in parti proporzionali ai pesi, al centesimo: l'ultima prende il resto, così la
+// somma torna sempre (il bilancio si controlla con la variazione del saldo).
+const dividi = (totale, parti) => {
+  const somma = parti.reduce((t, x) => t + x.peso, 0);
+  let resto = r2(totale);
+  return parti.map((x, i) => {
+    const q = i === parti.length - 1 ? resto : r2(somma > 0 ? totale * x.peso / somma : totale / parti.length);
+    resto = r2(resto - q);
+    return { ...x, importo: q };
+  });
+};
+
 // Il percorso di una categoria a due livelli: [categoria, sottocategoria] oppure [categoria].
 const percorsoDi = (categorie, id) => {
   const c = (categorie || []).find(x => x.id === id);
@@ -68,19 +102,38 @@ const percorsoDi = (categorie, id) => {
 
 //   movimenti         banca_movimenti
 //   spese             spese (con movimento_id, ente, natura, operativa, controparte_id, categoria_id)
-//   pagamenti         i pagamenti abbinati agli accrediti (tipo, movimento_id)
+//   pagamenti         i pagamenti abbinati agli accrediti (tipo, riferimento, importo, movimento_id)
+//   prenotazioni, pacchetti, giochi, sedi   per dividere gli incassi delle prenotazioni
 //   categorieSpese, categorieIncassi, categorieAlbatros
 //   nomeControparte(tipo, id)   il nome di un bubbler, campo o fornitore
 //   dal, al           l'intervallo, sulle date contabili (vuoti: tutto)
 export function costruisciBilancio({
   movimenti = [], spese = [], pagamenti = [], categorieSpese = [], categorieIncassi = [], categorieAlbatros = [],
+  prenotazioni = [], pacchetti = [], giochi = [], sedi = [],
   nomeControparte = () => null, dal = '', al = '',
 }) {
   const nel = (m) => (!dal || m.data_contabile >= dal) && (!al || m.data_contabile <= al);
   const spesaDelMovimento = new Map(spese.filter(s => s.movimento_id != null).map(s => [s.movimento_id, s]));
   const spesaPerId = new Map(spese.map(s => [s.id, s]));
-  const tipoDiIncasso = new Map();
-  pagamenti.filter(p => p.movimento_id != null).forEach(p => { if (!tipoDiIncasso.has(p.movimento_id)) tipoDiIncasso.set(p.movimento_id, p.tipo); });
+  // I pagamenti di ogni accredito: un bonifico può saldarne più d'uno, anche di prenotazioni diverse.
+  const pagamentiDi = new Map();
+  pagamenti.filter(p => p.movimento_id != null).forEach(p => {
+    if (!pagamentiDi.has(p.movimento_id)) pagamentiDi.set(p.movimento_id, []);
+    pagamentiDi.get(p.movimento_id).push(p);
+  });
+  const prenPerId = new Map(prenotazioni.map(p => [String(p.id), p]));
+  const anagrafiche = { pacchetti, giochi, sedi };
+  // Le voci in cui va un accredito: ogni pagamento per il suo importo (tutti uguali se non ce
+  // l'hanno), e il pagamento di una prenotazione diviso come la prenotazione.
+  const partiDi = (lista) => lista.flatMap(pg => {
+    const peso = Math.abs(Number(pg.importo) || 0) || 1;
+    if (pg.tipo === 'voucher') return [{ percorso: ['Voucher'], peso }];
+    const p = prenPerId.get(String(pg.riferimento));
+    if (!p) return [{ percorso: ['Prenotazioni', 'Prenotazione non trovata'], peso }];
+    const righe = ripartizionePrenotazione(p, anagrafiche);
+    const somma = righe.reduce((t, x) => t + x.peso, 0);
+    return righe.map(x => ({ percorso: ['Prenotazioni', ...x.percorso], peso: somma > 0 ? peso * x.peso / somma : peso / righe.length }));
+  });
 
   const v = {
     ricaviOperativi: nuovaVoce('Ricavi operativi'),
@@ -100,8 +153,8 @@ export function costruisciBilancio({
     if (m.ignorato) { ignorati = r2(ignorati + importo); return; }
     variazione = r2(variazione + importo);
     if (importo > 0) {
-      const tipo = tipoDiIncasso.get(m.id);
-      if (tipo) return aggiungi(v.ricaviOperativi, [tipo === 'voucher' ? 'Voucher' : 'Prenotazioni'], importo);
+      const suoi = pagamentiDi.get(m.id);
+      if (suoi) return dividi(importo, partiDi(suoi)).forEach(x => aggiungi(v.ricaviOperativi, x.percorso, x.importo));
       if (m.incasso_categoria_id != null) {
         const percorso = percorsoDi(categorieIncassi, m.incasso_categoria_id);
         if (CATEGORIA_CAPITALE.test(percorso[0])) { capitale = r2(capitale + importo); return; }

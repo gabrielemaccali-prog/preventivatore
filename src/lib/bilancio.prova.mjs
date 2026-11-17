@@ -1,7 +1,7 @@
 // Banco di prova del bilancio di cassa. Non fa parte dell'app: si esegue con
 //   node src/lib/bilancio.prova.mjs
 // Gira in Node senza dev server né browser, perché bilancio.js è fatto di sole funzioni pure.
-import { costruisciBilancio } from './bilancio.js';
+import { costruisciBilancio, ripartizionePrenotazione } from './bilancio.js';
 
 const esiti = [];
 const verifica = (caso, atteso, ottenuto) => {
@@ -64,6 +64,37 @@ verifica('il capitale non è un ricavo: resta fuori, contato a parte', [3733.2, 
 verifica('il risultato finale più il capitale è la variazione del saldo', b.variazione, b.risultatoFinale + b.capitale);
 verifica('i movimenti ignorati restano fuori, e si contano a parte', 1000, b.ignorati);
 verifica('fuori periodo: non conta', 620, b.ricaviOperativi.importo);
+
+// ---------- incassi delle prenotazioni: BFM o altre sedi, pacchetti o noleggi, gioco ----------
+const anag = {
+  pacchetti: [{ id: 'pk_campo', locationTipo: 'campi' }, { id: 'pk_nol', locationTipo: 'libera' }],
+  giochi: [{ id: 10, nome: 'Bubble Football' }, { id: 31, nome: 'Calcio Saponato' }, { id: 40, nome: 'Toro meccanico' }],
+  sedi: [{ id: 'loc_bfm', nome: 'BFM', bfm: true }, { id: 'loc_laq', nome: 'Laquilone', bfm: false }],
+};
+const prenPacchetto = { id: 'PRN-1', pacchettoId: 'pk_campo', giocoId: 10 };
+const prenNoleggio = { id: 'PRN-2', pacchettoId: 'pk_nol', giocoId: 31, voci: [
+  { giocoId: 31, sedeId: 'loc_laq', ricavo: 600 }, { giocoId: 10, sedeId: 'loc_bfm', ricavo: 300 }, { giocoId: null, nome: 'Trasporto', sede: '—', ricavo: 100 },
+] };
+const prenVecchia = { id: 'PRN-3', pacchettoId: 'pk_nol', giocoId: 10, voci: [{ giocoId: 40, sede: 'Laquilone', ricavo: 500 }] };
+verifica('un pacchetto da campo: BFM › Pacchetti › gioco', [['BFM', 'Pacchetti', 'Bubble Football']], ripartizionePrenotazione(prenPacchetto, anag).map(x => x.percorso));
+verifica('un noleggio senza righe col gioco nostro: BFM › Noleggi', [['BFM', 'Noleggi', 'Calcio Saponato']], ripartizionePrenotazione({ ...prenNoleggio, voci: [] }, anag).map(x => x.percorso));
+verifica('una riga senza id di sede si riconosce dal nome', [['Altre sedi', 'Laquilone', 'Toro meccanico']], ripartizionePrenotazione(prenVecchia, anag).map(x => x.percorso));
+const conPren = costruisciBilancio({
+  movimenti: [{ id: 1, data_contabile: '2026-10-01', importo: 220 }, { id: 2, data_contabile: '2026-10-02', importo: 1000 }, { id: 3, data_contabile: '2026-10-03', importo: 100 }],
+  pagamenti: [
+    { tipo: 'prenotazione', riferimento: 'PRN-1', importo: 220, movimento_id: 1 },
+    { tipo: 'prenotazione', riferimento: 'PRN-2', importo: 1000, movimento_id: 2 },
+    { tipo: 'prenotazione', riferimento: 'PRN-1', importo: 33.33, movimento_id: 3 }, { tipo: 'voucher', riferimento: 'V1', importo: 66.67, movimento_id: 3 },
+  ],
+  prenotazioni: [prenPacchetto, prenNoleggio], ...anag,
+});
+const pren = conPren.ricaviOperativi.figli.find(f => f.nome === 'Prenotazioni');
+const voce = (...nomi) => nomi.reduce((x, n) => x?.figli.find(f => f.nome === n), pren);
+verifica('prenotazioni: BFM e altre sedi', [['BFM', 653.33], ['Altre sedi', 600]], pren.figli.map(f => [f.nome, f.importo]));
+verifica('BFM: pacchetti e noleggi, poi il gioco', [253.33, 400, 300, 100], [voce('BFM', 'Pacchetti').importo, voce('BFM', 'Noleggi').importo, voce('BFM', 'Noleggi', 'Bubble Football').importo, voce('BFM', 'Noleggi', 'Trasporto').importo]);
+verifica('altre sedi: per sede, poi il gioco', 600, voce('Altre sedi', 'Laquilone', 'Calcio Saponato').importo);
+verifica('un bonifico su prenotazione e voucher si divide per i pagamenti', 66.67, conPren.ricaviOperativi.figli.find(f => f.nome === 'Voucher').importo);
+verifica('la somma torna al centesimo', 1320, conPren.ricaviOperativi.importo);
 
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${JSON.stringify(e.atteso)}, ottenuto ${JSON.stringify(e.ottenuto)}`}`));

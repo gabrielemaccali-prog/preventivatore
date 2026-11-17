@@ -21,6 +21,8 @@ const euro = (n) => `€${FORMATO.format(Math.abs(Number(n) || 0))}`;
 function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti }) {
   const [pagamenti, setPagamenti] = useState([]);
   const [categorieIncassi, setCategorieIncassi] = useState([]);
+  // Per dividere gli incassi delle prenotazioni fra BFM e le altre sedi, pacchetti e noleggi, giochi.
+  const [anagrafiche, setAnagrafiche] = useState({ prenotazioni: [], pacchetti: [], giochi: [], sedi: [] });
   // Il periodo come in Albatros (anno, mese, settimana, o tutto); si parte dall'anno in corso.
   const [periodo, setPeriodo] = useState(() => ({ ...periodoIniziale(), tipo: 'anno' }));
   // Il bilancio nasce con le voci principali aperte sui loro sottogruppi, e i sottogruppi chiusi. Si
@@ -28,16 +30,22 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
   const [cambiate, setCambiate] = useState(() => new Set());
 
   useEffect(() => {
-    leggiTutte(() => supabase.from('pagamenti').select('tipo, movimento_id').not('movimento_id', 'is', null).order('id'))
+    leggiTutte(() => supabase.from('pagamenti').select('tipo, riferimento, importo, movimento_id').not('movimento_id', 'is', null).order('id'))
       .then(r => setPagamenti(r.data || []));
+    Promise.all([
+      leggiTutte(() => supabase.from('prenotazioni').select('id, pacchettoId, pacchettoNome, giocoId, voci').order('id')),
+      supabase.from('pren_pacchetti').select('id, nome, locationTipo'),
+      supabase.from('giochi').select('id, nome'),
+      supabase.from('sedi').select('id, nome, bfm'),
+    ]).then(([p, k, g, x]) => setAnagrafiche({ prenotazioni: p.data || [], pacchetti: k.data || [], giochi: g.data || [], sedi: x.data || [] }));
     leggiCategorieIncassi().then(r => setCategorieIncassi(r.data || []));
   }, []);
 
   const [dal, al] = periodo.tipo === 'tutto' ? ['', ''] : intervalloPeriodo(periodo);
   const b = useMemo(() => costruisciBilancio({
-    movimenti, spese, pagamenti, categorieSpese: categorie, categorieIncassi, categorieAlbatros,
+    movimenti, spese, pagamenti, categorieSpese: categorie, categorieIncassi, categorieAlbatros, ...anagrafiche,
     nomeControparte: (tipo, id) => nomeControparte(controparti, tipo, id), dal, al,
-  }), [movimenti, spese, pagamenti, categorie, categorieIncassi, categorieAlbatros, controparti, dal, al]);
+  }), [movimenti, spese, pagamenti, categorie, categorieIncassi, categorieAlbatros, anagrafiche, controparti, dal, al]);
 
   const apri = (chiave) => setCambiate(prima => {
     const n = new Set(prima);
