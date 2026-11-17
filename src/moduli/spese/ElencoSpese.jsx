@@ -10,6 +10,9 @@ import { allineaAlbatros } from './operazioni'
 import Classificazione from './Classificazione'
 import ModuloRegola from './ModuloRegola'
 import CaricaEstratto from './CaricaEstratto'
+import FiltroPeriodo from '../albatros/FiltroPeriodo'
+import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo'
+import Paginazione, { usePaginazione } from '../../components/Paginazione'
 
 // ============================================================
 // L'elenco delle spese. In cima l'avviso di quelle da completare, con quello che manca: di chi è
@@ -29,8 +32,10 @@ const CELLA = { padding: '5px 8px', verticalAlign: 'middle' };
 
 function ElencoSpese(props) {
   const { user, categorie, categorieAlbatros, controparti, regole, spese, movimenti, ricaricaDati, ricaricaConfigurazione } = props;
-  // Vuoto = tutti i mesi: si parte da tutte le spese, il mese si sceglie se serve.
-  const [mese, setMese] = useState('');
+  // Il periodo come in Albatros (anno, mese, settimana); si parte da tutte le spese.
+  const [periodo, setPeriodo] = useState(() => ({ ...periodoIniziale(), tipo: 'tutto' }));
+  const intervallo = periodo.tipo === 'tutto' ? null : intervalloPeriodo(periodo);
+  const nelPeriodo = (data) => !intervallo || (String(data).slice(0, 10) >= intervallo[0] && String(data).slice(0, 10) <= intervallo[1]);
   const [filtroEnte, setFiltroEnte] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
   // '' = tutte, 'completare' = da completare, 'riconciliare' = operative, 'nonbanca' = pagate dal
@@ -63,12 +68,14 @@ function ElencoSpese(props) {
     .filter(s => (filtroStato === 'completare' ? daCompletare(s, categorie)
       : filtroStato === 'riconciliare' ? daRiconciliare(s)
         : filtroStato === 'nonbanca' ? nonInBanca(s) : true))
-    .filter(s => !mese || s.data.startsWith(mese))
+    .filter(s => nelPeriodo(s.data))
     .filter(s => !filtroEnte || (filtroEnte === 'nessuno' ? !s.ente : s.ente === filtroEnte))
     .filter(inCategoria)
     .filter(s => !t || [s.descrizione, s.beneficiario, s.note, movimentoDi(s)?.descrizione].some(v => (v || '').toLowerCase().includes(t)))
     .sort((a, b) => b.data.localeCompare(a.data) || b.id - a.id);
+  // Il totale in alto è di tutte le spese filtrate; la tabella le mostra 50 per volta.
   const totale = r2(visibili.reduce((x, s) => x + totaleSpesa(s), 0));
+  const pagine = usePaginazione(visibili.length, [periodo, filtroEnte, filtroCategoria, filtroStato, cerca]);
   const totaleOneri = r2(visibili.reduce((x, s) => x + oneriDi(s, movimenti), 0));
 
   const scrivi = async (fn) => {
@@ -188,9 +195,9 @@ function ElencoSpese(props) {
 
       <div className="albatros-card">
         <div className="albatros-testata filtri-telefono">
-          <label className="albatros-etichetta" style={{ flex: '0 1 170px' }}>Mese
-            <input type="month" value={mese} onChange={(e) => setMese(e.target.value)} className="albatros-campo" />
-          </label>
+          <div className="albatros-etichetta" style={{ flex: '0 1 auto' }}>Periodo
+            <div><FiltroPeriodo periodo={periodo} onChange={setPeriodo} conTutto /></div>
+          </div>
           <label className="albatros-etichetta" style={{ flex: '0 1 150px' }}>Di chi
             <select value={filtroEnte} onChange={(e) => setFiltroEnte(e.target.value)} className="albatros-campo">
               <option value="">Tutte</option>
@@ -231,7 +238,7 @@ function ElencoSpese(props) {
                 <tr><th>Data</th><th>Cosa</th><th>Origine</th><th>Classificazione</th><th className="num">Importo</th><th></th></tr>
               </thead>
               <tbody>
-                {visibili.map(s => {
+                {pagine.fetta(visibili).map(s => {
                   const oneri = oneriDi(s, movimenti);
                   const inModifica = riga?.id === s.id;
                   const mostrata = inModifica ? riga : s;
@@ -290,6 +297,7 @@ function ElencoSpese(props) {
             </table>
           </div>
         )}
+        <Paginazione {...pagine} />
       </div>
 
       {modulo && !regola && (

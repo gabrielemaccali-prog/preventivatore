@@ -3,6 +3,8 @@ import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { nomeControparte } from '../../lib/banca'
 import { costruisciBilancio } from '../../lib/bilancio'
 import { leggiCategorieIncassi } from './CategorieIncassi'
+import FiltroPeriodo from '../albatros/FiltroPeriodo'
+import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo'
 
 // ============================================================
 // Bilancio di cassa, dai movimenti della banca: ricavi e costi operativi, poi altri ricavi e costi di
@@ -11,7 +13,6 @@ import { leggiCategorieIncassi } from './CategorieIncassi'
 // disegna. Il risultato finale è la variazione del saldo: se non lo è, qualcosa è da classificare.
 // ============================================================
 
-const oggi = new Date();
 // Gli importi all'italiana, con le migliaia: in un bilancio si leggono decine di migliaia di euro.
 // Il punto anche sotto i 10.000 (per l'italiano il browser lo mette solo da lì in su): €4.398,50.
 const FORMATO = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
@@ -20,8 +21,8 @@ const euro = (n) => `€${FORMATO.format(Math.abs(Number(n) || 0))}`;
 function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti }) {
   const [pagamenti, setPagamenti] = useState([]);
   const [categorieIncassi, setCategorieIncassi] = useState([]);
-  const [anno, setAnno] = useState(String(oggi.getFullYear()));
-  const [mese, setMese] = useState('');
+  // Il periodo come in Albatros (anno, mese, settimana, o tutto); si parte dall'anno in corso.
+  const [periodo, setPeriodo] = useState(() => ({ ...periodoIniziale(), tipo: 'anno' }));
   // Il bilancio nasce con le voci principali aperte sui loro sottogruppi, e i sottogruppi chiusi. Si
   // tiene il conto delle voci cambiate a mano rispetto a così, per percorso ("costiOperativi/Affitto campi").
   const [cambiate, setCambiate] = useState(() => new Set());
@@ -32,8 +33,7 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
     leggiCategorieIncassi().then(r => setCategorieIncassi(r.data || []));
   }, []);
 
-  const anni = useMemo(() => [...new Set(movimenti.map(m => m.data_contabile.slice(0, 4)))].sort().reverse(), [movimenti]);
-  const [dal, al] = mese ? [`${mese}-01`, `${mese}-31`] : anno ? [`${anno}-01-01`, `${anno}-12-31`] : ['', ''];
+  const [dal, al] = periodo.tipo === 'tutto' ? ['', ''] : intervalloPeriodo(periodo);
   const b = useMemo(() => costruisciBilancio({
     movimenti, spese, pagamenti, categorieSpese: categorie, categorieIncassi, categorieAlbatros,
     nomeControparte: (tipo, id) => nomeControparte(controparti, tipo, id), dal, al,
@@ -78,16 +78,9 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
     <div className="albatros-pagina no-print">
       <div className="albatros-card">
         <div className="albatros-testata filtri-telefono">
-          <label className="albatros-etichetta" style={{ flex: '0 1 150px' }}>Anno
-            <select value={anno} onChange={(e) => { setAnno(e.target.value); setMese(''); }} className="albatros-campo">
-              <option value="">Tutto</option>
-              {anni.map(a => <option key={a} value={a}>{a}</option>)}
-            </select>
-          </label>
-          <label className="albatros-etichetta" style={{ flex: '0 1 170px' }}>Mese
-            <input type="month" value={mese} onChange={(e) => setMese(e.target.value)} className="albatros-campo" />
-          </label>
-          {mese && <button type="button" className="albatros-chip" style={{ alignSelf: 'flex-end' }} onClick={() => setMese('')}>Tutto l'anno</button>}
+          <div className="albatros-etichetta" style={{ flex: '0 1 auto' }}>Periodo
+            <div><FiltroPeriodo periodo={periodo} onChange={setPeriodo} conTutto /></div>
+          </div>
           <p className="albatros-tenue" style={{ margin: '0 0 0 auto', fontSize: '0.8rem', alignSelf: 'flex-end' }}>Di cassa: quello che è entrato e uscito dal conto. Clic su una voce per aprirla o chiuderla.</p>
         </div>
 

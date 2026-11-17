@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabaseClient'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import { controlloSaldi, daCompletare, euro, r2 } from '../../lib/banca'
 import { elaboraMovimenti } from './operazioni'
+import FiltroPeriodo from '../albatros/FiltroPeriodo'
+import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo'
 
 // ============================================================
 // Banca: si controlla che i saldi tornino e si vedono i movimenti con la loro destinazione.
@@ -12,8 +14,10 @@ import { elaboraMovimenti } from './operazioni'
 
 function Banca({ user, regole, controparti, spese, movimenti, caricamenti, categorie, ricaricaDati, vaiA }) {
   const [inCorso, setInCorso] = useState(false);
-  // Vuoto = tutti i mesi: si parte da tutti i movimenti, il mese si sceglie se serve.
-  const [mese, setMese] = useState('');
+  // Il periodo come in Albatros (anno, mese, settimana); si parte da tutti i movimenti.
+  const [periodo, setPeriodo] = useState(() => ({ ...periodoIniziale(), tipo: 'tutto' }));
+  const intervallo = periodo.tipo === 'tutto' ? null : intervalloPeriodo(periodo);
+  const nelPeriodo = (data) => !intervallo || (String(data).slice(0, 10) >= intervallo[0] && String(data).slice(0, 10) <= intervallo[1]);
   const [verso, setVerso] = useState('');
   const [cerca, setCerca] = useState('');
 
@@ -49,7 +53,7 @@ function Banca({ user, regole, controparti, spese, movimenti, caricamenti, categ
 
   const t = cerca.trim().toLowerCase();
   const visibili = movimenti
-    .filter(m => !mese || m.data_contabile.startsWith(mese))
+    .filter(m => nelPeriodo(m.data_contabile))
     .filter(m => !verso || (verso === 'entrate' ? Number(m.importo) > 0 : verso === 'uscite' ? Number(m.importo) < 0 : destinazione(m).classe === 'oltre'))
     .filter(m => !t || [m.tipo, m.descrizione].some(v => (v || '').toLowerCase().includes(t)))
     .sort((a, b) => b.data_contabile.localeCompare(a.data_contabile) || b.id - a.id);
@@ -110,9 +114,9 @@ function Banca({ user, regole, controparti, spese, movimenti, caricamenti, categ
 
       <div className="albatros-card">
         <div className="albatros-testata filtri-telefono">
-          <label className="albatros-etichetta" style={{ flex: '0 1 170px' }}>Mese
-            <input type="month" value={mese} onChange={(e) => setMese(e.target.value)} className="albatros-campo" />
-          </label>
+          <div className="albatros-etichetta" style={{ flex: '0 1 auto' }}>Periodo
+            <div><FiltroPeriodo periodo={periodo} onChange={setPeriodo} conTutto /></div>
+          </div>
           <label className="albatros-etichetta" style={{ flex: '0 1 190px' }}>Movimenti
             <select value={verso} onChange={(e) => setVerso(e.target.value)} className="albatros-campo">
               <option value="">Tutti</option>
@@ -124,7 +128,6 @@ function Banca({ user, regole, controparti, spese, movimenti, caricamenti, categ
           <label className="albatros-etichetta filtro-largo" style={{ flex: '1 1 180px' }}>Cerca
             <input type="search" value={cerca} placeholder="Tipo, descrizione…" onChange={(e) => setCerca(e.target.value)} className="albatros-campo" />
           </label>
-          <button type="button" className="albatros-chip" style={{ alignSelf: 'flex-end' }} onClick={() => setMese('')}>Tutti i mesi</button>
           <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: '0.88rem' }}>
             <div>Entrate <strong style={{ color: '#15803d' }}>{euro(entrate)}</strong> · Uscite <strong style={{ color: '#b91c1c' }}>{euro(uscite)}</strong></div>
             <div className="albatros-tenue">{visibili.length} movimenti</div>

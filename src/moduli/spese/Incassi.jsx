@@ -4,6 +4,9 @@ import { formattaDataGGMMAAAA } from '../../lib/utils'
 import { euro, r2, eFoglia, percorsoCategoria } from '../../lib/banca'
 import { SceltaCategoria } from './Classificazione'
 import { leggiCategorieIncassi } from './CategorieIncassi'
+import FiltroPeriodo from '../albatros/FiltroPeriodo'
+import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo'
+import Paginazione, { usePaginazione } from '../../components/Paginazione'
 import {
   eIncasso, ordinanteDi, causaleDi, parole, unitaDiPagamento, proposteIncassi, statoIncasso, controllaAbbinamento, STATI_INCASSO, GIORNI_INCASSO, GIORNI_INCASSO_CON_NOME, PAROLE_NOME_SICURO,
 } from '../../lib/incassi'
@@ -43,8 +46,11 @@ function Incassi({ movimenti, ricaricaDati, vaiA }) {
   // dire farli sembrare tutti da completare per mezzo secondo.
   const [caricato, setCaricato] = useState(false);
   const [inCorso, setInCorso] = useState(false);
-  const [stato, setStato] = useState(STATI_INCASSO.DA_ABBINARE);
-  const [mese, setMese] = useState('');
+  const [stato, setStato] = useState(''); // si parte da tutti gli accrediti
+  // Il periodo come in Albatros (anno, mese, settimana); si parte da tutti gli accrediti.
+  const [periodo, setPeriodo] = useState(() => ({ ...periodoIniziale(), tipo: 'tutto' }));
+  const intervallo = periodo.tipo === 'tutto' ? null : intervalloPeriodo(periodo);
+  const nelPeriodo = (data) => !intervallo || (String(data).slice(0, 10) >= intervallo[0] && String(data).slice(0, 10) <= intervallo[1]);
   const [cerca, setCerca] = useState('');
   // L'accredito che si sta abbinando a mano, con le unità scelte e la ricerca.
   const [aMano, setAMano] = useState(null); // { id, scelte: Set, cerca }
@@ -95,11 +101,13 @@ function Incassi({ movimenti, ricaricaDati, vaiA }) {
   const conta = (s) => accrediti.filter(m => statoDi(m) === s).length;
   const t = cerca.trim().toLowerCase();
   const visibili = accrediti
-    .filter(m => !mese || m.data_contabile.startsWith(mese))
+    .filter(m => nelPeriodo(m.data_contabile))
     .filter(m => !stato || statoDi(m) === stato)
     .filter(m => !t || [m.descrizione, String(m.importo)].some(v => (v || '').toLowerCase().includes(t)))
     .sort((a, b) => b.data_contabile.localeCompare(a.data_contabile) || b.id - a.id);
+  // Il totale in alto è di tutti gli accrediti filtrati; la tabella li mostra 50 per volta.
   const totale = r2(visibili.reduce((s, m) => s + Number(m.importo), 0));
+  const pagine = usePaginazione(visibili.length, [periodo, stato, cerca]);
 
   // Cosa ha portato un'unità, in una riga: i codici, e il nome di chi ha prenotato.
   const descriviUnita = (u) => {
@@ -221,9 +229,9 @@ function Incassi({ movimenti, ricaricaDati, vaiA }) {
 
       <div className="albatros-card">
         <div className="albatros-testata filtri-telefono">
-          <label className="albatros-etichetta" style={{ flex: '0 1 170px' }}>Mese
-            <input type="month" value={mese} onChange={(e) => setMese(e.target.value)} className="albatros-campo" />
-          </label>
+          <div className="albatros-etichetta" style={{ flex: '0 1 auto' }}>Periodo
+            <div><FiltroPeriodo periodo={periodo} onChange={setPeriodo} conTutto /></div>
+          </div>
           <label className="albatros-etichetta" style={{ flex: '0 1 200px' }}>Stato
             <select value={stato} onChange={(e) => setStato(e.target.value)} className="albatros-campo">
               <option value="">Tutti ({accrediti.length})</option>
@@ -246,7 +254,7 @@ function Incassi({ movimenti, ricaricaDati, vaiA }) {
             <table className="albatros-tabella tabella-schede">
               <thead><tr><th>Data</th><th>Mittente</th><th>Causale</th><th className="num">Importo</th><th>Natura</th><th>Destinazione</th><th></th></tr></thead>
               <tbody>
-                {visibili.map(m => {
+                {pagine.fetta(visibili).map(m => {
                   const s = statoDi(m);
                   const etichetta = ETICHETTA_STATO[s];
                   const legate = [...(abbinateA.get(m.id)?.values() || [])];
@@ -357,6 +365,7 @@ function Incassi({ movimenti, ricaricaDati, vaiA }) {
             </table>
           </div>
         )}
+        <Paginazione {...pagine} />
       </div>
     </div>
   );
