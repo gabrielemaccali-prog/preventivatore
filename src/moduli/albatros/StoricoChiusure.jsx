@@ -5,7 +5,6 @@ import { formattaDataGGMMAAAA } from '../../lib/utils'
 import { scaricaExcel } from '../../lib/excel'
 import { quadratura, daSpecificare, fondoDiverso, fondoDaSpecificare, euro, r2, periodoIniziale, intervalloPeriodo, dicituraPeriodo, accontiConfermati, accontoConfermabile, giornataDiLavoro } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
-import Acconti from './Acconti'
 
 // ============================================================
 // Scheda Chiusure: le giornate di un mese o di una settimana (da lunedì a domenica), con
@@ -14,20 +13,19 @@ import Acconti from './Acconti'
 // Le giornate chiuse con un residuo non spiegato sono segnate "Da specificare" e si possono
 // vedere da sole; quelle partite con un fondo diverso da quello lasciato la sera prima "Fondo diverso".
 // Il tasto Excel scarica le giornate che si stanno guardando (periodo e filtro compresi).
-// Sopra l'elenco gli acconti: tutti quelli da confermare, più quelli del periodo. Confermato, un
-// acconto entra nell'incassato della sua giornata (vedi quadratura).
+// Gli acconti si gestiscono dalla Giornata: qui servono solo ai conti (confermato, un acconto entra
+// nell'incassato della sua giornata, vedi quadratura) e a segnalare le giornate che ne hanno uno
+// da confermare.
 // ============================================================
 
 // Il giorno della settimana di una data 'YYYY-MM-DD', a mezzogiorno per non farlo spostare dal fuso.
 const giornoSettimana = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('it-IT', { weekday: 'short' });
 const oraDi = (ts) => new Date(ts).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
-function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onApri }) {
+function StoricoChiusure({ puoCorreggere, utenti, onApri }) {
   const [periodo, setPeriodo] = useState(periodoIniziale);
   const [giorni, setGiorni] = useState([]);
   const [acconti, setAcconti] = useState([]);
-  // Finché sql/albatros_acconti.sql non è stato eseguito la tabella non c'è.
-  const [accontiMancanti, setAccontiMancanti] = useState(null);
   const [inCorso, setInCorso] = useState(false);
   const [soloDaSpecificare, setSoloDaSpecificare] = useState(false);
 
@@ -44,7 +42,6 @@ function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onAp
     const elenco = ch || [];
     const tuttiAcconti = [...new Map([...(attesi.data || []), ...(delPeriodo.data || [])].map(a => [a.id, a])).values()];
     setAcconti(tuttiAcconti);
-    setAccontiMancanti(attesi.error?.message || null);
     const [{ data: rg }, { data: prima }] = await Promise.all([
       elenco.length
         ? leggiTutte(() => supabase.from('albatros_righe').select('chiusura_id, quantita, prezzo').in('chiusura_id', elenco.map(c => c.id)).order('id'))
@@ -112,13 +109,6 @@ function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onAp
 
   return (
     <div className="albatros-pagina no-print">
-      {/* Il riquadro c'è solo quando c'è un acconto da guardare: da confermare, o del periodo. */}
-      {!accontiMancanti && acconti.length > 0 && (
-        <div className="albatros-card">
-          <Acconti user={user} listino={listino} categorie={categorie} utenti={utenti} puoCorreggere={puoCorreggere} acconti={acconti} onCambiati={carica}
-            conNuovo={false} titolo="Acconti" />
-        </div>
-      )}
 
       <div className="albatros-card">
         <div className="albatros-testata">
@@ -158,7 +148,7 @@ function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onAp
                       : <span className="albatros-tenue">—</span>}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {g.chiusura.chiusa_il ? <span className="albatros-badge chiusa mini">Chiusa</span> : <span className="albatros-badge aperta mini">Aperta</span>}
-                      {acconti.some(a => a.data_riferimento === g.chiusura.data && accontoConfermabile(a, oggi)) && <span className="albatros-badge da-specificare mini" title="C'è un acconto per questa giornata da confermare (sopra)">Acconto da confermare</span>}
+                      {acconti.some(a => a.data_riferimento === g.chiusura.data && accontoConfermabile(a, oggi)) && <span className="albatros-badge da-specificare mini" title="C'è un acconto per questa giornata da confermare: tocca la riga, si conferma dalla Giornata">Acconto da confermare</span>}
                       {daSpecificare(g.chiusura, g) && <span className="albatros-badge da-specificare mini" title={`Residuo non spiegato: ${euro(g.nonSpecificato)}`}>Da specificare {euro(g.nonSpecificato)}</span>}
                       {g.chiusura.chiusa_il && g.nonSpecificato < 0 && <span className="albatros-badge oltre mini" title="Il battuto supera l'incassato">Battuto oltre {euro(-g.nonSpecificato)}</span>}
                       {fondoDaSpecificare(g.chiusura) && <span className="albatros-badge da-specificare mini" title="Fondo di partenza e fondo lasciato non sono ancora scritti">Fondo da specificare</span>}
