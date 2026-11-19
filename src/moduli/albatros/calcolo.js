@@ -20,12 +20,15 @@ export const ENTI = [
   { id: 'bfm', label: 'BFM' },
   { id: 'lama', label: 'Lama' },
 ];
-export const etichettaEnte = (id) => ENTI.find(e => e.id === id)?.label || id;
+// I soci ricevono pagamenti (utili, prelievi) ma non pagano spese: non sono fra gli ENTI.
+const ALTRI_BENEFICIARI = [{ id: 'soci', label: 'Soci' }];
+export const etichettaEnte = (id) => [...ENTI, ...ALTRI_BENEFICIARI].find(e => e.id === id)?.label || id;
 
-// I pagamenti a Lama (e a BFM), fatti da Albatros o da BFM (tabella albatros_pagamenti).
+// I pagamenti a Lama, a BFM e ai soci, fatti da Albatros o da BFM (tabella albatros_pagamenti).
 export const CAUSALI_PAGAMENTO = [
   { id: 'rimborso', label: 'Rimborso spese' },
   { id: 'stipendio', label: 'Stipendio' },
+  { id: 'utili', label: 'Utili / prelievo soci' },
   { id: 'altro', label: 'Altro' },
 ];
 export const METODI_PAGAMENTO = [

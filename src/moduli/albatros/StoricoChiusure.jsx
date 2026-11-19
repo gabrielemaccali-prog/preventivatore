@@ -112,14 +112,13 @@ function StoricoChiusure({ user, listino, categorie, puoCorreggere, utenti, onAp
 
   return (
     <div className="albatros-pagina no-print">
-      <div className="albatros-card">
-        {accontiMancanti ? (
-          <p className="albatros-avviso" style={{ margin: 0 }}>Per registrare gli acconti esegui <strong>sql/albatros_acconti.sql</strong> nell'SQL Editor di Supabase.</p>
-        ) : (
+      {/* Il riquadro c'è solo quando c'è un acconto da guardare: da confermare, o del periodo. */}
+      {!accontiMancanti && acconti.length > 0 && (
+        <div className="albatros-card">
           <Acconti user={user} listino={listino} categorie={categorie} utenti={utenti} puoCorreggere={puoCorreggere} acconti={acconti} onCambiati={carica}
-            conNuovo={false} titolo="Acconti" vuoto="Nessun acconto da confermare né in questo periodo. Un acconto nuovo si registra dalla Giornata." />
-        )}
-      </div>
+            conNuovo={false} titolo="Acconti" />
+        </div>
+      )}
 
       <div className="albatros-card">
         <div className="albatros-testata">

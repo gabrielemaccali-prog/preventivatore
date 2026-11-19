@@ -34,8 +34,9 @@ const SOTTOSCHEDE = [
 
 const leggiImporto = (v) => { const n = Number(String(v ?? '').trim().replace(',', '.')); return Number.isFinite(n) ? r2(n) : NaN; };
 const descriviPagamento = (p) => `${etichettaCausale(p.causale)} · ${etichettaMetodo(p.metodo).toLowerCase()}${p.note ? ` · ${p.note}` : ''}`;
-// Chi può pagare chi: Albatros paga Lama o BFM, BFM paga Lama.
-const BENEFICIARI = { albatros: ['lama', 'bfm'], bfm: ['lama'] };
+// Chi può pagare chi: Albatros paga Lama, BFM o i soci (utili, prelievi: chi fra i soci lo dicono
+// le note), BFM paga Lama.
+const BENEFICIARI = { albatros: ['lama', 'bfm', 'soci'], bfm: ['lama'] };
 
 // I movimenti di un ente: entrate positive, uscite negative, dal più recente.
 // Un trasferimento non è né entrata né uscita: ha importo 0 per il saldo, e la cifra spostata in
@@ -119,6 +120,8 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
   const posizioneDi = (ente) => posizioneEnte(ente, spese, pagamenti);
 
   const proposta = (beneficiario) => {
+    // Ai soci non si rimborsa niente: si propongono gli utili.
+    if (beneficiario === 'soci') return { causale: 'utili', importo: '' };
     const daRimborsare = posizioneDi(beneficiario).daRimborsare;
     return { causale: daRimborsare > 0 ? 'rimborso' : 'stipendio', importo: daRimborsare > 0 ? String(daRimborsare).replace('.', ',') : '' };
   };
@@ -133,6 +136,8 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
       && !window.confirm(`Il rimborso (${euro(importo)}) supera quanto c'è da rimborsare a ${etichettaEnte(modulo.beneficiario)} (${euro(dovuto)}). Lo registro lo stesso?`)) return;
     if (attiva.ente === 'albatros' && modulo.metodo === 'contanti' && importo > cassa.inMano
       && !window.confirm(`Albatros ha in mano ${euro(cassa.inMano)} di contanti, meno di ${euro(importo)}. Lo registro lo stesso?`)) return;
+    if (attiva.ente === 'albatros' && modulo.metodo !== 'contanti' && importo > conto.saldo
+      && !window.confirm(`Sul conto di Albatros risultano ${euro(conto.saldo)}, meno di ${euro(importo)}. Lo registro lo stesso?`)) return;
     setInCorso(true);
     const { error } = await supabase.from('albatros_pagamenti').insert([{
       data: modulo.data, pagante: attiva.ente, beneficiario: modulo.beneficiario, causale: modulo.causale, importo, metodo: modulo.metodo,
@@ -193,7 +198,7 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
               <button type="button" className="btn-outline-annulla albatros-bottone" onClick={nuovoTrasferimento} title="Sposta soldi fra i contanti in mano e il conto"><Icona nome="cashflow" />Trasferimento</button>
             )}
             {puoCorreggere && beneficiari.length > 0 && !pagamentiMancanti && (
-              <button type="button" className="btn-accent-inline albatros-bottone" onClick={nuovoPagamento}>+ Pagamento a Lama</button>
+              <button type="button" className="btn-accent-inline albatros-bottone" onClick={nuovoPagamento}>+ Pagamento</button>
             )}
           </div>
         </div>
@@ -223,13 +228,10 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
               {accontiInAttesa > 0 && (
                 <div><span>Acconti da confermare</span><strong style={{ color: '#b45309' }}>{euro(accontiInAttesa)}</strong><small>già nel saldo, l'evento deve ancora arrivare</small></div>
               )}
-              {acconti.length > 0 && (
-                <div><span>Acconti</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo(mov, 'acconto') + sommaTipo(mov, 'rimborso_acconto'))}</strong><small>versati − rimborsati</small></div>
-              )}
               <div><span>Incassi POS</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo(mov, 'pos'))}</strong><small>entrate</small></div>
               <div><span>Contanti ritirati</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo(mov, 'contanti'))}</strong><small>entrate, dalle chiusure</small></div>
               <div><span>Spese pagate</span><strong style={{ color: '#b91c1c' }}>{euro(-sommaTipo(mov, 'spesa'))}</strong><small>uscite</small></div>
-              <div><span>Pagamenti fatti</span><strong style={{ color: '#b91c1c' }}>{euro(-sommaTipo(mov, 'pagamento'))}</strong><small>uscite: rimborsi, stipendi, altro</small></div>
+              <div><span>Pagamenti fatti</span><strong style={{ color: '#b91c1c' }}>{euro(-sommaTipo(mov, 'pagamento'))}</strong><small>uscite: rimborsi, stipendi, soci, altro</small></div>
               <div><span>Fondo cassa</span><strong>{euro(ultimaConFondo?.fondo_lasciato)}</strong>
                 <small>{ultimaConFondo ? `lasciato il ${formattaDataGGMMAAAA(ultimaConFondo.data)}` : 'nessuna chiusura col fondo'}</small></div>
             </>
@@ -322,8 +324,8 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
             <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setModulo(null)}>✕</button>
             <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: '#0f172a' }}>Pagamento da {attiva.label}</h3>
             <p className="albatros-nota" style={{ marginTop: 0 }}>
-              Da rimborsare a {etichettaEnte(modulo.beneficiario)}: {euro(posizioneDi(modulo.beneficiario).daRimborsare)}
-              {attiva.ente === 'albatros' && <> · contanti in mano ad Albatros: {euro(cassa.inMano)}</>}
+              {modulo.beneficiario !== 'soci' && <>Da rimborsare a {etichettaEnte(modulo.beneficiario)}: {euro(posizioneDi(modulo.beneficiario).daRimborsare)} · </>}
+              {attiva.ente === 'albatros' && <>contanti in mano ad Albatros: {euro(cassa.inMano)} · conto: {euro(conto.saldo)}</>}
             </p>
             <div className="albatros-griglia-2" style={{ marginTop: '12px' }}>
               <label className="albatros-etichetta">A chi
@@ -342,13 +344,13 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
                   {CAUSALI_PAGAMENTO.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                 </select>
               </label>
-              <label className="albatros-etichetta">Pagato con
+              <label className="albatros-etichetta">Da dove si prendono
                 <select value={modulo.metodo} onChange={(e) => setModulo({ ...modulo, metodo: e.target.value })} className="albatros-campo">
-                  {METODI_PAGAMENTO.map(m => <option key={m.id} value={m.id}>{m.id === 'contanti' ? `Contanti di ${attiva.label}` : m.label}</option>)}
+                  {METODI_PAGAMENTO.map(m => <option key={m.id} value={m.id}>{m.id === 'contanti' ? `Contanti di ${attiva.label}` : m.id === 'bonifico' ? 'Dal conto (bonifico)' : 'Dal conto (altro)'}</option>)}
                 </select>
               </label>
               <label className="albatros-etichetta" style={{ gridColumn: '1 / -1' }}>Note
-                <input type="text" value={modulo.note} placeholder="Facoltative, es. stipendio di ottobre" onChange={(e) => setModulo({ ...modulo, note: e.target.value })} className="albatros-campo" />
+                <input type="text" value={modulo.note} placeholder={modulo.beneficiario === 'soci' ? 'A quale socio, es. Mario, utili di ottobre' : 'Facoltative, es. stipendio di ottobre'} onChange={(e) => setModulo({ ...modulo, note: e.target.value })} className="albatros-campo" />
               </label>
             </div>
             <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
