@@ -158,8 +158,17 @@ const raggruppaPerCategoria = (righe, valoreDi = () => 0) => {
   });
   return Object.values(gruppi)
     .map(g => ({ ...g, nome: g.categoria?.etichetta || ETICHETTA_NON_CLASSIFICATO, descrizione: g.categoria?.descrizione || 'Annullamenti senza categoria: vanno classificati.' }))
-    .sort((a, b) => (a.chiave === '') - (b.chiave === '') || b.n - a.n || b.valore - a.valore);
+    .sort((a, b) => ordineGruppo(a) - ordineGruppo(b) || b.n - a.n || b.valore - a.valore);
 };
+// In fondo i non classificati, e sotto ancora le richieste non valide: non contano, e stanno dove
+// non si confondono con quelle che contano.
+const ordineGruppo = (g) => (g.categoria?.fuoriStatistiche ? 2 : g.chiave === '' ? 1 : 0);
+// I colori degli esiti, gli stessi nel quadro, nelle barre dei perché e nelle legende: grigio come
+// il badge SFUMATA, rosso per la prenotazione vera annullata dopo l'incasso. Le richieste non valide
+// hanno la barra tratteggiata: ci sono, ma fuori dalle statistiche.
+const COLORE_SFUMATE = '#94a3b8';
+const COLORE_ANNULLATE_INCASSO = '#dc2626';
+const TRATTEGGIO_FUORI_STATISTICHE = 'repeating-linear-gradient(45deg, #e2e8f0 0 3px, #ffffff 3px 6px)';
 // Annullato si', ma non perso: il ricavo non se n'e' andato da nessuna parte. O la richiesta non
 // era vera, o il cliente e' passato a un'altra nostra formula, o i soldi sono parcheggiati in un
 // voucher e torneranno con la prenotazione nuova, o sono rimasti a noi come penale. Restano
@@ -1130,7 +1139,33 @@ function Cruscotto({ user }) {
       : nelPeriodo.filter(p => statoPreventivoDi(p) === STATO_PREVENTIVO.ANNULLATO);
     const motivi = raggruppaPerCategoria(annullati, valore);
     const scelto = motivoAnn == null ? null : motivi.find(m => m.chiave === motivoAnn);
+    // Il quadro del periodo: tutto quello che e' entrato, diviso per com'e' andato a finire. Le voci
+    // si sommano al totale, cosi' si legge subito quanto e' ancora in sospeso. Le richieste non
+    // valide restano fuori anche qui: non c'erano davvero.
+    const valide = nelPeriodo.filter(p => !fuori(p));
+    const voce = (righe) => ({ n: righe.length, valore: righe.reduce((s, p) => s + valore(p), 0) });
+    const quadro = annullatiPren
+      ? [
+        { id: 'confermate', etichetta: 'Confermate', colore: '#16a34a', ...voce(valide.filter(giocata)), sotto: 'giocate o da giocare' },
+        { id: 'forse', etichetta: 'Forse', colore: '#f59e0b', ...voce(valide.filter(p => p.stato === STATO_PREN.FORSE)), sotto: 'in attesa di acconto o conferma' },
+        { id: 'sfumate', etichetta: 'Sfumate', colore: COLORE_SFUMATE, ...voce(valide.filter(sfumata)), sotto: 'mai prenotate: nessun incasso' },
+        // Una prenotazione vera annullata dopo l'incasso non e' ne' confermata ne' sfumata: ha una
+        // voce sua, che compare solo quando c'e'.
+        { id: 'annullate', etichetta: 'Annullate dopo l\'incasso', colore: COLORE_ANNULLATE_INCASSO, ...voce(valide.filter(p => p.stato === STATO_PREN.ANNULLATA && !sfumata(p))), sotto: 'diventate voucher o con penale', facoltativa: true },
+      ]
+      : (() => {
+        const stato = (...stati) => valide.filter(p => stati.includes(statoPreventivoDi(p)));
+        const scaduti = stato(STATO_PREVENTIVO.AZIONE_RICHIESTA).length;
+        const altraFormula = stato(STATO_PREVENTIVO.ANNULLATO).filter(annullatoMaNonPerso).length;
+        return [
+          { id: 'confermati', etichetta: 'Confermati', colore: '#16a34a', ...voce(stato(STATO_PREVENTIVO.CONFERMATO, STATO_PREVENTIVO.PRENOTATO)), sotto: 'accettati dal cliente o già prenotati' },
+          { id: 'forse', etichetta: 'Forse', colore: '#f59e0b', ...voce(stato(STATO_PREVENTIVO.REGISTRATO, STATO_PREVENTIVO.AZIONE_RICHIESTA)), sotto: scaduti > 0 ? `di cui ${scaduti} in Azione richiesta` : 'ancora nella validità dell\'offerta' },
+          { id: 'sfumati', etichetta: 'Sfumati', colore: COLORE_SFUMATE, ...voce(stato(STATO_PREVENTIVO.ANNULLATO)), sotto: altraFormula > 0 ? `di cui ${altraFormula} passati a un'altra nostra formula` : 'chiusi senza diventare niente' },
+        ];
+      })();
     const comune = {
+      quadro: quadro.filter(v => !v.facoltativa || v.n > 0),
+      escluse: voce(nelPeriodo.filter(fuori)),
       // Il totale su cui si calcolano le percentuali: le richieste non valide non c'erano davvero.
       totale: nelPeriodo.filter(p => !fuori(p)).length,
       annullati, motivi,
@@ -1952,7 +1987,6 @@ function Cruscotto({ user }) {
             <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>{sotto}</div>
           </div>
         );
-        const quota = (n) => (s.totale > 0 ? (n / s.totale) * 100 : null);
         const cambiaVista = (v) => { setVistaAnnullati(v); setMotivoAnn(null); };
         const sottoschede = [{ id: 'pren_annullate', label: 'Prenotazioni', icona: 'prenotazioni' }, { id: 'prev_annullati', label: 'Preventivi', icona: 'preventivatore' }].filter(v => vediAnnullati(v.id));
         const massimo = Math.max(1, ...s.motivi.map(m => m.n));
@@ -1960,7 +1994,7 @@ function Cruscotto({ user }) {
         const cella = { padding: '8px 10px', verticalAlign: 'top' };
         const motivoInCella = (p) => (
           <>
-            <strong style={{ color: categoriaAnnullamentoDi(p) ? '#991b1b' : '#a16207' }}>{etichettaCategoriaAnnullamento(p)}</strong>
+            <strong style={{ color: categoriaAnnullamentoDi(p) ? '#334155' : '#a16207' }}>{etichettaCategoriaAnnullamento(p)}</strong>
             {p.motivoAnnullamento && <div style={{ color: '#64748b', fontStyle: 'italic', fontSize: '0.8rem' }}>{p.motivoAnnullamento}</div>}
           </>
         );
@@ -1994,7 +2028,7 @@ function Cruscotto({ user }) {
                   sparire: una riga lo dice e porta dall'altra parte con un clic. */}
               {annullatiPren && statoAnn === '' && s.dopoIncasso.length > 0 && (
                 <p style={{ margin: '-6px 0 14px', fontSize: '0.82rem', color: '#64748b' }}>
-                  Fuori da questi numeri: <strong>{s.dopoIncasso.length}</strong> {s.dopoIncasso.length === 1 ? 'partita era prenotata davvero ed è stata annullata' : 'partite erano prenotate davvero e sono state annullate'} dopo l'incasso
+                  Fra i perché qui sotto non ci sono: <strong>{s.dopoIncasso.length}</strong> {s.dopoIncasso.length === 1 ? 'partita era prenotata davvero ed è stata annullata' : 'partite erano prenotate davvero e sono state annullate'} dopo l'incasso
                   {s.trasformate.length > 0 && <> — {s.trasformate.length} {s.trasformate.length === 1 ? 'diventata voucher' : 'diventate voucher'} ({formattaEuro(s.parcheggiato)})</>}
                   {s.conPenale.length > 0 && <> — {s.conPenale.length} fuori termine ({formattaEuro(s.trattenuto)} trattenuti)</>}.
                   {' '}<button type="button" onClick={() => { setStatoAnn('annullate'); setMotivoAnn(null); }} style={{ background: 'none', border: 'none', padding: 0, color: '#0288d1', cursor: 'pointer', fontSize: '0.82rem', textDecoration: 'underline' }}>Guardale</button>
@@ -2026,23 +2060,56 @@ function Cruscotto({ user }) {
                 )}
               </div>
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '20px' }}>
-                {annullatiPren ? (<>
-                  {statoAnn !== 'annullate' && riquadro('Sfumate', s.sfumate.length, `${percentuale(quota(s.sfumate.length))} delle ${s.totale} partite del periodo`, '#b91c1c')}
-                  {statoAnn !== 'annullate' && riquadro('Ricavo perso', formattaEuro(s.ricavoPerso), 'quello delle sfumate che si potevano vincere', '#b91c1c')}
-                  {statoAnn !== '' && riquadro('Diventate voucher', s.trasformate.length, `${formattaEuro(s.parcheggiato)} da riusare`, '#6d28d9')}
-                  {statoAnn !== '' && riquadro('Fuori termine', s.conPenale.length, `${formattaEuro(s.trattenuto)} trattenuti e da fatturare`, '#b45309')}
-                  {riquadro('Con costi da sostenere', s.conCosti.length, 'annullate ma con campo, rinfresco o operatori da pagare')}
-                  {statoAnn !== 'annullate' && riquadro('Non perse', s.nonPersi.length, 'richieste non valide o passate a un\'altra nostra formula')}
-                  {s.daClassificare > 0 && riquadro('Da classificare', s.daClassificare, 'annullamenti senza categoria', '#a16207')}
-                </>) : (<>
-                  {riquadro('Persi', s.persi.length, `${percentuale(quota(s.persi.length))} dei ${s.totale} preventivi emessi`, '#b91c1c')}
-                  {riquadro('Valore perso', formattaEuro(s.valorePerso), s.persi.length > 0 ? `${formattaEuro(s.valorePerso / s.persi.length)} in media` : 'nessun preventivo perso', '#b91c1c')}
-                  {riquadro('Non persi', s.nonPersi.length, 'richieste non valide o passate a un\'altra nostra formula')}
-                  {riquadro('Scaduti senza risposta', s.azioneRichiesta, 'ancora da sentire o da annullare', '#a16207')}
-                  {s.daClassificare > 0 && riquadro('Da classificare', s.daClassificare, 'annullati senza categoria', '#a16207')}
-                </>)}
-              </div>
+              {(() => {
+                // Il quadro del periodo: quante ne sono entrate e come sono andate a finire, in
+                // numero e in valore. La barra e' in proporzione al numero.
+                const totN = s.quadro.reduce((t, v) => t + v.n, 0);
+                const totValore = s.quadro.reduce((t, v) => t + v.valore, 0);
+                return (
+                  <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{annullatiPren ? 'Prenotazioni inserite' : 'Preventivi emessi'}</span>
+                      <span style={{ fontSize: '1.5rem', fontWeight: 700, color: '#0f172a' }}>{totN}</span>
+                      <span style={{ fontSize: '0.95rem', color: '#475569' }}>{formattaEuro(totValore)}</span>
+                    </div>
+                    <div style={{ display: 'flex', height: '12px', borderRadius: '6px', overflow: 'hidden', background: '#f1f5f9', margin: '10px 0 14px' }}>
+                      {totN > 0 && s.quadro.filter(v => v.n > 0).map(v => (
+                        <div key={v.id} title={`${v.etichetta}: ${v.n}`} style={{ width: `${(v.n / totN) * 100}%`, background: v.colore }} />
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                      {s.quadro.map(v => (
+                        <div key={v.id} style={{ flex: '1 1 170px', borderLeft: `4px solid ${v.colore}`, padding: '2px 0 2px 10px' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{v.etichetta}</div>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                            <span style={{ fontSize: '1.35rem', fontWeight: 700, color: '#0f172a' }}>{v.n}</span>
+                            <span style={{ fontSize: '0.85rem', color: '#64748b' }}>{percentuale(totN > 0 ? (v.n / totN) * 100 : null)}</span>
+                          </div>
+                          <div style={{ fontSize: '0.88rem', fontWeight: 600, color: '#334155' }}>{formattaEuro(v.valore)}</div>
+                          <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{v.sotto}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {s.escluse.n > 0 && (
+                      <div style={{ marginTop: '12px', fontSize: '0.78rem', color: '#64748b' }}>
+                        <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', boxSizing: 'border-box', border: `1px solid ${COLORE_SFUMATE}`, background: TRATTEGGIO_FUORI_STATISTICHE, marginRight: '6px', verticalAlign: 'middle' }} />
+                        Esclus{annullatiPren ? 'e' : 'i'} dal totale: {s.escluse.n} {s.escluse.n === 1 ? 'richiesta non valida' : 'richieste non valide'} ({formattaEuro(s.escluse.valore)}).
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Quello che serve solo quando c'e': i soldi delle annullate dopo l'incasso, i costi
+                  rimasti, gli annullamenti ancora da classificare. */}
+              {((annullatiPren && statoAnn !== '') || (annullatiPren && s.conCosti.length > 0) || s.daClassificare > 0) && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '12px' }}>
+                  {annullatiPren && statoAnn !== '' && riquadro('Diventate voucher', s.trasformate.length, `${formattaEuro(s.parcheggiato)} da riusare`, '#6d28d9')}
+                  {annullatiPren && statoAnn !== '' && riquadro('Fuori termine', s.conPenale.length, `${formattaEuro(s.trattenuto)} trattenuti e da fatturare`, '#b45309')}
+                  {annullatiPren && s.conCosti.length > 0 && riquadro('Con costi da sostenere', s.conCosti.length, 'annullate ma con campo, rinfresco o operatori da pagare')}
+                  {s.daClassificare > 0 && riquadro('Da classificare', s.daClassificare, annullatiPren ? 'annullamenti senza categoria' : 'sfumati senza categoria', '#a16207')}
+                </div>
+              )}
 
               <div className="admin-table-box-full" style={{ marginTop: '20px', padding: '16px' }}>
                 <h3 style={{ margin: '0 0 10px 0', fontSize: '1rem' }}>Perché</h3>
@@ -2059,11 +2126,13 @@ function Cruscotto({ user }) {
                       </div>
                       {s.motivi.map(m => {
                         const attivo = motivoAnn === m.chiave;
+                        const fuoriStat = !!m.categoria?.fuoriStatistiche;
                         const nAnn = annullatiPren ? m.righe.filter(p => !trasformataInVoucher(p) && !annullataConPenale(p)).length : m.n;
-                        const totaleMotivi = s.motivi.reduce((t, x) => t + x.n, 0);
+                        // La percentuale si fa su quelle che contano: le non valide non hanno la loro.
+                        const totaleMotivi = s.motivi.filter(x => !x.categoria?.fuoriStatistiche).reduce((t, x) => t + x.n, 0);
                         return (
                           <div key={m.chiave || '_'} onClick={() => setMotivoAnn(attivo ? null : m.chiave)}
-                            style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem', padding: '6px 8px', borderRadius: '6px', cursor: 'pointer', background: attivo ? '#fef2f2' : 'transparent', outline: attivo ? '1px solid #fecaca' : 'none' }}>
+                            style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem', padding: '6px 8px', borderRadius: '6px', cursor: 'pointer', background: attivo ? '#f1f5f9' : 'transparent', outline: attivo ? '1px solid #cbd5e1' : 'none', ...(fuoriStat ? { borderTop: '1px dashed #cbd5e1', marginTop: '6px', paddingTop: '10px', color: '#64748b' } : {}) }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ color: m.chiave ? '#0f172a' : '#a16207', fontWeight: 600 }}>
                                 {m.nome}
@@ -2073,19 +2142,24 @@ function Cruscotto({ user }) {
                               <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>{m.descrizione}</div>
                             </div>
                             <div style={{ width: '160px', display: 'flex' }}>
-                              <div style={{ width: `${(nAnn / massimo) * 160}px`, height: '10px', background: COLORE_COSTO, borderRadius: nAnn === m.n ? '5px' : '5px 0 0 5px' }} />
-                              <div style={{ width: `${((m.n - nAnn) / massimo) * 160}px`, height: '10px', background: '#8b5cf6', borderRadius: nAnn === 0 ? '5px' : '0 5px 5px 0' }} />
+                              {fuoriStat
+                                ? <div style={{ width: `${(m.n / massimo) * 160}px`, height: '10px', borderRadius: '5px', boxSizing: 'border-box', border: `1px solid ${COLORE_SFUMATE}`, background: TRATTEGGIO_FUORI_STATISTICHE }} />
+                                : (<>
+                                  <div style={{ width: `${(nAnn / massimo) * 160}px`, height: '10px', background: COLORE_SFUMATE, borderRadius: nAnn === m.n ? '5px' : '5px 0 0 5px' }} />
+                                  <div style={{ width: `${((m.n - nAnn) / massimo) * 160}px`, height: '10px', background: COLORE_ANNULLATE_INCASSO, borderRadius: nAnn === 0 ? '5px' : '0 5px 5px 0' }} />
+                                </>)}
                             </div>
                             <strong style={{ width: '40px', textAlign: 'right' }}>{m.n}</strong>
-                            <span style={{ width: '44px', textAlign: 'right', color: '#64748b' }}>{percentuale((m.n / totaleMotivi) * 100)}</span>
+                            <span style={{ width: '44px', textAlign: 'right', color: '#64748b' }}>{fuoriStat ? '—' : percentuale((m.n / totaleMotivi) * 100)}</span>
                             <span style={{ width: '100px', textAlign: 'right' }}>{formattaEuro(m.valore)}</span>
                           </div>
                         );
                       })}
-                      {annullatiPren && statoAnn !== '' && s.dopoIncasso.length > 0 && (
-                        <div style={{ display: 'flex', gap: '14px', fontSize: '0.75rem', color: '#64748b', padding: '8px 8px 0' }}>
-                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: COLORE_COSTO, marginRight: '5px', verticalAlign: 'middle' }} />Sfumate</span>
-                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: '#8b5cf6', marginRight: '5px', verticalAlign: 'middle' }} />Annullate dopo l'incasso</span>
+                      {((annullatiPren && statoAnn !== '' && s.dopoIncasso.length > 0) || s.motivi.some(m => m.categoria?.fuoriStatistiche)) && (
+                        <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '0.75rem', color: '#64748b', padding: '8px 8px 0' }}>
+                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: COLORE_SFUMATE, marginRight: '5px', verticalAlign: 'middle' }} />{annullatiPren ? 'Sfumate' : 'Sfumati'}</span>
+                          {annullatiPren && statoAnn !== '' && s.dopoIncasso.length > 0 && <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', background: COLORE_ANNULLATE_INCASSO, marginRight: '5px', verticalAlign: 'middle' }} />Annullate dopo l'incasso</span>}
+                          {s.motivi.some(m => m.categoria?.fuoriStatistiche) && <span><span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '2px', boxSizing: 'border-box', border: `1px solid ${COLORE_SFUMATE}`, background: TRATTEGGIO_FUORI_STATISTICHE, marginRight: '5px', verticalAlign: 'middle' }} />Fuori statistiche</span>}
                         </div>
                       )}
                     </div>
