@@ -3655,6 +3655,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         ].join('\n');
 
         const messaggioCampo = (c) => [
+          // Gli asterischi sono il grassetto di WhatsApp, che e' dove questo messaggio va a finire:
+          // sul telefono del campo la prima riga si legge in neretto, qui si vedono i due segni.
+          '*ciao recap*',
           `📋 Prenotazioni - ${c.label}`,
           '',
           ...righeGiorno(c.righe)
