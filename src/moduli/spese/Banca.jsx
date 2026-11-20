@@ -5,6 +5,7 @@ import { controlloSaldi, daCompletare, euro, r2 } from '../../lib/banca'
 import { elaboraMovimenti } from './operazioni'
 import FiltroPeriodo from '../albatros/FiltroPeriodo'
 import { periodoIniziale, intervalloPeriodo } from '../albatros/calcolo'
+import Paginazione, { usePaginazione } from '../../components/Paginazione'
 
 // ============================================================
 // Banca: si controlla che i saldi tornino e si vedono i movimenti con la loro destinazione.
@@ -60,6 +61,8 @@ function Banca({ user, regole, controparti, spese, movimenti, caricamenti, categ
   const entrate = r2(visibili.filter(m => Number(m.importo) > 0).reduce((x, m) => x + Number(m.importo), 0));
   const uscite = r2(visibili.filter(m => Number(m.importo) < 0).reduce((x, m) => x - Number(m.importo), 0));
   const senzaSpesa = movimenti.filter(m => destinazione(m).classe === 'oltre').length;
+  // I totali in alto sono di tutti i movimenti filtrati; la tabella li mostra 50 per volta.
+  const pagine = usePaginazione(visibili.length, [periodo, verso, cerca]);
 
   // Uscite rimaste senza spesa: di norma non ce ne sono, perché l'import le trasforma tutte. Restano
   // se un import si è interrotto a metà; qui si sistemano con lo stesso giro dell'import (oneri,
@@ -139,7 +142,7 @@ function Banca({ user, regole, controparti, spese, movimenti, caricamenti, categ
             <table className="albatros-tabella tabella-schede">
               <thead><tr><th>Data</th><th>Tipo</th><th>Descrizione</th><th className="num">Importo</th><th>Destinazione</th><th></th></tr></thead>
               <tbody>
-                {visibili.map(m => {
+                {pagine.fetta(visibili).map(m => {
                   const d = destinazione(m);
                   const s = spesaDi.get(m.id);
                   const uscitaLibera = Number(m.importo) < 0 && !s && m.onere_spesa_id == null;
@@ -161,6 +164,7 @@ function Banca({ user, regole, controparti, spese, movimenti, caricamenti, categ
             </table>
           </div>
         )}
+        <Paginazione {...pagine} />
       </div>
     </div>
   );

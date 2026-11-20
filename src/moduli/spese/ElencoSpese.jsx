@@ -134,6 +134,13 @@ function ElencoSpese(props) {
     if (await scrivi(() => supabase.from('spese').update(record).eq('id', riga.id))) setRiga(null);
   };
 
+  // La natura, come negli incassi: operativa o generale (di Albatros, se è sua), oppure da completare.
+  const naturaDi = (s, manca) => (manca ? { testo: 'Da completare', classe: 'oltre' }
+    : s.ente === 'albatros' ? { testo: 'Albatros', classe: 'chiusa' }
+      : s.natura === 'operativa' ? { testo: 'Operativa', classe: 'chiusa' }
+        : s.natura === 'generale' ? { testo: 'Generale', classe: 'chiusa' }
+          : { testo: 'Da completare', classe: 'oltre' });
+
   // Come si legge la classificazione in una riga che non si sta modificando.
   const classificazioneDi = (s) => {
     if (s.ente === 'albatros') return `Albatros · ${categorieAlbatros.find(c => c.id === s.albatros_categoria_id)?.nome || '…'}`;
@@ -235,7 +242,7 @@ function ElencoSpese(props) {
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
             <table className="albatros-tabella tabella-schede">
               <thead>
-                <tr><th>Data</th><th>Cosa</th><th>Origine</th><th>Classificazione</th><th className="num">Importo</th><th></th></tr>
+                <tr><th>Data</th><th>Cosa</th><th>Origine</th><th>Natura</th><th>Classificazione</th><th className="num">Importo</th><th></th></tr>
               </thead>
               <tbody>
                 {pagine.fetta(visibili).map(s => {
@@ -263,13 +270,15 @@ function ElencoSpese(props) {
                         {/* Il bubbler (o il campo, il fornitore) si vede già nella classificazione: qui solo un beneficiario scritto a mano. */}
                         {s.beneficiario && !s.controparte_id && <div className="albatros-tenue" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap', marginTop: '2px' }}>{s.beneficiario}</div>}
                       </td>
+                      <td data-etichetta="Natura" style={CELLA}>
+                        <span className={`albatros-badge mini ${naturaDi(mostrata, mancaOra).classe}`} title={mancaOra ? `Manca ${mancaOra}` : undefined}>{naturaDi(mostrata, mancaOra).testo}</span>
+                      </td>
                       <td data-etichetta="Classificazione" style={{ ...CELLA, fontSize: '0.8rem' }} onClick={(e) => inModifica && e.stopPropagation()}>
                         <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                           {inModifica
                             ? <Classificazione compatta valore={riga} onChange={(v) => setRiga({ ...riga, ...v })}
                               categorie={categorie} categorieAlbatros={categorieAlbatros} controparti={controparti} />
                             : classificazioneDi(s) && <span>{classificazioneDi(s)}</span>}
-                          {mancaOra && <span className="albatros-badge mini da-specificare" title={`Manca ${mancaOra}`}>Da completare</span>}
                           {!mancaOra && daRiconciliare(mostrata) && <span className="albatros-badge mini aperta" title="Andrà abbinata al suo consuntivo">Da riconciliare</span>}
                         </div>
                       </td>

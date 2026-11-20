@@ -24,8 +24,8 @@ import Configuratore from './Configuratore'
 
 const SCHEDE = [
   { id: 'spese', label: 'Spese', icona: 'spese' },
-  { id: 'banca', label: 'Banca', icona: 'banca' },
   { id: 'incassi', label: 'Incassi', icona: 'cashflow' },
+  { id: 'banca', label: 'Banca', icona: 'banca' },
   { id: 'bilancio', label: 'Bilancio', icona: 'riepilogo' },
   { id: 'regole', label: 'Regole', icona: 'regole' },
   { id: 'configuratore', label: 'Configuratore', icona: 'configuratore' },
