@@ -17,7 +17,8 @@ const SEZIONI = [
   { tipo: 'spesa', titolo: 'Categorie delle spese', spiegazione: 'Per dividere le uscite.' },
 ];
 
-function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere }) {
+// solo: 'listino' (dentro la scheda Listino) o 'spesa' (dentro Conti, e vale anche per la Cassa).
+function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere, solo }) {
   const [usiSpese, setUsiSpese] = useState({});
   const [nuove, setNuove] = useState({ listino: '', spesa: '' });
   const [nomi, setNomi] = useState({});
@@ -112,7 +113,7 @@ function Configuratore({ categorie, ricaricaCategorie, listino, puoCorreggere })
 
   return (
     <div className="albatros-pagina no-print">
-      {SEZIONI.map(({ tipo, titolo, spiegazione }) => {
+      {SEZIONI.filter(x => !solo || x.tipo === solo).map(({ tipo, titolo, spiegazione }) => {
         const elenco = categorieDi(categorie, tipo, { ancheArchiviate: true });
         return (
           <div key={tipo} className="albatros-card">

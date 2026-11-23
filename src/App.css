@@ -1171,6 +1171,8 @@ input.valore-proposto {
 .albatros-riga-testo { flex: 1; min-width: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
 .albatros-riga-importo { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .albatros-categoria-voce { display: block; width: auto; max-width: 100%; height: 34px; margin-top: 4px; }
+/* Spese dalla banca: i campi della riga aperta in modifica. */
+.albatros-categoria-riga { height: 32px; min-width: 140px; font-size: 0.85rem; }
 /* Il dettaglio di uno scontrino: la voce in correzione al posto della riga, e in fondo il tasto
    che fissa le voci nuove. */
 .albatros-voce-in-modifica { padding: 6px 0; border-bottom: 1px solid #f1f5f9; }

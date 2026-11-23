@@ -1,22 +1,23 @@
 import { useState, useEffect } from 'react'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
-import { puoVedere } from '../../lib/permessi'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   quadratura, euro, r2, num, nomeCategoria, giornataDiLavoro, etichettaEnte,
   CAUSALI_PAGAMENTO, METODI_PAGAMENTO, etichettaCausale, etichettaMetodo, posizioneEnte, contantiAlbatros, contoAlbatros,
-  spesaDaPagare, TASCHE, etichettaTasca, movimentiAcconti, etichettaMetodoAcconto,
+  spesaDaPagare, nonInBanca, etichettaMetodoSpesa, TASCHE, etichettaTasca, movimentiAcconti, etichettaMetodoAcconto,
 } from './calcolo'
 
 // ============================================================
 // Cashflow: dove sono i soldi adesso, ente per ente. Niente filtri: conta tutto dalla prima chiusura.
-// Una sotto-scheda per BFM, Albatros e Lama; chi vede quale lo decidono i ruoli (sottoschede
-// cashflow_*).
-//   Albatros   entrano gli incassi POS e i contanti ritirati alle chiusure (i ragazzi li ritirano,
-//              ma sono di Albatros); escono le spese pagate da Albatros e i pagamenti che fa.
-//   BFM        le spese pagate per il centro, i pagamenti che fa e quelli che riceve.
-//   Lama       le spese pagate per il centro e i pagamenti ricevuti.
+// Due modi, uno per modulo:
+//   conti      (modulo Conti, il responsabile) il cashflow di Albatros: entrano gli incassi POS e i
+//              contanti ritirati alle chiusure; escono le spese pagate da Albatros e i pagamenti che
+//              fa. Da qui si registrano pagamenti e trasferimenti.
+//   contanti   (modulo Cassa, i ragazzi) solo i contanti in mano: ritirati, spese e pagamenti in
+//              contanti, versamenti e prelievi, acconti in contanti; e quanto c'è da rimborsare a
+//              Lama. Si guarda e basta.
+// Il cashflow di BFM non c'è più.
 // I rimborsi abbassano il "da rimborsare" di chi li riceve. I pagamenti li registra
 // l'amministratore dalla pagina di chi paga (Albatros o BFM).
 // Le spese ancora da attribuire non sono di nessuno: si segnalano e basta.
@@ -25,12 +26,6 @@ import {
 // Gli acconti dei clienti (scheda Chiusure) entrano il giorno in cui sono versati, nei contanti o
 // sul conto; se rimborsati, il rimborso esce il giorno in cui è fatto.
 // ============================================================
-
-const SOTTOSCHEDE = [
-  { id: 'cashflow_bfm', ente: 'bfm', label: 'BFM' },
-  { id: 'cashflow_albatros', ente: 'albatros', label: 'Albatros' },
-  { id: 'cashflow_lama', ente: 'lama', label: 'Lama' },
-];
 
 const leggiImporto = (v) => { const n = Number(String(v ?? '').trim().replace(',', '.')); return Number.isFinite(n) ? r2(n) : NaN; };
 const descriviPagamento = (p) => `${etichettaCausale(p.causale)} · ${etichettaMetodo(p.metodo).toLowerCase()}${p.note ? ` · ${p.note}` : ''}`;
@@ -47,29 +42,31 @@ function movimentiDi(ente, chiusure, spese, pagamenti, trasferimenti, acconti, n
     chiusure.filter(c => c.chiusa_il).forEach(c => {
       const q = quadratura(c, []);
       if (q.pos > 0) righe.push({ data: c.data, importo: q.pos, descrizione: 'Incasso POS', tipo: 'pos' });
-      if (q.ritirato > 0) righe.push({ data: c.data, importo: q.ritirato, descrizione: 'Contanti ritirati alla chiusura', tipo: 'contanti' });
+      if (q.ritirato > 0) righe.push({ data: c.data, importo: q.ritirato, descrizione: 'Contanti ritirati alla chiusura', tipo: 'contanti', contanti: true });
     });
     acconti.forEach(a => {
       const cosa = `${nomeVoce(a.voce_id)} del ${formattaDataGGMMAAAA(a.data_riferimento)}, ${a.cliente}`;
-      righe.push({ data: a.data_versamento, importo: r2(num(a.importo)), descrizione: `Acconto: ${cosa} · ${etichettaMetodoAcconto(a.metodo).toLowerCase()}`, tipo: 'acconto' });
-      if (a.stato === 'rimborsato') righe.push({ data: a.rimborso_data, importo: -r2(num(a.importo)), descrizione: `Rimborso acconto: ${cosa} · ${a.rimborso_metodo === 'contanti' ? 'contanti' : 'dal conto'}`, tipo: 'rimborso_acconto' });
+      righe.push({ data: a.data_versamento, importo: r2(num(a.importo)), descrizione: `Acconto: ${cosa} · ${etichettaMetodoAcconto(a.metodo).toLowerCase()}`, tipo: 'acconto', contanti: a.metodo === 'contanti' });
+      if (a.stato === 'rimborsato') righe.push({ data: a.rimborso_data, importo: -r2(num(a.importo)), descrizione: `Rimborso acconto: ${cosa} · ${a.rimborso_metodo === 'contanti' ? 'contanti' : 'dal conto'}`, tipo: 'rimborso_acconto', contanti: a.rimborso_metodo === 'contanti' });
     });
     trasferimenti.forEach(t => righe.push({
+      // Per i contanti un trasferimento non è neutro: un versamento li fa scendere, un prelievo salire.
       data: t.data, importo: 0, trasferito: r2(num(t.importo)), tipo: 'trasferimento', trasferimento: t,
+      contanti: true, suiContanti: t.da === 'contanti' ? -r2(num(t.importo)) : r2(num(t.importo)),
       descrizione: `${t.da === 'contanti' ? 'Versamento dei contanti sul conto' : 'Prelievo dal conto in contanti'}${t.note ? ` · ${t.note}` : ''}`,
     }));
   }
-  pagamenti.filter(p => p.pagante === ente).forEach(p => righe.push({ data: p.data, importo: -r2(num(p.importo)), descrizione: `Pagamento a ${etichettaEnte(p.beneficiario)}: ${descriviPagamento(p)}`, tipo: 'pagamento', pagamento: p }));
+  pagamenti.filter(p => p.pagante === ente).forEach(p => righe.push({ data: p.data, importo: -r2(num(p.importo)), descrizione: `Pagamento a ${etichettaEnte(p.beneficiario)}: ${descriviPagamento(p)}`, tipo: 'pagamento', pagamento: p, contanti: p.metodo === 'contanti' }));
   pagamenti.filter(p => p.beneficiario === ente).forEach(p => righe.push({ data: p.data, importo: r2(num(p.importo)), descrizione: `Da ${etichettaEnte(p.pagante)}: ${descriviPagamento(p)}`, tipo: 'ricevuto', pagamento: p }));
   // Le spese ancora da pagare non sono uscite: si contano a parte (vedi la cifra "Da pagare").
-  spese.filter(s => s.ente === ente && !spesaDaPagare(s)).forEach(s => righe.push({ data: s.data, importo: -r2(num(s.importo)), descrizione: ente === 'albatros' ? `${s.descrizione} · ${s.metodo === 'carta' ? 'carta' : 'contanti'}` : s.descrizione, tipo: 'spesa', spesa: s }));
+  // Una spesa con carta scritta a mano che non è (ancora) in banca non conta: vedi nonInBanca.
+  spese.filter(s => s.ente === ente && !spesaDaPagare(s) && !nonInBanca(s)).forEach(s => righe.push({ data: s.data, importo: -r2(num(s.importo)), descrizione: ente === 'albatros' ? `${s.descrizione} · ${etichettaMetodoSpesa(s)}` : s.descrizione, tipo: 'spesa', spesa: s, contanti: s.metodo !== 'carta' && s.metodo !== 'conto' }));
   return righe.sort((a, b) => b.data.localeCompare(a.data) || a.importo - b.importo);
 }
 const sommaTipo = (mov, tipo) => r2(mov.filter(m => m.tipo === tipo).reduce((t, m) => t + m.importo, 0));
 
-function Cashflow({ user, categorie, listino, puoCorreggere }) {
-  const visibili = SOTTOSCHEDE.filter(s => puoVedere(user, 'albatros', 'cashflow', s.id));
-  const [scelta, setScelta] = useState(null);
+function Cashflow({ user, categorie, listino, puoCorreggere, modo = 'conti' }) {
+  const soloContanti = modo === 'contanti';
   const [chiusure, setChiusure] = useState([]);
   const [spese, setSpese] = useState([]);
   const [pagamenti, setPagamenti] = useState([]);
@@ -105,16 +102,17 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
   };
   useEffect(() => { carica(); }, []);
 
-  if (visibili.length === 0) return null;
-  const attiva = visibili.find(s => s.id === scelta) || visibili[0];
+  const attiva = { ente: 'albatros', label: 'Albatros' };
   const nomeVoce = (id) => listino.find(v => v.id === id)?.nome || 'voce';
-  const mov = movimentiDi(attiva.ente, chiusure, spese, pagamenti, trasferimenti, acconti, nomeVoce);
+  const tutti = movimentiDi(attiva.ente, chiusure, spese, pagamenti, trasferimenti, acconti, nomeVoce);
+  // Nei contanti un trasferimento conta col suo effetto sui contanti, come entrata o uscita.
+  const mov = soloContanti ? tutti.filter(m => m.contanti).map(m => (m.trasferimento ? { ...m, importo: m.suiContanti, trasferimento: null, trasferimentoCassa: m.trasferimento } : m)) : tutti;
+  const lama = posizioneEnte('lama', spese, pagamenti);
   const accontiInAttesa = movimentiAcconti(acconti).inAttesa;
   const daAttribuire = spese.filter(s => !s.ente);
   const ultimaConFondo = [...chiusure].filter(c => c.chiusa_il && c.fondo_lasciato != null).sort((a, b) => b.data.localeCompare(a.data))[0];
   const cassa = contantiAlbatros(chiusure, spese, pagamenti, trasferimenti, acconti);
   const conto = contoAlbatros(chiusure, spese, pagamenti, trasferimenti, acconti);
-  const posizione = attiva.ente === 'albatros' ? null : posizioneEnte(attiva.ente, spese, pagamenti);
   const beneficiari = BENEFICIARI[attiva.ente] || [];
   // La posizione di chi riceve il pagamento in corso: serve a proporre il rimborso.
   const posizioneDi = (ente) => posizioneEnte(ente, spese, pagamenti);
@@ -188,35 +186,42 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
     <div className="albatros-pagina no-print">
       <div className="albatros-card">
         <div className="albatros-testata">
-          <div className="albatros-filtri-listino" style={{ marginBottom: 0, alignSelf: 'flex-end' }}>
-            {visibili.map(s => (
-              <button key={s.id} type="button" className={`albatros-chip ${attiva.id === s.id ? 'attivo' : ''}`} onClick={() => setScelta(s.id)}>{s.label}</button>
-            ))}
-          </div>
           <div style={{ marginLeft: 'auto', alignSelf: 'flex-end', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {puoCorreggere && attiva.ente === 'albatros' && !trasferimentiMancanti && (
+            {puoCorreggere && !soloContanti && !trasferimentiMancanti && (
               <button type="button" className="btn-outline-annulla albatros-bottone" onClick={nuovoTrasferimento} title="Sposta soldi fra i contanti in mano e il conto"><Icona nome="cashflow" />Trasferimento</button>
             )}
-            {puoCorreggere && beneficiari.length > 0 && !pagamentiMancanti && (
+            {puoCorreggere && !soloContanti && beneficiari.length > 0 && !pagamentiMancanti && (
               <button type="button" className="btn-accent-inline albatros-bottone" onClick={nuovoPagamento}>+ Pagamento</button>
             )}
           </div>
         </div>
 
-        {pagamentiMancanti && (
+        {!soloContanti && pagamentiMancanti && (
           <p className="albatros-avviso" style={{ marginTop: '12px' }}>
             Per registrare i pagamenti a Lama e BFM esegui <strong>sql/albatros_pagamenti.sql</strong> nell'SQL Editor di Supabase.
           </p>
         )}
 
-        {attiva.ente === 'albatros' && trasferimentiMancanti && puoCorreggere && (
+        {!soloContanti && trasferimentiMancanti && puoCorreggere && (
           <p className="albatros-avviso" style={{ marginTop: '12px' }}>
             Per registrare i trasferimenti fra contanti e conto esegui <strong>sql/albatros_trasferimenti.sql</strong> nell'SQL Editor di Supabase.
           </p>
         )}
 
         <div className="albatros-cifre">
-          {attiva.ente === 'albatros' ? (
+          {soloContanti ? (
+            <>
+              <div className="albatros-cifra-saldo"><span>Contanti in mano</span><strong>{euro(cassa.inMano)}</strong><small>ritirati − spese e pagamenti in contanti ± versamenti, prelievi e acconti</small></div>
+              <div><span>Contanti ritirati</span><strong style={{ color: '#15803d' }}>{euro(sommaTipo(mov, 'contanti'))}</strong><small>entrate, dalle chiusure</small></div>
+              <div><span>Spese in contanti</span><strong style={{ color: '#b91c1c' }}>{euro(-sommaTipo(mov, 'spesa'))}</strong><small>uscite</small></div>
+              <div><span>Pagamenti in contanti</span><strong style={{ color: '#b91c1c' }}>{euro(-sommaTipo(mov, 'pagamento'))}</strong><small>uscite: rimborsi, stipendi, soci</small></div>
+              <div><span>Fondo cassa</span><strong>{euro(ultimaConFondo?.fondo_lasciato)}</strong>
+                <small>{ultimaConFondo ? `lasciato il ${formattaDataGGMMAAAA(ultimaConFondo.data)}` : 'nessuna chiusura col fondo'}</small></div>
+              {lama.daRimborsare > 0 && (
+                <div><span>Da rimborsare a Lama</span><strong style={{ color: '#b45309' }}>{euro(lama.daRimborsare)}</strong><small>spese pagate da Lama − rimborsi ricevuti</small></div>
+              )}
+            </>
+          ) : (
             <>
               <div className="albatros-cifra-saldo"><span>Saldo attuale</span><strong>{euro(mov.reduce((t, m) => t + m.importo, 0))}</strong><small>contanti in mano + conto</small></div>
               <div><span>Contanti in mano</span><strong>{euro(cassa.inMano)}</strong><small>ritirati − spese e pagamenti in contanti ± trasferimenti e acconti</small></div>
@@ -234,14 +239,8 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
               <div><span>Pagamenti fatti</span><strong style={{ color: '#b91c1c' }}>{euro(-sommaTipo(mov, 'pagamento'))}</strong><small>uscite: rimborsi, stipendi, soci, altro</small></div>
               <div><span>Fondo cassa</span><strong>{euro(ultimaConFondo?.fondo_lasciato)}</strong>
                 <small>{ultimaConFondo ? `lasciato il ${formattaDataGGMMAAAA(ultimaConFondo.data)}` : 'nessuna chiusura col fondo'}</small></div>
-            </>
-          ) : (
-            <>
-              {posizione.daRimborsare > 0 && (
-                <div className="albatros-cifra-saldo"><span>Da rimborsare a {attiva.label}</span><strong>{euro(posizione.daRimborsare)}</strong><small>spese pagate − rimborsi ricevuti</small></div>
-              )}
-              {attiva.ente === 'lama' && (
-                <div><span>Contanti in mano ad Albatros</span><strong>{euro(cassa.inMano)}</strong></div>
+              {lama.daRimborsare > 0 && (
+                <div><span>Da rimborsare a Lama</span><strong style={{ color: '#b45309' }}>{euro(lama.daRimborsare)}</strong><small>spese pagate da Lama − rimborsi ricevuti</small></div>
               )}
             </>
           )}
@@ -258,7 +257,7 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
             <table className="albatros-tabella">
               <thead>
-                <tr><th>Data</th><th>Movimento</th><th className="num">Entrata</th><th className="num">Uscita</th>{puoCorreggere && <th></th>}</tr>
+                <tr><th>Data</th><th>Movimento</th><th className="num">Entrata</th><th className="num">Uscita</th>{puoCorreggere && !soloContanti && <th></th>}</tr>
               </thead>
               <tbody>
                 {mov.map((m, i) => (
@@ -273,7 +272,7 @@ function Cashflow({ user, categorie, listino, puoCorreggere }) {
                     <td className="num" style={{ color: '#b91c1c' }}>{m.importo < 0 ? euro(-m.importo) : ''}</td>
                     </>
                     )}
-                    {puoCorreggere && (
+                    {puoCorreggere && !soloContanti && (
                       <td style={{ textAlign: 'right' }}>
                         {m.pagamento && <button type="button" className="btn-icon-action danger" title="Elimina il pagamento" onClick={() => eliminaPagamento(m.pagamento)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
                         {m.trasferimento && <button type="button" className="btn-icon-action danger" title="Elimina il trasferimento" onClick={() => eliminaTrasferimento(m.trasferimento)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}

@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
+import { puoVedere } from '../../lib/permessi'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { categorieDi, nomeCategoria, idCategoriaScelta, r2, euro, voceDiNome } from './calcolo'
 import SceltaCategoria from './SceltaCategoria'
 import IconaCategoria from './IconaCategoria'
+import Configuratore from './Configuratore'
 
 // ============================================================
 // Il listino del centro. Si riempie da solo con le voci scritte nelle chiusure; qui si ripulisce:
@@ -14,12 +16,37 @@ import IconaCategoria from './IconaCategoria'
 // unisce a un'altra, che si prende le sue righe.
 // Chi non è amministratore può solo aggiungere voci: modificare, unire, disattivare e cancellare no.
 // Nuova voce e modifica si fanno nello stesso overlay.
+// Due viste, col selettore dei moduli di BFM: il listino e il suo Configuratore (le categorie del
+// listino). Chi vede quale lo dicono le sottoschede dei ruoli.
 // ============================================================
 
 const leggiImporto = (v) => { const n = Number(String(v ?? '').trim().replace(',', '.')); return Number.isFinite(n) ? r2(n) : NaN; };
 const VOCE_VUOTA = { nome: '', categoria: null, prezzo: '' };
 
-function Listino({ user, listino, ricaricaListino, categorie, puoCorreggere }) {
+function Listino(props) {
+  const { user } = props;
+  const viste = [
+    { id: 'listino', label: 'Listino', icona: 'listino', permesso: 'listino_elenco' },
+    { id: 'configuratore', label: 'Configuratore', icona: 'configuratore', permesso: 'listino_configuratore' },
+  ].filter(v => puoVedere(user, 'albatros', 'listino', v.permesso));
+  const [scelta, setScelta] = useState(null);
+  const vista = (viste.find(v => v.id === scelta) || viste[0])?.id;
+  if (!vista) return <p className="albatros-avviso">Nessuna vista del listino è abilitata per il tuo ruolo.</p>;
+  return (
+    <>
+      {viste.length > 1 && (
+        <nav className="modulo-subnav no-print subnav-segmented" style={{ marginBottom: '16px' }}>
+          {viste.map(v => (
+            <button key={v.id} type="button" className={`nav-btn ${vista === v.id ? 'active' : ''}`} onClick={() => setScelta(v.id)}><Icona nome={v.icona} />{v.label}</button>
+          ))}
+        </nav>
+      )}
+      {vista === 'configuratore' ? <Configuratore {...props} solo="listino" /> : <ElencoListino {...props} />}
+    </>
+  );
+}
+
+function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorreggere }) {
   const [usi, setUsi] = useState({});
   const [filtroCategoria, setFiltroCategoria] = useState('');
   const [mostraArchiviate, setMostraArchiviate] = useState(false);

@@ -5,8 +5,6 @@ import Giornata from './Giornata'
 import StoricoChiusure from './StoricoChiusure'
 import Spese from './Spese'
 import Listino from './Listino'
-import Configuratore from './Configuratore'
-import Cashflow from './Cashflow'
 import Incassi from './Incassi'
 import Missioni from './Missioni'
 import { giornataDiLavoro } from './calcolo'
@@ -97,10 +95,10 @@ function Albatros({ user, scheda, onScheda, onMissioniCambiate }) {
         <>
           {attiva === 'chiusure' && <Giornata {...comuni} data={giorno} setData={setGiorno} />}
           {attiva === 'storico' && <StoricoChiusure {...comuni} onApri={(d) => { apertaDallElenco.current = true; setGiorno(d); setScheda('chiusure'); }} />}
-          {attiva === 'spese' && <Spese {...comuni} />}
+          {/* Cassa (i ragazzi) e Conti (il responsabile) sono la stessa pagina, con viste diverse. */}
+          {attiva === 'spese' && <Spese key="cassa" {...comuni} modulo="cassa" />}
+          {attiva === 'conti' && <Spese key="conti" {...comuni} modulo="conti" />}
           {attiva === 'listino' && <Listino {...comuni} />}
-          {attiva === 'configuratore' && <Configuratore {...comuni} />}
-          {attiva === 'cashflow' && <Cashflow {...comuni} />}
           {attiva === 'incassi' && <Incassi {...comuni} />}
           {attiva === 'missioni' && <Missioni {...comuni} onCambiate={onMissioniCambiate} />}
         </>

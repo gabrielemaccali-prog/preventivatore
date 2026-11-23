@@ -5,6 +5,8 @@ import {
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
   rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, modificaVoceConsentita, voceDaSalvare, voceCorreggibile, importoInCategoria, spesaDettagliabile, DA_DETTAGLIARE, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare, accontiConfermati, accontoConfermabile, movimentiAcconti, accontoSullaVoce,
 } from './calcolo.js';
+import { nonInBanca } from './calcolo.js';
+import { movimentiNonContabilizzati, contabilizzatoDi, eIncassoPos, eVersamentoContanti, naturaEntrata, mittenteDi, causaleEntrataDi, versamentoManualeDa, trasferimentiDoppi, elaboraAlbatros, ePrelievo, principaleDi, usciteDaImportare, dataCompetenza, saldoAllInizio, spesaDaMovimento, spesaManualeDa, categoriaProposta, eOnereBancario, chiaveControparte } from './banca.js';
 import { missioneAperta, missioneScaduta, confrontaMissioni, campiCambioStato, statoDopoAttivita, avanzamento, attivitaScaduta } from './regoleMissioni.js';
 
 const r2t = (n) => Math.round(n * 100) / 100;
@@ -98,7 +100,7 @@ const chiuseCF = [{ chiusa_il: 'x', pos: 100, contanti: 500 }, { chiusa_il: null
 verifica('contanti in mano: ritirati - spese Albatros - pagati in contanti', 0, contantiAlbatros(chiuseCF, speseEnti, pagati).inMano);
 verifica('contanti: le giornate aperte non contano', 500, contantiAlbatros(chiuseCF, speseEnti, pagati).ritirati);
 verifica('contanti: i pagamenti di BFM non toccano la cassa di Albatros', 400, contantiAlbatros(chiuseCF, speseEnti, pagati).pagatiInContanti);
-const speseMetodo = [{ ente: 'albatros', importo: 100, metodo: 'contanti' }, { ente: 'albatros', importo: 40, metodo: 'carta' }, { ente: 'albatros', importo: 10 }];
+const speseMetodo = [{ ente: 'albatros', importo: 100, metodo: 'contanti' }, { ente: 'albatros', importo: 40, metodo: 'carta', movimento_id: 1 }, { ente: 'albatros', importo: 10 }];
 verifica('spese: solo quelle in contanti (o senza metodo) toccano i contanti', 110, contantiAlbatros(chiuseCF, speseMetodo, []).speseAlbatros);
 verifica('conto: POS - spese con carta - pagamenti non in contanti', -940, contoAlbatros(chiuseCF, speseMetodo, pagati).saldo);
 const conDaPagare = [...speseMetodo, { ente: 'albatros', importo: 500, metodo: 'da_pagare' }];
@@ -220,6 +222,100 @@ verifica('conto: + acconti con POS e bonifico', r2t(contoAlbatros(chiuseCF, spes
 verifica('acconti: non sulle voci del bar', false, accontoSullaVoce({ categoria_id: 3 }, [{ id: 3, acconti: false }]));
 verifica('acconti: sulle feste sì', true, accontoSullaVoce({ categoria_id: 2 }, [{ id: 2, acconti: true }]));
 verifica('acconti: prima della colonna, sì', true, accontoSullaVoce({ categoria_id: 2 }, [{ id: 2 }]));
+
+// ---------- spese dal conto in banca ----------
+const metro = { dataContabile: '2026-10-28', dataValuta: '2026-10-26', tipo: 'PAGAMENTO POS', importo: -1309.29, impronta: 'a',
+  descrizione: 'EFFETTUATO IL 26/10/2026 ALLE ORE 10:52 MEDIANTE LA CARTA 4838 XXXX XXXX XX12 PRESSO METRO FIL.SAN DONATO MILANESE MI SAN DONATO MILA' };
+const enegan = { dataContabile: '2026-10-28', tipo: 'PAGAMENTO ADUE', importo: -904.25, impronta: 'b', descrizione: 'COD. DISP.: 0126102721720222 NOME: ENEGAN SPA MANDATO: A56S04000203310990969' };
+const bollo = { dataContabile: '2026-10-02', tipo: 'IMPOSTA DI BOLLO E/C E RENDICONTO', importo: -29.7, impronta: 'c', descrizione: '' };
+const sumup = { dataContabile: '2026-10-31', tipo: 'ACCREDITO BONIFICO ISTANTANEO', importo: 830.83, impronta: 'd', descrizione: 'SumUp incassi' };
+const settembre = { dataContabile: '2026-09-29', tipo: 'DISPOSIZIONE DI BONIFICO', importo: -1177, impronta: 'e', descrizione: 'a favore di: SILIPO ROBERTO DIVIDENDO SOCI' };
+const uscite = usciteDaImportare([metro, enegan, bollo, sumup, settembre], ['b']);
+verifica('banca: entrano le uscite nuove dal 1 ottobre', 2, uscite.nuove.length);
+verifica('banca: gli incassi no', false, uscite.nuove.includes(sumup));
+verifica('banca: quelle di settembre no', 1, uscite.primaDellInizio);
+verifica('banca: quelle già caricate no', 1, uscite.giaCaricate);
+const bolloSettembre = { dataContabile: '2026-10-02', dataValuta: '2026-09-30', tipo: 'IMPOSTA DI BOLLO E/C E RENDICONTO', importo: -29.7, impronta: 'f', descrizione: '' };
+const canoneOttobre = { dataContabile: '2026-10-07', dataValuta: '2026-09-30', tipo: 'CANONE CARTA DI DEBITO', importo: -3, impronta: 'g', descrizione: 'CARTA N. 4838XXXXXXXXXX12-PERIODO 10/26' };
+verifica('banca: conta la data valuta', '2026-09-30', dataCompetenza(bolloSettembre));
+verifica('banca: il canone col periodo è del suo mese', '2026-10-01', dataCompetenza(canoneOttobre));
+verifica('banca: il bollo di settembre resta fuori, il canone di ottobre entra', 'g', usciteDaImportare([bolloSettembre, canoneOttobre], []).nuove.map(m => m.impronta).join());
+verifica('banca: saldo al 30 settembre', 63.78, saldoAllInizio({ dal: '2026-09-09', saldoIniziale: 100, movimenti: [{ ...bolloSettembre, importo: -36.22 }, canoneOttobre] }));
+verifica('banca: file che parte da ottobre, niente saldo di partenza', null, saldoAllInizio({ dal: '2026-10-01', saldoIniziale: 100, movimenti: [] }));
+verifica('banca: POS = carta, nel giorno dell\'acquisto', 'carta 2026-10-26', `${spesaDaMovimento(metro).metodo} ${spesaDaMovimento(metro).data}`);
+verifica('banca: il negozio, senza la città', 'Metro Fil.San Donato Milanese', spesaDaMovimento(metro).descrizione);
+verifica('banca: addebito diretto = dal conto, col creditore', 'conto Enegan Spa', `${spesaDaMovimento(enegan).metodo} ${spesaDaMovimento(enegan).descrizione}`);
+verifica('banca: il bollo è un onere', true, eOnereBancario(bollo));
+verifica('banca: il prelievo allo sportello è un trasferimento', true, ePrelievo({ tipo: 'PRELEVAMENTO CARTA SU SPORTELLO AUTOMATICO' }));
+verifica('banca: un pagamento POS no', false, ePrelievo(metro));
+const bonificoLasi = { dataContabile: '2026-11-04', tipo: 'BONIFICO ISTANTANEO DA VOI DISPOSTO', importo: -235.6, descrizione: '0126110462587243 02INTER20261104HSRT1513537798 0306921864503801483730199999IT Bonifico da Voi disposto a favore di: LA.SI. distribuzione srl' };
+const costoLasi = { dataContabile: '2026-11-04', tipo: 'COSTO BONIFICO ISTANTANEO DA VOI DISPOSTO', importo: -0.5, descrizione: '0126110462587243 02INTER20261104HSRT1513537798 0306921864503801483730199999IT' };
+const adue = { dataContabile: '2026-10-28', tipo: 'COMMISSIONI E SPESE ADUE', importo: -0.85, descrizione: 'COD DISP.: 0126102721720222 NOME: ENEGAN SPA MANDATO: A56S04000203310990969' };
+const canone = { dataContabile: '2026-11-06', tipo: 'CANONE CARTA DI DEBITO', importo: -3, descrizione: 'CARTA N. 4838XXXXXXXXXX12-PERIODO 11/26' };
+verifica('banca: il costo del bonifico va col bonifico', bonificoLasi, principaleDi(costoLasi, [bonificoLasi, costoLasi, enegan]));
+verifica("banca: la commissione ADUE va con l'addebito", true, principaleDi(adue, [{ ...enegan, descrizione: 'COD. DISP.: 0126102721720222 NOME: ENEGAN SPA MANDATO: A56S04000203310990969' }, adue]) != null);
+verifica('banca: il canone resta a sé', null, principaleDi(canone, [bonificoLasi, canone]));
+verifica('banca: un bonifico non è la commissione di niente', null, principaleDi(bonificoLasi, [bonificoLasi, costoLasi]));
+verifica('banca: stessa controparte fra filiali', 'METRO FIL', chiaveControparte(metro));
+const manuale = { id: 9, ente: 'albatros', metodo: 'carta', importo: 1309.29, data: '2026-10-25', movimento_id: null, spesa_bfm_id: null };
+verifica('banca: si abbina alla spesa con carta scritta a mano', 9, spesaManualeDa(metro, [manuale])?.id);
+verifica('banca: non a una in contanti', null, spesaManualeDa(metro, [{ ...manuale, metodo: 'contanti' }]));
+verifica('banca: non oltre 10 giorni', null, spesaManualeDa(metro, [{ ...manuale, data: '2026-10-10' }]));
+const catSpesa = [{ id: 7, tipo: 'spesa', attiva: true, nome: 'Oneri bancari' }];
+verifica('banca: gli oneri in "Oneri bancari"', 7, categoriaProposta(bollo, [], catSpesa));
+verifica('banca: la categoria dell\'ultima spesa dallo stesso negozio', 4, categoriaProposta(metro, [{ chiave: 'METRO FIL', categoria_id: 3, data: '2026-10-01' }, { chiave: 'METRO FIL', categoria_id: 4, data: '2026-10-20' }], catSpesa));
+verifica('banca: negozio nuovo, nessuna categoria', null, categoriaProposta(enegan, [], catSpesa));
+verifica('dal conto: tocca il conto, non i contanti', 0, contantiAlbatros([], [{ ente: 'albatros', metodo: 'conto', importo: 50 }], []).speseAlbatros);
+verifica('dal conto: tocca il conto', 50, contoAlbatros([], [{ ente: 'albatros', metodo: 'conto', importo: 50, movimento_id: 1 }], []).speseCarta);
+
+const dalDb = (m, id, extra = {}) => ({ id, data_contabile: m.dataContabile, data_valuta: m.dataValuta, tipo: m.tipo, descrizione: m.descrizione, importo: m.importo, ignorato: false, onere_spesa_id: null, ...extra });
+const movDb = [dalDb(bonificoLasi, 1), dalDb(costoLasi, 2), dalDb(metro, 3), dalDb({ dataContabile: '2026-11-05', tipo: 'PRELEVAMENTO CARTA', descrizione: '', importo: -100 }, 4), dalDb(sumup, 5), dalDb(canone, 6, { ignorato: true })];
+const el = elaboraAlbatros({ movimenti: movDb, spese: [{ id: 9, ente: 'albatros', metodo: 'carta', importo: 1309.29, data: '2026-10-25', movimento_id: null, spesa_bfm_id: null }], trasferimenti: [], storico: [], categorie: [] });
+verifica('elabora: la commissione va sul bonifico', 1, el.oneri[0]?.principale.id);
+verifica('elabora: il prelievo diventa trasferimento', 4, el.prelievi[0]?.movimento.id);
+verifica('elabora: la spesa con carta scritta a mano si collega', 9, el.collegamenti[0]?.spesa.id);
+verifica('elabora: il bonifico diventa una spesa nuova', '1', el.nuove.map(n => n.movimento.id).join());
+verifica('elabora: le entrate e gli ignorati no', 4, el.oneri.length + el.prelievi.length + el.collegamenti.length + el.nuove.length);
+verifica('elabora: un movimento con la sua spesa non si tocca', 0, elaboraAlbatros({ movimenti: [dalDb(bonificoLasi, 1)], spese: [{ id: 2, movimento_id: 1 }], trasferimenti: [], storico: [], categorie: [] }).nuove.length);
+
+// ---------- entrate dal conto ----------
+const versamento = { id: 20, data_contabile: '2026-11-04', tipo: 'VERSAMENTO CONTANTI SU SPORTELLO AUTOMATICO', importo: 1400, descrizione: 'Effettuato presso ABI 01025 - ATM 7319' };
+verifica('entrate: SumUp è un incasso POS', true, eIncassoPos(sumup));
+verifica('entrate: il versamento di contanti', true, eVersamentoContanti(versamento));
+verifica('entrate: natura dal trasferimento', 'versamento', naturaEntrata(versamento, new Set([20])));
+verifica('entrate: senza niente è da completare', null, naturaEntrata({ id: 21 }, new Set()));
+const bonificoEntrata = { descrizione: 'COD. DISP.: 0126101174244849 CASH 7613a8ac8b014f14b84bc43d9d32c485 SumUp 9-10-11/10/26 Bonifico a Vostro favore disposto da: MITT.: ALBATROS SAS DI SILIPO ROBERTO & C. BENEF.: ALBATROS S.A.S.' };
+verifica('entrate: il mittente', 'ALBATROS SAS DI SILIPO ROBERTO & C.', mittenteDi(bonificoEntrata));
+verifica('entrate: la causale', 'SumUp 9-10-11/10/26', causaleEntrataDi(bonificoEntrata));
+verifica('entrate: il versamento scritto nel Cashflow si lega', 7, versamentoManualeDa(versamento, [{ id: 7, da: 'contanti', importo: 1400, data: '2026-11-03', movimento_id: null }])?.id);
+verifica('trasferimenti: il prelievo dalla banca e quello scritto a mano sono lo stesso', 8, trasferimentiDoppi([
+  { id: 1, da: 'conto', importo: 100, data: '2026-11-20', movimento_id: 55 },
+  { id: 8, da: 'conto', importo: 100, data: '2026-11-19', movimento_id: null },
+  { id: 9, da: 'contanti', importo: 100, data: '2026-11-19', movimento_id: null },
+])[0]?.manuale.id);
+const elPrel = elaboraAlbatros({ movimenti: [{ id: 4, data_contabile: '2026-11-20', tipo: 'PRELEVAMENTO CARTA', descrizione: '', importo: -100, ignorato: false, onere_spesa_id: null }], spese: [], trasferimenti: [{ id: 8, da: 'conto', importo: 100, data: '2026-11-19', movimento_id: null }], storico: [], categorie: [] });
+verifica('elabora: il prelievo si lega a quello scritto a mano', 8, elPrel.prelievi[0]?.manuale?.id);
+verifica('entrate: un prelievo no', null, versamentoManualeDa(versamento, [{ id: 7, da: 'conto', importo: 1400, data: '2026-11-03', movimento_id: null }]));
+
+verifica('non in banca: la spesa con carta scritta a mano senza movimento', true, nonInBanca({ metodo: 'carta', movimento_id: null }));
+verifica('non in banca: legata al movimento esiste', false, nonInBanca({ metodo: 'carta', movimento_id: 5 }));
+verifica('non in banca: i contanti esistono', false, nonInBanca({ metodo: 'contanti', movimento_id: null }));
+verifica('non in banca: non conta nel conto', 0, contoAlbatros([], [{ ente: 'albatros', metodo: 'carta', importo: 50, movimento_id: null }], []).speseCarta);
+
+// ---------- operazioni non contabilizzate ----------
+const nc = movimentiNonContabilizzati({ righeNonContabilizzate: [
+  { data: '2026-11-06', tipo: 'PAGAMENTO TRAMITE POS', descrizione: 'METRO FIL SAN DONATO MIL', importo: -332.54 },
+  { data: '2026-11-06', tipo: 'PAGAMENTO TRAMITE POS', descrizione: 'LEROY MERLIN', importo: -6.91 },
+] });
+verifica('NC: entrano come movimenti segnati', true, nc.every(m => m.nonContabilizzato));
+verifica('NC: diventano spese con carta col nome del negozio', 'carta Metro Fil San Donato', `${spesaDaMovimento(nc[0]).metodo} ${spesaDaMovimento(nc[0]).descrizione}`);
+verifica('NC: impronte diverse', 2, new Set(nc.map(m => m.impronta)).size);
+const ncDb = { id: 30, non_contabilizzato: true, importo: -332.54, data_valuta: '2026-11-06', data_contabile: '2026-11-06' };
+verifica('NC: il movimento contabilizzato che è diventata', 31, contabilizzatoDi(ncDb, [
+  { id: 31, non_contabilizzato: false, importo: -332.54, data_valuta: '2026-11-06', data_contabile: '2026-11-09' },
+  { id: 32, non_contabilizzato: false, importo: -332.54, data_valuta: '2026-10-20', data_contabile: '2026-10-22' },
+])?.id);
+verifica('NC: un altro importo no', null, contabilizzatoDi(ncDb, [{ id: 33, non_contabilizzato: false, importo: -330, data_valuta: '2026-11-06', data_contabile: '2026-11-09' }]));
 
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${e.atteso}, ottenuto ${e.ottenuto}`}`));

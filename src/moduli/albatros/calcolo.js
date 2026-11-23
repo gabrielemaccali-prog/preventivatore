@@ -53,14 +53,20 @@ export function posizioneEnte(ente, spese, pagamenti) {
 // Con cosa Albatros paga una spesa (albatros_spese.metodo). Vuoto = contanti, come le prime spese.
 // "Da pagare": comprata ma non ancora pagata, non tocca né i contanti né il conto finché non si
 // sceglie con cosa è stata pagata.
+// Carta e conto (bonifici, addebiti, oneri) arrivano solo dall'estratto conto (vedi banca.js): a
+// mano si scrivono i contanti, o una spesa da pagare. Le spese con carta scritte a mano prima
+// restano carta, finché non si legano al loro movimento.
 export const METODI_SPESA = [
   { id: 'contanti', label: 'Contanti' },
-  { id: 'carta', label: 'Carta' },
   { id: 'da_pagare', label: 'Da pagare' },
 ];
-const pagataConCarta = (s) => s.metodo === 'carta';
+// Una spesa con carta scritta a mano che nell'estratto conto non c'è (ancora): non esiste. Non si
+// vede in nessuna vista e non si conta nel Cashflow; arrivato il suo movimento le si lega (stesso
+// importo, entro 10 giorni) e torna, col dettaglio che aveva. Così niente è contato due volte.
+export const nonInBanca = (s) => s.movimento_id == null && s.spesa_bfm_id == null && (s.metodo === 'carta' || s.metodo === 'conto');
+const pagataConCarta = (s) => s.metodo === 'carta' || s.metodo === 'conto';
 export const spesaDaPagare = (s) => s.ente === 'albatros' && s.metodo === 'da_pagare';
-export const etichettaMetodoSpesa = (s) => (s.metodo === 'carta' ? 'carta' : s.metodo === 'da_pagare' ? 'da pagare' : 'contanti');
+export const etichettaMetodoSpesa = (s) => (s.metodo === 'carta' ? 'carta' : s.metodo === 'conto' ? 'dal conto' : s.metodo === 'da_pagare' ? 'da pagare' : 'contanti');
 
 // I trasferimenti fra le due tasche di Albatros (albatros_trasferimenti): versati = dai contanti al
 // conto, prelevati = dal conto ai contanti. Non cambiano il saldo, solo dove stanno i soldi.
@@ -128,7 +134,7 @@ export function contantiAlbatros(chiusure, spese, pagamenti, trasferimenti = [],
 // Contanti in mano + conto = saldo.
 export function contoAlbatros(chiusure, spese, pagamenti, trasferimenti = [], acconti = []) {
   const pos = r2((chiusure || []).filter(c => c.chiusa_il).reduce((t, c) => t + quadratura(c, []).pos, 0));
-  const speseCarta = r2((spese || []).filter(s => s.ente === 'albatros' && pagataConCarta(s)).reduce((t, s) => t + num(s.importo), 0));
+  const speseCarta = r2((spese || []).filter(s => s.ente === 'albatros' && pagataConCarta(s) && !nonInBanca(s)).reduce((t, s) => t + num(s.importo), 0));
   const pagati = r2((pagamenti || []).filter(p => p.pagante === 'albatros' && p.metodo !== 'contanti').reduce((t, p) => t + num(p.importo), 0));
   const versati = trasferiti(trasferimenti, 'contanti');
   const prelevati = trasferiti(trasferimenti, 'conto');

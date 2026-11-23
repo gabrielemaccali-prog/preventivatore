@@ -51,17 +51,39 @@ export const SCHEDE_REGISTRY = {
       // Si chiama Giornata, ma l'id resta 'chiusure': è la chiave già salvata nei permessi dei ruoli.
       { id: 'chiusure', label: 'Giornata' },
       { id: 'storico', label: 'Chiusure' },
-      { id: 'spese', label: 'Spese' },
-      { id: 'incassi', label: 'Incassi' },
-      { id: 'listino', label: 'Listino' },
-      { id: 'configuratore', label: 'Configuratore' },
+      // Si chiama Cassa, ma l'id resta 'spese': è il permesso che i ragazzi hanno già. Le viste di
+      // Cassa, Conti e Listino sono sottoschede: le loro id hanno il prefisso della scheda, perché
+      // le sottoschede di un modulo stanno tutte in un elenco solo (sql/albatros_permessi_cassa_conti.sql).
       {
-        id: 'cashflow',
-        label: 'Cashflow',
+        id: 'spese',
+        label: 'Cassa',
         sottoschede: [
-          { id: 'cashflow_bfm', label: 'BFM' },
-          { id: 'cashflow_albatros', label: 'Albatros' },
-          { id: 'cashflow_lama', label: 'Lama' },
+          { id: 'cassa_spese', label: 'Spese' },
+          { id: 'cassa_dettagliare', label: 'Da dettagliare' },
+          { id: 'cassa_trasferimenti', label: 'Trasferimenti' },
+        ],
+      },
+      {
+        id: 'conti',
+        label: 'Conti',
+        sottoschede: [
+          { id: 'conti_spese', label: 'Spese' },
+          { id: 'conti_incassi', label: 'Incassi' },
+          { id: 'conti_banca', label: 'Banca' },
+          { id: 'conti_trasferimenti', label: 'Trasferimenti' },
+          { id: 'conti_cashflow', label: 'Cashflow' },
+          { id: 'conti_contanti', label: 'Contanti in mano' },
+          { id: 'conti_bfm', label: 'BFM' },
+          { id: 'conti_configuratore', label: 'Configuratore (categorie spese)' },
+        ],
+      },
+      { id: 'incassi', label: 'Incassi' },
+      {
+        id: 'listino',
+        label: 'Listino',
+        sottoschede: [
+          { id: 'listino_elenco', label: 'Listino' },
+          { id: 'listino_configuratore', label: 'Configuratore (categorie listino)' },
         ],
       },
     ],

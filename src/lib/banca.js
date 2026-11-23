@@ -106,7 +106,21 @@ export function leggiEstrattoConto(XLSX, buffer) {
       tipo: String(r[2] ?? '').replace(/\s+/g, ' ').trim(), descrizione, importo, codice: codiceDi(descrizione),
     });
   }
-  const nonContabilizzati = iNonContab === -1 ? 0 : righe.slice(iNonContab + 1).filter(r => isoDaCella(r[1]) && numeroDaCella(r[3] || r[4])).length;
+  // Le operazioni non ancora contabilizzate: data, descrizione, accrediti, addebiti, descrizione
+  // estesa, una colonna più a destra della tabella sopra. BFM ne usa solo il numero; Albatros le
+  // carica come spese provvisorie (vedi moduli/albatros/banca.js).
+  const righeNonContabilizzate = iNonContab === -1 ? [] : righe.slice(iNonContab + 1)
+    .filter(r => isoDaCella(r[1]) && numeroDaCella(r[3] || r[4]))
+    .map(r => {
+      const accredito = numeroDaCella(r[3]);
+      const addebito = numeroDaCella(r[4]);
+      return {
+        data: isoDaCella(r[1]), tipo: String(r[2] ?? '').replace(/\s+/g, ' ').trim(),
+        descrizione: String(r[5] ?? '').replace(/\s+/g, ' ').trim(),
+        importo: r2(accredito ? Math.abs(accredito) : -Math.abs(addebito)),
+      };
+    });
+  const nonContabilizzati = righeNonContabilizzate.length;
 
   const saldoIniziale = r2(numeroDaCella(rIniziale[4]));
   const saldoFinale = r2(numeroDaCella(rFinale[4]));
@@ -116,7 +130,7 @@ export function leggiEstrattoConto(XLSX, buffer) {
     dal: isoDaCella(rIniziale[3]), al: isoDaCella(rFinale[3]),
     saldoIniziale, saldoFinale,
     movimenti: assegnaImpronte(movimenti),
-    nonContabilizzati,
+    nonContabilizzati, righeNonContabilizzate,
     // Il file torna con se stesso: saldo iniziale + movimenti = saldo finale. Se no, qualche riga
     // non è stata letta, e prima di importare va capito perché.
     differenzaFile: r2(saldoIniziale + somma - saldoFinale),
