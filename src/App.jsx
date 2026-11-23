@@ -368,8 +368,8 @@ function App() {
       <aside className={`sidebar-moduli no-print ${sidebarAperta ? 'aperta' : ''}`}>
         <div className="sidebar-header">
           {inAlbatros
-            ? <span className="marchio-albatros"><Icona nome="albatros" size={26} />Albatros</span>
-            : <img src="/logo.png" alt="Logo" style={{ maxWidth: '110px', height: 'auto' }} />}
+            ? <img src="/logo_albatros.png" alt="Albatros" className="logo-menu" />
+            : <img src="/logo.png" alt="Logo" className="logo-menu" />}
           <button className="sidebar-chiudi" onClick={() => setSidebarAperta(false)}>✕</button>
         </div>
         {mondiVisibili.length > 1 && (
@@ -426,8 +426,8 @@ function App() {
         <div className="header-brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button className="btn-hamburger" onClick={() => setSidebarAperta(true)} aria-label="Apri menu moduli">☰</button>
           {inAlbatros
-            ? <span className="marchio-albatros marchio-testata"><Icona nome="albatros" size={24} />Albatros</span>
-            : <img src="/logo.png" alt="Logo" style={{ height: '45px', width: 'auto', objectFit: 'contain' }} />}
+            ? <img src="/logo_albatros.png" alt="Albatros" className="logo-testata" />
+            : <img src="/logo.png" alt="Logo" className="logo-testata" />}
           <h1>{moduloCorrente && <Icona nome={moduloCorrente.icon} size={20} />} {moduloCorrente?.label}</h1>
         </div>
       </header>

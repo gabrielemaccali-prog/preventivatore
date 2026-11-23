@@ -65,6 +65,8 @@ body {
   border-radius: 10px;
   box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
   margin-bottom: 25px;
+  /* La banda del mondo: blu per BFM, verde per Albatros (vedi .mondo-albatros .main-header). */
+  border-top: 4px solid #0288d1;
 }
 .header-brand { display: flex; align-items: center; gap: 15px; }
 .header-logo { max-height: 50px; }
@@ -1282,14 +1284,15 @@ input.valore-proposto {
 
 /* --- MONDI: BFM e Albatros ---
    Il selettore in cima al menu compare solo a chi vede entrambi. Il mondo Albatros ha il menu
-   verde campo e il suo marchio al posto del logo BFM. */
+   verde campo e il suo logo (public/logo_albatros.png) al posto di quello di BFM. */
+/* I due loghi (BFM e Albatros, entrambi quadrati) stanno nella stessa scatola: passando da un
+   mondo all'altro menu e testata non cambiano misura. */
+.logo-menu { display: block; width: 96px; height: 96px; object-fit: contain; }
+.logo-testata { display: block; width: 45px; height: 45px; object-fit: contain; flex: none; }
 .selettore-mondo { display: flex; gap: 4px; margin: 12px 15px 0; padding: 4px; background: rgba(255,255,255,0.08); border-radius: 10px; }
 .selettore-mondo button { flex: 1; padding: 8px 10px; background: transparent; color: #cbd5e1; border: none; border-radius: 7px; font-size: 0.9rem; font-weight: 700; cursor: pointer; }
 .selettore-mondo button:hover:not(.attivo) { background: rgba(255,255,255,0.08); color: #fff; }
 .selettore-mondo button.attivo { background: #fff; color: #0f172a; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
-.marchio-albatros { display: inline-flex; align-items: center; gap: 8px; font-size: 1.35rem; font-weight: 800; color: #14532d; letter-spacing: -0.01em; }
-.marchio-albatros svg { color: #16a34a; margin-right: 0 !important; }
-.marchio-testata { padding-right: 14px; border-right: 1px solid #e2e8f0; }
 .mondo-albatros .sidebar-moduli { background: #052e16; }
 .mondo-albatros .sidebar-header { border-bottom-color: #14532d; }
 .mondo-albatros .sidebar-footer { border-top-color: #14532d; }
@@ -1355,7 +1358,6 @@ textarea.albatros-campo { height: auto; min-height: 64px; padding: 8px 10px; fon
   .albatros-missione-nuova-attivita input[type="text"], .albatros-missione-nuova-attivita button { grid-column: 1 / -1; }
   .albatros-missione-nuova-attivita button { justify-self: end; }
 }
-@media (max-width: 720px) { .marchio-testata { font-size: 1.1rem; padding-right: 8px; } }
 
 /* Campi di Albatros: la regola generale "input[type=text|date…]" (padding 12px, margin-top 5px)
    vince su .albatros-campo e, nei campi alti 40px, lasciava al testo 14px: sul telefono, con la
