@@ -9,7 +9,8 @@
 //                      per chi fa il gioco (BFM o un'altra sede), pacchetto o noleggio, e gioco
 //   costi operativi    spese operative: compensi dei bubbler, affitti dei campi, fornitori
 //   = risultato operativo
-//   altri ricavi       accrediti generali, per categoria degli incassi
+//   altri ricavi e costi  accrediti generali, per categoria degli incassi, e le spese generali
+//                      della categoria Altri costi
 //   costi di struttura spese generali delle categorie Struttura, Gestione e Attrezzatura
 //   = risultato dopo la struttura
 //   altri costi        tutte le altre spese generali, e quelle di Albatros pagate da BFM
@@ -27,6 +28,9 @@ export const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // Le categorie delle spese che fanno da costi di struttura, per nome: quelle di primo livello che si
 // chiamano così (deciso dall'utente il 04/11/2026). Le altre vanno fra gli altri costi.
 export const CATEGORIE_STRUTTURA = /^(struttura|gestione|attrezzatura)$/i;
+// La categoria delle spese che sta con gli altri ricavi, nella sezione "Altri ricavi e costi" prima
+// della struttura (decisa dall'utente il 23/11/2026).
+export const CATEGORIA_ALTRI_COSTI = /^altri costi$/i;
 
 // Dove il bilancio mostra una categoria diversamente da come è classificata la spesa: la
 // classificazione non cambia, cambia solo la voce del bilancio. Per nome, categoria e sottocategoria.
@@ -139,6 +143,8 @@ export function costruisciBilancio({
     ricaviOperativi: nuovaVoce('Ricavi operativi'),
     costiOperativi: nuovaVoce('Costi operativi'),
     altriRicavi: nuovaVoce('Altri ricavi'),
+    // I costi della sezione "Altri ricavi e costi": le spese della categoria Altri costi.
+    costiAltriRicavi: nuovaVoce('Altri costi'),
     costiStruttura: nuovaVoce('Costi di struttura'),
     altriCosti: nuovaVoce('Altri costi'),
     entrateDaClassificare: nuovaVoce('Entrate da classificare'),
@@ -174,14 +180,15 @@ export function costruisciBilancio({
     }
     if (s.natura === 'generale' && s.categoria_id != null) {
       const percorso = vocePer(percorsoDi(categorieSpese, s.categoria_id));
-      return aggiungi(CATEGORIE_STRUTTURA.test(percorso[0]) ? v.costiStruttura : v.altriCosti, percorso, uscita);
+      const sezione = CATEGORIA_ALTRI_COSTI.test(percorso[0]) ? v.costiAltriRicavi : CATEGORIE_STRUTTURA.test(percorso[0]) ? v.costiStruttura : v.altriCosti;
+      return aggiungi(sezione, percorso, uscita);
     }
     return aggiungi(v.usciteDaClassificare, [], uscita);
   });
 
   Object.values(v).forEach(ordina);
   const risultatoOperativo = r2(v.ricaviOperativi.importo - v.costiOperativi.importo);
-  const risultatoStruttura = r2(risultatoOperativo + v.altriRicavi.importo - v.costiStruttura.importo);
+  const risultatoStruttura = r2(risultatoOperativo + v.altriRicavi.importo - v.costiAltriRicavi.importo - v.costiStruttura.importo);
   const risultatoFinale = r2(risultatoStruttura - v.altriCosti.importo + v.entrateDaClassificare.importo - v.usciteDaClassificare.importo);
   return { ...v, risultatoOperativo, risultatoStruttura, risultatoFinale, variazione, ignorati, capitale };
 }

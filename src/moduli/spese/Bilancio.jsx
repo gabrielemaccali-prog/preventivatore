@@ -71,8 +71,8 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
     if (aperta) voce.figli.forEach(f => out.push(...righe(f, `${chiave}/${f.nome}`, livello + 1, segno)));
     return out;
   };
-  // Altri ricavi, costi di struttura e altri costi non hanno una riga loro: le loro categorie (Altri
-  // Ricavi, Struttura, Gestione, Direttivo...) sono già le voci da leggere.
+  // Altri ricavi e costi, costi di struttura e altri costi non hanno una riga loro: le loro categorie
+  // (Altri Ricavi, Altri costi, Struttura, Gestione, Direttivo...) sono già le voci da leggere.
   const soloCategorie = (voce, chiave, segno) => voce.figli.flatMap(f => righe(f, `${chiave}/${f.nome}`, 0, segno));
   const risultato = (nome, importo, finale = false) => (
     <tr key={nome} style={{ cursor: 'default', borderTop: '2px solid #cbd5e1', background: finale ? '#e2e8f0' : '#f1f5f9' }}>
@@ -99,6 +99,7 @@ function Bilancio({ movimenti, spese, categorie, categorieAlbatros, controparti 
               {righe(b.costiOperativi, 'costiOperativi', 0, -1)}
               {risultato('Risultato operativo', b.risultatoOperativo)}
               {soloCategorie(b.altriRicavi, 'altriRicavi', 1)}
+              {soloCategorie(b.costiAltriRicavi, 'costiAltriRicavi', -1)}
               {soloCategorie(b.costiStruttura, 'costiStruttura', -1)}
               {risultato('Risultato dopo la struttura', b.risultatoStruttura)}
               {soloCategorie(b.altriCosti, 'altriCosti', -1)}

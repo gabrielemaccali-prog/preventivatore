@@ -96,6 +96,16 @@ verifica('altre sedi: per sede, poi il gioco', 600, voce('Altre sedi', 'Laquilon
 verifica('un bonifico su prenotazione e voucher si divide per i pagamenti', 66.67, conPren.ricaviOperativi.figli.find(f => f.nome === 'Voucher').importo);
 verifica('la somma torna al centesimo', 1320, conPren.ricaviOperativi.importo);
 
+// ---------- altri ricavi e costi: le spese della categoria Altri costi stanno con gli altri ricavi ----------
+const conAltriCosti = costruisciBilancio({
+  movimenti: [{ id: 1, data_contabile: '2026-10-01', importo: 500, incasso_categoria_id: 11 }, { id: 2, data_contabile: '2026-10-02', importo: -80 }, { id: 3, data_contabile: '2026-10-03', importo: -120 }],
+  spese: [{ id: 1, movimento_id: 2, ente: 'bfm', natura: 'generale', categoria_id: 21 }, { id: 2, movimento_id: 3, ente: 'bfm', natura: 'generale', categoria_id: 3 }],
+  categorieSpese: [...categorieSpese, { id: 20, nome: 'Altri costi', padre_id: null }, { id: 21, nome: 'Rimborsi', padre_id: 20 }],
+  categorieIncassi,
+});
+verifica('le spese di Altri costi stanno con gli altri ricavi, non con gli altri costi', [80, 0, 120], [conAltriCosti.costiAltriRicavi.importo, conAltriCosti.altriCosti.importo, conAltriCosti.costiStruttura.importo]);
+verifica('e si tolgono prima del risultato dopo la struttura', 500 - 80 - 120, conAltriCosti.risultatoStruttura);
+
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${JSON.stringify(e.atteso)}, ottenuto ${JSON.stringify(e.ottenuto)}`}`));
 console.log(`\n${esiti.length - falliti.length}/${esiti.length} verifiche passate`);
