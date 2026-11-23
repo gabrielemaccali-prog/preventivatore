@@ -4,7 +4,7 @@ import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   nomeCategoria, idCategoriaScelta, ENTI, etichettaEnte, num, r2, euro, giornataDiLavoro, periodoIniziale, intervalloPeriodo, dicituraPeriodo,
-  dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, categorieDi, spesaDettagliabile, spesaMulticategoria, DA_DETTAGLIARE, METODI_SPESA, spesaDaPagare, etichettaMetodoSpesa,
+  dettaglioSpesa, rigaSpesaConsentita, modificaVoceConsentita, voceDaSalvare, voceCorreggibile, importoInCategoria, categorieDi, spesaDettagliabile, spesaMulticategoria, DA_DETTAGLIARE, METODI_SPESA, spesaDaPagare, etichettaMetodoSpesa,
 } from './calcolo'
 import FiltroPeriodo from './FiltroPeriodo'
 import SceltaCategoria from './SceltaCategoria'
@@ -19,7 +19,8 @@ import SceltaCategoria from './SceltaCategoria'
 // Le categorie sono un solo livello. Una spesa ha una categoria, oppure è uno scontrino con più
 // categorie: allora la testata non ne ha, e toccandola si apre il dettaglio, dove si scrivono le voci
 // che lo compongono, ognuna con la sua categoria (anche dopo, anche in parte) senza superare il
-// totale; quello che manca è "da dettagliare". Il filtro per categoria guarda la testata delle spese
+// totale; quello che manca è "da dettagliare". Le voci appena scritte si cambiano e si tolgono
+// finché non si preme "Salva il dettaglio"; salvate, le corregge solo l'amministratore. Il filtro per categoria guarda la testata delle spese
 // semplici e le voci degli scontrini. Aggiungere voci lo può fare chiunque, toglierle solo
 // l'amministratore.
 // ============================================================
@@ -46,8 +47,8 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   const [vociPer, setVociPer] = useState({});
   const [espansa, setEspansa] = useState(null);
   const [nuovaVoce, setNuovaVoce] = useState(VOCE_VUOTA);
-  // La voce di cui l'amministratore sta cambiando la categoria: null = nessuna.
-  const [vocePerCategoria, setVocePerCategoria] = useState(null);
+  // La voce che si sta correggendo (descrizione, importo, categoria): null = nessuna.
+  const [voceInModifica, setVoceInModifica] = useState(null);
 
   const [da, al] = intervalloPeriodo(periodo);
 
@@ -157,6 +158,7 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
   const apriDettaglio = (s) => {
     setEspansa(espansa === s.id ? null : s.id);
     setNuovaVoce(VOCE_VUOTA);
+    setVoceInModifica(null);
   };
 
   const aggiungiVoce = async (s) => {
@@ -178,13 +180,31 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
     carica();
   };
 
-  // Scegliere la categoria nella tendina la salva subito.
-  const cambiaCategoriaVoce = async (v, valore) => {
-    const categoria_id = idCategoriaScelta(valore, categorie, 'spesa');
-    setVocePerCategoria(null);
-    if ((v.categoria_id ?? null) === categoria_id) return;
-    const { error } = await supabase.from('albatros_spese_righe').update({ categoria_id }).eq('id', v.id);
-    if (error) return alert(`Errore: ${error.message}`);
+  const apriModificaVoce = (v) => setVoceInModifica({ id: v.id, descrizione: v.descrizione, importo: String(r2(v.importo)).replace('.', ','), categoria: String(v.categoria_id ?? '') });
+
+  const salvaVoce = async (s) => {
+    const voce = (vociPer[s.id] || []).find(v => v.id === voceInModifica.id);
+    const descrizione = voceInModifica.descrizione.trim();
+    const importo = leggiImporto(voceInModifica.importo);
+    if (!descrizione) return alert('Scrivi cosa è stato comprato.');
+    if (!importo || importo <= 0) return alert('Importo non valido.');
+    if (!modificaVoceConsentita(s, vociPer[s.id], voce, importo)) return alert(`Così si supera il totale dello scontrino (${euro(s.importo)}).`);
+    setInCorso(true);
+    const { error } = await supabase.from('albatros_spese_righe')
+      .update({ descrizione, importo, categoria_id: idCategoriaScelta(voceInModifica.categoria, categorie, 'spesa') }).eq('id', voce.id);
+    setInCorso(false);
+    if (error) return alert(`Errore nel salvataggio: ${error.message}`);
+    setVoceInModifica(null);
+    carica();
+  };
+
+  // Fissa le voci scritte finora: da qui le corregge solo l'amministratore.
+  const salvaDettaglio = async (s) => {
+    setInCorso(true);
+    const { error } = await supabase.from('albatros_spese_righe').update({ salvata: true }).eq('spesa_id', s.id).eq('salvata', false);
+    setInCorso(false);
+    if (error) return alert(`Errore nel salvataggio: ${error.message}`);
+    setVoceInModifica(null);
     carica();
   };
 
@@ -299,24 +319,33 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                     <tr className="albatros-dettaglio-riga">
                       <td colSpan={puoCorreggere ? 7 : 6}>
                         {voci.length === 0 && dettagliabile && <p className="albatros-vuoto" style={{ marginTop: 0 }}>Nessuna voce: aggiungi qui sotto cosa c'è nello scontrino.</p>}
-                        {vociMostrate.map(v => (
+                        {vociMostrate.map(v => (voceInModifica?.id === v.id ? (
+                          <div key={v.id} className="albatros-form-voce-spesa albatros-voce-in-modifica">
+                            <input type="text" value={voceInModifica.descrizione} autoFocus onChange={(e) => setVoceInModifica({ ...voceInModifica, descrizione: e.target.value })} className="albatros-campo" />
+                            <input type="text" inputMode="decimal" value={voceInModifica.importo} onChange={(e) => setVoceInModifica({ ...voceInModifica, importo: e.target.value })}
+                              onKeyDown={(e) => e.key === 'Enter' && salvaVoce(s)} className="albatros-campo albatros-importo" />
+                            <SceltaCategoria categorie={categorie} tipo="spesa" valore={voceInModifica.categoria} onChange={(x) => setVoceInModifica({ ...voceInModifica, categoria: x })} />
+                            <span style={{ display: 'flex', gap: '6px' }}>
+                              <button type="button" className="btn-outline-annulla albatros-bottone" onClick={() => setVoceInModifica(null)}>Annulla</button>
+                              <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={() => salvaVoce(s)}>OK</button>
+                            </span>
+                          </div>
+                        ) : (
                           <div key={v.id} className="albatros-riga">
                             <div className="albatros-riga-testo">
                               {v.descrizione}
-                              {vocePerCategoria === v.id
-                                ? <SceltaCategoria categorie={categorie} tipo="spesa" valore={String(v.categoria_id ?? '')} onChange={(x) => cambiaCategoriaVoce(v, x)} className="albatros-campo albatros-categoria-voce" />
-                                : <span className="albatros-tenue"> · {nomeCategoria(categorie, v.categoria_id)}</span>}
+                              <span className="albatros-tenue"> · {nomeCategoria(categorie, v.categoria_id)}</span>
+                              {voceDaSalvare(v) && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }}>da salvare</span>}
                             </div>
                             <div className="albatros-riga-importo">{euro(v.importo)}</div>
-                            {puoCorreggere && (
-                              <button type="button" className={`btn-icon-action ${vocePerCategoria === v.id ? 'attivo' : ''}`} title={vocePerCategoria === v.id ? 'Lascia com\'è' : 'Cambia la categoria'}
-                                onClick={() => setVocePerCategoria(vocePerCategoria === v.id ? null : v.id)}>
-                                <Icona nome={vocePerCategoria === v.id ? 'annulla' : 'modifica'} size={14} style={{ marginRight: 0 }} />
+                            {voceCorreggibile(v, puoCorreggere) && (
+                              <button type="button" className="btn-icon-action" title="Correggi la voce" disabled={inCorso} onClick={() => apriModificaVoce(v)}>
+                                <Icona nome="modifica" size={14} style={{ marginRight: 0 }} />
                               </button>
                             )}
-                            {puoCorreggere && <button type="button" className="btn-icon-action danger" title="Togli la voce" onClick={() => togliVoce(v)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
+                            {voceCorreggibile(v, puoCorreggere) && <button type="button" className="btn-icon-action danger" title="Togli la voce" disabled={inCorso} onClick={() => togliVoce(v)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
                           </div>
-                        ))}
+                        )))}
                         {altreVoci.length > 0 && (
                           <p className="albatros-nota" style={{ marginTop: '6px' }}>
                             E {altreVoci.length} {altreVoci.length === 1 ? 'voce' : 'voci'} di altre categorie ({euro(altreVoci.reduce((t, v) => t + num(v.importo), 0))}), nascoste dal filtro.
@@ -335,6 +364,12 @@ function Spese({ user, categorie, utenti, puoCorreggere }) {
                               onChange={(e) => setNuovaVoce({ ...nuovaVoce, importo: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && aggiungiVoce(s)} className="albatros-campo albatros-importo" />
                             <SceltaCategoria categorie={categorie} tipo="spesa" valore={nuovaVoce.categoria} onChange={(v) => setNuovaVoce({ ...nuovaVoce, categoria: v })} />
                             <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={() => aggiungiVoce(s)}>+ Voce</button>
+                          </div>
+                        )}
+                        {voci.some(voceDaSalvare) && (
+                          <div className="albatros-salva-dettaglio">
+                            <span className="albatros-nota" style={{ margin: 0 }}>Finché non salvi puoi correggere e togliere le voci nuove; dopo le corregge solo l'amministratore.</span>
+                            <button type="button" className="btn-accent-inline albatros-bottone" disabled={inCorso} onClick={() => salvaDettaglio(s)}><Icona nome="salva" />Salva il dettaglio</button>
                           </div>
                         )}
                       </td>

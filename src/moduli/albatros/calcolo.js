@@ -177,6 +177,13 @@ export function importoInCategoria(spesa, voci, categoriaId) {
 // Si apre per scriverci le voci solo uno scontrino.
 export const spesaDettagliabile = (spesa) => spesaMulticategoria(spesa);
 export const rigaSpesaConsentita = (spesa, righe, importo) => r2(dettaglioSpesa(spesa, righe).dettagliato + num(importo)) <= r2(spesa?.importo);
+// Cambiare l'importo di una voce: il dettaglio, tolta la voce com'era, non deve superare il totale.
+export const modificaVoceConsentita = (spesa, righe, voce, importo) => rigaSpesaConsentita(spesa, (righe || []).filter(r => r.id !== voce.id), importo);
+// Una voce appena scritta resta da salvare (albatros_spese_righe.salvata = false): finché non si
+// preme "Salva il dettaglio" la cambia o la toglie chiunque. Salvata, solo l'amministratore. Prima
+// di sql/albatros_spese_righe_salvate.sql la colonna non c'è: le voci sono tutte salvate.
+export const voceDaSalvare = (voce) => voce?.salvata === false;
+export const voceCorreggibile = (voce, puoCorreggere) => !!puoCorreggere || voceDaSalvare(voce);
 
 // Il periodo dei filtri di Chiusure, Spese e Incassi: una settimana, un mese o un anno. Si parte
 // dal mese corrente; passando da un tipo all'altro gli altri restano dov'erano.

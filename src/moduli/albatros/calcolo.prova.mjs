@@ -3,7 +3,7 @@
 // Gira in Node senza dev server né browser, perché calcolo.js è fatto di sole funzioni pure.
 import {
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
-  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, importoInCategoria, spesaDettagliabile, DA_DETTAGLIARE, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare, accontiConfermati, accontoConfermabile, movimentiAcconti, accontoSullaVoce,
+  rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, modificaVoceConsentita, voceDaSalvare, voceCorreggibile, importoInCategoria, spesaDettagliabile, DA_DETTAGLIARE, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare, accontiConfermati, accontoConfermabile, movimentiAcconti, accontoSullaVoce,
 } from './calcolo.js';
 import { missioneAperta, missioneScaduta, confrontaMissioni, campiCambioStato, statoDopoAttivita, avanzamento, attivitaScaduta } from './regoleMissioni.js';
 
@@ -61,6 +61,13 @@ verifica('spesa: dettagliato', 511.5, dettaglioSpesa(scontrino, vociScontrino).d
 verifica('spesa: non dettagliato', 149.5, dettaglioSpesa(scontrino, vociScontrino).nonDettagliato);
 verifica('spesa: voce dentro il totale', true, rigaSpesaConsentita(scontrino, vociScontrino, 149.5));
 verifica('spesa: voce oltre il totale', false, rigaSpesaConsentita(scontrino, vociScontrino, 149.51));
+const vociConId = [{ id: 1, importo: 300 }, { id: 2, importo: 211.5 }];
+verifica('voce: alzarla fino al totale si può', true, modificaVoceConsentita(scontrino, vociConId, vociConId[0], 449.5));
+verifica('voce: oltre il totale no', false, modificaVoceConsentita(scontrino, vociConId, vociConId[0], 449.51));
+verifica('voce appena scritta: la corregge chiunque', true, voceCorreggibile({ salvata: false }, false));
+verifica('voce salvata: solo l\'amministratore', false, voceCorreggibile({ salvata: true }, false));
+verifica('voce salvata: l\'amministratore sì', true, voceCorreggibile({ salvata: true }, true));
+verifica('voce di prima della colonna: salvata', false, voceDaSalvare({}));
 verifica('spesa senza voci', 0, dettaglioSpesa(scontrino, []).quota);
 const semplice = { importo: 100, categoria_id: 4 };
 verifica('spesa semplice: tutta alla sua categoria', 100, importoInCategoria(semplice, [], 4));
