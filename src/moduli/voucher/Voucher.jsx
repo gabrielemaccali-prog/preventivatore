@@ -35,7 +35,9 @@ const FORM_VUOTO = {
   pagamenti: [],
   stato: STATO_VOUCHER.INCOMPLETO, dataEmissione: "",
   // Voucher pregresso: venduto col vecchio sistema, ha già un codice suo scritto sul buono.
-  pregresso: false, codicePregresso: ""
+  pregresso: false, codicePregresso: "",
+  // Omaggio: lo regaliamo noi. Vale come gli altri, ma nessuno lo paga e non si fattura.
+  omaggio: false
 };
 // Riga vuota del pagamento che si sta digitando, prima di aggiungerla al voucher.
 const PAGAMENTO_VUOTO = { importo: "", data: "", nominativo: "" };
@@ -115,6 +117,9 @@ const fatturazioneCompletaDi = (f) => campiFatturazioneMancanti(f).length === 0;
 // Lo stato dipende dalla presenza dei dati di fatturazione (a meno che sia già "usato")
 const calcolaStato = (f, statoPrecedente) => {
   if (statoPrecedente === STATO_VOUCHER.USATO) return STATO_VOUCHER.USATO;
+  // Incompleto vuol dire "mancano i dati per fatturarlo". Un omaggio non si fattura, quindi non
+  // gli manca niente: nasce emesso ed e' subito spendibile.
+  if (f.omaggio) return STATO_VOUCHER.EMESSO;
   return fatturazioneCompletaDi(f) ? STATO_VOUCHER.EMESSO : STATO_VOUCHER.INCOMPLETO;
 };
 
@@ -166,7 +171,9 @@ function Voucher({ user }) {
   // Fatturato più di quello che c'era da fatturare: anche quando non c'era niente da fatturare.
   const eccedenzaFatturata = (v) => fatturatoDi(v) - daFatturareVoucher(v);
   // Un voucher può non avere niente da fatturare: si dice perché, come nelle prenotazioni.
-  const motivoNienteFattura = (v) => (v.pregresso
+  const motivoNienteFattura = (v) => (v.omaggio
+    ? 'Omaggio: non è stato comprato da nessuno, non c\'è niente da fatturare'
+    : v.pregresso
     ? 'Venduto col vecchio sistema: è stato fatturato lì'
     : v.daPosticipo
       ? `Nato dalla partita annullata ${v.prenotazioneOrigine || ''}: la fattura è sulla partita`
@@ -372,9 +379,11 @@ function Voucher({ user }) {
       return alert("Compila i campi obbligatori evidenziati in rosso.");
     }
     // Il codice fiscale si controlla a una persona, la partita IVA a un'azienda: non tutti e due.
-    const erroreCodiceFiscale = form.fattTipo === 'azienda' ? null : erroreCF(form.fattCF);
+    // Su un omaggio nessuno dei due: quei campi non si vedono nemmeno, e un dato vecchio rimasto
+    // li' dentro bloccherebbe il salvataggio per un errore che non si puo' correggere.
+    const erroreCodiceFiscale = form.omaggio || form.fattTipo === 'azienda' ? null : erroreCF(form.fattCF);
     if (erroreCodiceFiscale) return alert(erroreCodiceFiscale);
-    const errorePartitaIva = form.fattTipo === 'azienda' ? errorePIva(form.pIva) : null;
+    const errorePartitaIva = !form.omaggio && form.fattTipo === 'azienda' ? errorePIva(form.pIva) : null;
     if (errorePartitaIva) return alert(errorePartitaIva);
     if (pagamentoInSospeso && !window.confirm("Il pagamento digitato non è stato aggiunto con \"+ Pagamento\": salvando non verrà registrato. Procedere?")) return;
     setMostraErroriValidazione(false);
@@ -408,7 +417,9 @@ function Voucher({ user }) {
       pIva: formaCodice(form.pIva) || null,
       cfAzienda: formaCodice(form.cfAzienda) || null,
       sdi: formaCodice(form.sdi) || null,
-      statoPagamento: form.daPosticipo ? 'saldato' : statoPagamentoDi(form.pagamenti, form.importo),
+      omaggio: !!form.omaggio,
+      // "omaggio" come sulle partite a prezzo zero: non e' in attesa di niente, non lo pagherà mai nessuno.
+      statoPagamento: form.omaggio ? 'omaggio' : (form.daPosticipo ? 'saldato' : statoPagamentoDi(form.pagamenti, form.importo)),
       stato
     };
 
@@ -520,6 +531,7 @@ function Voucher({ user }) {
       stato: v.stato || STATO_VOUCHER.INCOMPLETO,
       dataEmissione: v.dataEmissione || "",
       pregresso: !!v.pregresso,
+      omaggio: !!v.omaggio,
       codicePregresso: v.pregresso ? v.codice : ""
     };
     setForm(caricato);
@@ -606,6 +618,7 @@ function Voucher({ user }) {
             {/* Non è uno stato a parte -- vive come tutti gli altri -- ma dice da dove arriva: non un
                 regalo comprato, una partita annullata che tornerà. */}
             {v.daPosticipo && <span className="badge-stato badge-mini" style={{ marginLeft: '6px', background: '#ede9fe', color: '#5b21b6' }} title={`Nato dalla partita annullata ${v.prenotazioneOrigine || ''}`}>POST</span>}
+            {v.omaggio && <span className="badge-stato badge-mini" style={{ marginLeft: '6px', background: '#dbeafe', color: '#1d4ed8' }} title="Regalato da noi: nessun pagamento, nessuna fattura">OMAGGIO</span>}
           </td>
           <td style={{ padding: '12px', color: '#777', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{formattaDataIT(v.dataEmissione)}</td>
           <td style={{ padding: '12px' }}>
@@ -615,7 +628,9 @@ function Voucher({ user }) {
           <td style={{ padding: '12px' }}>👤 {v.nominativo}</td>
           <td style={{ padding: '12px', fontSize: '0.85rem', color: '#555' }}>{v.pacchettoNome ? `${v.pacchettoNome} — ` : ''}€{(parseFloat(v.importo) || 0).toFixed(2)}</td>
           <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
-            {v.pregresso ? (
+            {v.omaggio ? (
+              <span style={{ color: '#94a3b8' }}>omaggio: niente da incassare</span>
+            ) : v.pregresso ? (
               <span style={{ color: '#94a3b8' }}>incassato col vecchio sistema</span>
             ) : v.daPosticipo ? (
               <span style={{ color: '#94a3b8' }}>incassato su {v.prenotazioneOrigine || 'la partita annullata'}</span>
@@ -786,12 +801,45 @@ function Voucher({ user }) {
             <p style={{ margin: '4px 0 0 26px', fontSize: '0.78rem', color: '#777' }}>
               Chi riceve il buono non legge quanto è stato speso. Togli la spunta se il valore deve comparire.
             </p>
+            {/* Sta qui, accanto al valore, perché è del valore che parla: quello resta, ma non lo
+                paga nessuno. Togliendo i pagamenti si cancellano davvero, quindi si chiede prima. */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '0.85rem', marginTop: '12px' }}>
+              <input
+                type="checkbox"
+                checked={!!form.omaggio}
+                onChange={(e) => {
+                  const acceso = e.target.checked;
+                  if (acceso && (form.pagamenti || []).length > 0
+                    && !window.confirm("Su questo voucher ci sono dei pagamenti registrati: diventando un omaggio verranno tolti. Procedere?")) return;
+                  setF(acceso ? { omaggio: true, pagamenti: [] } : { omaggio: false });
+                }}
+                style={{ width: 'auto', margin: 0 }}
+              />
+              Omaggio
+            </label>
+            <p style={{ margin: '4px 0 0 26px', fontSize: '0.78rem', color: '#777' }}>
+              Lo regaliamo noi: niente pagamenti e niente fattura, e i dati di fatturazione non servono.
+              Il valore resta quello del pacchetto, perché deve coprire una partita vera.
+            </p>
+            {/* Compare solo con la spunta accesa: un avviso che c'e' sempre non lo legge piu' nessuno.
+                Un omaggio e' una partita giocata e pagata a campo e bubbler, che pero' non incassa. */}
+            {form.omaggio && (
+              <p style={{ margin: '8px 0 0 26px', fontSize: '0.82rem', fontWeight: 600, color: '#854d0e', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: '6px', padding: '8px 12px' }}>
+                ⚠️ Da usare con parsimonia: la partita si gioca davvero e i suoi costi si pagano lo stesso.
+              </p>
+            )}
           </div>
 
-          {/* Dati di fatturazione dell'acquirente: senza questi il voucher resta incompleto */}
+          {/* Dati di fatturazione dell'acquirente: senza questi il voucher resta incompleto.
+              Su un omaggio non ci sono proprio: non c'e' un acquirente e non ci sara' una fattura,
+              quindi chiederli vorrebbe dire far compilare dei campi che non andranno in nessun
+              documento. Resta il titolo, perche' si veda che quella parte e' stata saltata apposta. */}
           <div className="sezione">
             <h2>Dati di Fatturazione (acquirente)</h2>
-            <p className="descrizione-pagina" style={{ marginTop: 0 }}>Facoltativi in fase di creazione: senza questi dati il voucher resta <strong>incompleto</strong>.</p>
+            <p className="descrizione-pagina" style={{ marginTop: 0 }}>{form.omaggio
+              ? <>Un <strong>omaggio</strong> non genera fattura: non c&apos;è niente da compilare, e il voucher è emesso lo stesso.</>
+              : <>Facoltativi in fase di creazione: senza questi dati il voucher resta <strong>incompleto</strong>.</>}</p>
+            {!form.omaggio && (<>
             {form.daPosticipo && (
               <p style={{ margin: '0 0 12px', fontSize: '0.82rem', color: '#5b21b6', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: '6px', padding: '8px 12px' }}>
                 Voucher nato dal posticipo di <strong>{form.prenotazioneOrigine || 'una prenotazione'}</strong>: i dati arrivano da lì, e qui si correggono.
@@ -920,12 +968,14 @@ function Voucher({ user }) {
             )}
               </>
             )}
+            </>)}
           </div>
         </div>
 
         {/* Pagamenti del voucher: righe della tabella unica "pagamenti" (nessun voucher usabile come pagamento, ovviamente).
-            Un voucher POST non ne ha: i soldi stanno sulla partita annullata da cui è nato. */}
-        {!form.daPosticipo && <div className="sezione">
+            Un voucher POST non ne ha: i soldi stanno sulla partita annullata da cui è nato, e un
+            omaggio nemmeno: non lo paga nessuno. */}
+        {!form.daPosticipo && !form.omaggio && <div className="sezione">
           <h2>Pagamenti</h2>
           <div className="sotto-sezione" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
             <h3>Stato pagamento: <span style={{ fontSize: '0.8rem', fontWeight: 'bold', padding: '3px 10px', borderRadius: '10px', textTransform: 'none', letterSpacing: 0, background: statoPag === 'saldato' ? '#dcfce7' : statoPag === 'acconto' ? '#fef9c3' : '#fee2e2', color: statoPag === 'saldato' ? '#166534' : statoPag === 'acconto' ? '#854d0e' : '#991b1b' }}>{statoPag}</span></h3>
@@ -979,9 +1029,9 @@ function Voucher({ user }) {
           {codiceInModifica && formModificato && (
             <button type="button" className="btn-annulla-inline" disabled={salvataggioVoucher} onClick={() => { if (window.confirm("Annullare le modifiche non salvate?")) { setForm(formOriginale); setNuovoPagamento(PAGAMENTO_VUOTO); } }}>Annulla modifiche</button>
           )}
-          <button className="btn-stampa" style={{ marginTop: 0 }} onClick={stampaFormCorrente} disabled={!codiceGenerato || !fatturazioneCompleta}>🖨️ Scarica PDF</button>
+          <button className="btn-stampa" style={{ marginTop: 0 }} onClick={stampaFormCorrente} disabled={!codiceGenerato || (!form.omaggio && !fatturazioneCompleta)}>🖨️ Scarica PDF</button>
         </div>
-        {codiceGenerato && !fatturazioneCompleta && (
+        {codiceGenerato && !form.omaggio && !fatturazioneCompleta && (
           <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: '#c62828' }}>
             ⚠️ Per scaricare il PDF è necessario completare tutti i dati di fatturazione.
           </p>

@@ -480,6 +480,10 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
         pagamenti: righePag.filter(x => x.riferimento === p.id).map(x => ({ id: x.id, data: x.data, importo: x.importo, nominativo: x.nominativo || "", contanti: !!x.contanti, ritiratoDa: x.ritirato_da ?? "", consegnatiBfmIl: x.consegnati_bfm_il || null, gruppo: x.gruppo || null, movimentoId: x.movimento_id ?? null })),
         // valore dell'eventuale voucher usato: conta come pagamento pur non essendo una riga di pagamenti
         voucherValore: parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherCodice))?.importo) || 0,
+        // Un voucher omaggio copre la partita come gli altri, ma non e' mai stato comprato: la
+        // differenza non si vede nei conti -- in tutti e due i casi non c'e' niente da fatturare --
+        // si vede in quello che si scrive, perche' "gia' fatturato" sarebbe falso.
+        voucherOmaggio: !!(vc.data || []).find(v => String(v.codice) === String(p.voucherCodice))?.omaggio,
         // valore del voucher nato da questa partita annullata: è quanto la partita deve fatturare
         voucherGeneratoValore: p.voucherGenerato ? parseFloat((vc.data || []).find(v => String(v.codice) === String(p.voucherGenerato))?.importo) || 0 : 0
       }));
@@ -1278,7 +1282,9 @@ function Prenotazioni({ user, preventivoDaTrasformare, onPreventivoTrasformato }
       : 'Annullata: la partita non si è giocata, non c\'è niente da fatturare';
     if (partitaInCompensazione(p)) return 'In compensazione con il cliente: non si fattura, si scala dal suo conto';
     if ((parseFloat(p.prezzoVendita) || 0) <= 0.01) return 'Prezzo zero (omaggio o promozionale): non c\'è niente da fatturare';
-    if ((parseFloat(p.voucherValore) || 0) > 0.01) return `Coperta dal voucher ${p.voucherCodice || ''}, già fatturato quando è stato venduto`;
+    if ((parseFloat(p.voucherValore) || 0) > 0.01) return p.voucherOmaggio
+      ? `Coperta dal voucher omaggio ${p.voucherCodice || ''}: regalata, non c'è niente da fatturare`
+      : `Coperta dal voucher ${p.voucherCodice || ''}, già fatturato quando è stato venduto`;
     return 'Incassata in contanti: non passa da fattura';
   };
   // Fatturato piu' di quello che c'era da fatturare. Prima spariva dietro la spunta blu -- "copre

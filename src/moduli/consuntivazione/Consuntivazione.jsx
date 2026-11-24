@@ -149,7 +149,8 @@ function Consuntivazione({ user }) {
       };
     });
     // Un voucher nato da una partita annullata si fattura sulla partita, non qui.
-    const daVoucher = voucher.filter(v => !v.pregresso && !v.daPosticipo).map(v => {
+    // Gli omaggi non ci sono: nessuno li ha comprati, non c'è niente da fatturare.
+    const daVoucher = voucher.filter(v => !v.pregresso && !v.daPosticipo && !v.omaggio).map(v => {
       const lista = fatturePer[`voucher|${v.codice}`] || [];
       const dovuto = daFatturareVoucher(v);
       const fatturato = sommaImporti(lista);
@@ -282,7 +283,7 @@ function Consuntivazione({ user }) {
       const lette = leggiExportFatture(XLSX, await file.arrayBuffer());
       const esito = abbinaFatture(lette, {
         prenotazioni: fatturabili,
-        voucher: voucher.filter(v => !v.pregresso && !v.daPosticipo),
+        voucher: voucher.filter(v => !v.pregresso && !v.daPosticipo && !v.omaggio),
         fatture,
         valoreVoucher,
         inContanti: inContantiDi,

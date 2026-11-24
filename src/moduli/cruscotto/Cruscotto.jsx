@@ -315,6 +315,9 @@ function Cruscotto({ user }) {
   // rifattura: senza il suo valore una partita pagata col voucher non risulterebbe mai fatturata.
   const [fatture, setFatture] = useState([]);
   const [valoriVoucher, setValoriVoucher] = useState({});
+  // I voucher regalati da noi: una partita coperta da uno di questi non e' un ricavo, perche' in
+  // cassa non e' mai entrato niente. Serve solo sapere quali sono, non quanto valgono.
+  const [omaggiVoucher, setOmaggiVoucher] = useState(() => new Set());
   const [consPeriodi, setConsPeriodi] = useState([]);
   const [campi, setCampi] = useState([]);
   // Il catalogo: da qui arrivano nome, famiglia e centro di ricavo di ogni gioco, risolti per id.
@@ -350,13 +353,14 @@ function Cruscotto({ user }) {
       supabase.from('gonfiabili').select('id, giocoId, locationId'),
       supabase.from('preventivi').select('codice, gonfiabili, stato, dataEmissione, periodo, mostraComeOpzioni, totaleVendita, costoVivoTotale, kmAndata, destinazione, nomeReferente, categoriaAnnullamento, motivoAnnullamento'),
       supabase.from('fatture').select('riferimento, importo').eq('tipo', 'prenotazione'),
-      supabase.from('voucher').select('codice, importo'),
+      supabase.from('voucher').select('codice, importo, omaggio'),
       supabase.from('cons_periodi').select('controparte, controparte_id, righe'),
     ]);
     // Fatture e periodi arrivano da script SQL che potrebbero non essere ancora stati eseguiti: in
     // quel caso il cruscotto resta tutto a preventivo, che e' quello che si sa.
     setFatture(ft.data || []);
     setValoriVoucher(Object.fromEntries((vc.data || []).map(v => [String(v.codice), parseFloat(v.importo) || 0])));
+    setOmaggiVoucher(new Set((vc.data || []).filter(v => v.omaggio).map(v => String(v.codice))));
     setConsPeriodi(cpe.data || []);
     // I pagamenti stanno nella tabella unica "pagamenti" (condivisa con i voucher), non più
     // nella colonna jsonb prenotazioni.pagamenti: vengono agganciati qui a ogni prenotazione.
@@ -644,18 +648,33 @@ function Cruscotto({ user }) {
         // sono lorde: si riportano al netto con lo stesso rapporto della prenotazione, che non e'
         // sempre 1,22 (un cliente estero non paga IVA). Il voucher si somma perche' e' stato
         // fatturato quando e' stato venduto.
+        //
+        // Tranne un voucher omaggio: quello non l'ha comprato nessuno, e la parte di partita che
+        // copre non e' un ricavo -- in cassa non e' mai entrato niente. Quindi si toglie dal
+        // prezzo, e resta ricavo solo quello che il cliente paga davvero: zero se l'omaggio copre
+        // tutto, la differenza se copre in parte. I costi restano interi: sono quello che
+        // l'omaggio e' costato.
         const lordo = parseFloat(p.prezzoVendita) || 0;
         const voucher = p.voucherCodice ? (valoriVoucher[String(p.voucherCodice)] || 0) : 0;
+        const regalato = !!p.voucherCodice && omaggiVoucher.has(String(p.voucherCodice));
+        const voucherRicavo = regalato ? 0 : voucher;
+        // Il rapporto netto/lordo della partita, che vale anche sulla parte regalata.
+        const alNetto = (v) => (lordo > 0 ? v * (nettoRicavo(p) / lordo) : 0);
         const fatturato = sommaImporti(fatturatoPer[String(p.id)]);
         const stato = statoFatturazione(daFatturarePrenotazione(p, voucher), fatturato);
         const chiuso = lordo > 0 && (stato === 'fatturata' || (stato === 'nonDovuta' && voucher > 0));
         ricavo = {
-          prev: nettoRicavo(p),
-          cons: chiuso ? (fatturato + voucher) * (nettoRicavo(p) / lordo) : null,
-          nota: { fatturata: 'Fatturato', nonDovuta: voucher > 0 ? 'Coperto da voucher' : 'Niente da fatturare', parziale: 'Fatturato in parte', daFatturare: 'Da fatturare' }[stato],
+          prev: alNetto(lordo - (regalato ? Math.min(voucher, lordo) : 0)),
+          cons: chiuso ? alNetto(fatturato + voucherRicavo) : null,
+          nessuno: regalato && voucher + 0.01 >= lordo,
+          nota: { fatturata: 'Fatturato', nonDovuta: voucher > 0 ? (regalato ? 'Regalata col voucher' : 'Coperto da voucher') : 'Niente da fatturare', parziale: 'Fatturato in parte', daFatturare: 'Da fatturare' }[stato],
           titolo: {
             fatturata: `Fatture per €${fatturato.toFixed(2)} lordi${voucher > 0 ? ` più il voucher ${p.voucherCodice} da €${voucher.toFixed(2)}` : ''}`,
-            nonDovuta: voucher > 0 ? `Coperto dal voucher ${p.voucherCodice} (€${voucher.toFixed(2)}), già fatturato quando è stato venduto` : undefined,
+            nonDovuta: voucher > 0
+              ? (regalato
+                ? `Regalata con il voucher omaggio ${p.voucherCodice} (€${voucher.toFixed(2)}): nessun ricavo, solo i costi`
+                : `Coperto dal voucher ${p.voucherCodice} (€${voucher.toFixed(2)}), già fatturato quando è stato venduto`)
+              : undefined,
             parziale: `Fatture per €${fatturato.toFixed(2)} lordi su €${daFatturarePrenotazione(p, voucher).toFixed(2)} da fatturare`,
             daFatturare: undefined,
           }[stato],
@@ -777,7 +796,7 @@ function Cruscotto({ user }) {
       };
     });
     return risultato;
-  }, [tutteLePrenotazioni, righeConsuntivate, fatturatoPer, valoriVoucher, sedi, campi, risolutore, campoNomeDi,
+  }, [tutteLePrenotazioni, righeConsuntivate, fatturatoPer, valoriVoucher, omaggiVoucher, sedi, campi, risolutore, campoNomeDi,
     compensoPrevistoPerOp, compensoConsuntivatoPerOp, coperte]);
 
   // Una cella di importo del cruscotto: "—" quando la voce non c'e' (nessun ricavo, nessun costo).

@@ -89,6 +89,14 @@ verifica('annullata diventata voucher: si fattura il valore del voucher', 150, d
 verifica('annullata diventata voucher: il prezzo del pacchetto non conta', 150, daFatturarePrenotazione(diventataVoucher, 60, 40, 150));
 verifica('il voucher nato da una partita annullata non si fattura', 0, daFatturareVoucher({ importo: 150, daPosticipo: true }));
 verifica('un voucher venduto si fattura per il suo valore', 150, daFatturareVoucher({ importo: 150 }));
+// ---------- omaggio: il valore ce l'ha, ma non l'ha comprato nessuno ----------
+verifica('un voucher omaggio non si fattura', 0, daFatturareVoucher({ importo: 150, omaggio: true }));
+// E non entra fra i candidati di una fattura: nessuna fattura puo' riferirsi a lui.
+const conOmaggio = abbinaFatture(
+  [{ data: '2026-11-09', numero: '211', cliente: 'Rossi Mario', cf: cliente.fattCF, piva: '', centro: '', importo: 150 }],
+  { voucher: [{ codice: 'VCH-2026-1009', importo: 150, omaggio: true, nominativo: 'Rossi Mario', fattCF: cliente.fattCF }] },
+);
+verifica('nessuna fattura si abbina a un voucher omaggio', [0, 1], [conOmaggio.proposte.length, conOmaggio.senzaAbbinamento]);
 const conVoucherPost = abbinaFatture(
   [{ data: '2026-11-08', numero: '210', cliente: 'Rossi Mario', cf: cliente.fattCF, piva: '', centro: '', importo: 150 }],
   { prenotazioni: [diventataVoucher], voucher: [{ codice: 'BR20261107', importo: 150, daPosticipo: true, nominativo: 'Rossi Mario', fattCF: cliente.fattCF }], valoreVoucher: () => 150 },

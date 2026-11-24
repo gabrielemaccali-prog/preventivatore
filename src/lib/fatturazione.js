@@ -40,7 +40,9 @@ export const daFatturarePrenotazione = (p, valoreVoucher = 0, incassatoInContant
 // Un voucher si fattura per il suo valore. Quelli pregressi sono stati venduti col vecchio
 // sistema e lì sono stati fatturati: qui non c'è niente da fare. Nemmeno quelli nati da una partita
 // annullata (POST): il denaro e la sua fattura stanno sulla partita, il voucher è solo il buono.
-export const daFatturareVoucher = (v) => (v?.pregresso || v?.daPosticipo ? 0 : (parseFloat(v?.importo) || 0));
+// E nemmeno quelli omaggio, che nessuno ha comprato: il valore nominale ce l'hanno perché devono
+// coprire una partita vera, ma in cassa non è mai entrato niente.
+export const daFatturareVoucher = (v) => (v?.pregresso || v?.daPosticipo || v?.omaggio ? 0 : (parseFloat(v?.importo) || 0));
 
 // A che punto è la fatturazione. "fatturata" solo quando le fatture coprono tutto: è l'unico
 // caso in cui si mostra la spunta blu.
