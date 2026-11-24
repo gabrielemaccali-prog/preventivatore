@@ -106,6 +106,17 @@ const conAltriCosti = costruisciBilancio({
 verifica('le spese di Altri costi stanno con gli altri ricavi, non con gli altri costi', [80, 0, 120], [conAltriCosti.costiAltriRicavi.importo, conAltriCosti.altriCosti.importo, conAltriCosti.costiStruttura.importo]);
 verifica('e si tolgono prima del risultato dopo la struttura', 500 - 80 - 120, conAltriCosti.risultatoStruttura);
 
+// ---------- le tasse dei compensi stanno sotto i compensi dei bubbler ----------
+const conTasseCompensi = costruisciBilancio({
+  movimenti: [{ id: 1, data_contabile: '2026-10-01', importo: -300 }, { id: 2, data_contabile: '2026-10-02', importo: -60 }],
+  spese: [{ id: 1, movimento_id: 1, ente: 'bfm', natura: 'operativa', operativa: 'bubbler', controparte_id: 7 }, { id: 2, movimento_id: 2, ente: 'bfm', natura: 'generale', categoria_id: 31 }],
+  categorieSpese: [...categorieSpese, { id: 31, nome: 'Compensi', padre_id: 8 }],
+  nomeControparte: () => 'Mario',
+});
+const compensi = conTasseCompensi.costiOperativi.figli.find(x => x.nome === 'Compensi bubbler');
+verifica('le tasse dei compensi sotto i compensi bubbler, accanto ai bubbler', [360, [['Mario', 300], ['Tasse sui compensi', 60]]], [compensi?.importo, compensi?.figli.map(x => [x.nome, x.importo])]);
+verifica('e non più fra le tasse e imposte', 0, conTasseCompensi.altriCosti.importo);
+
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${JSON.stringify(e.atteso)}, ottenuto ${JSON.stringify(e.ottenuto)}`}`));
 console.log(`\n${esiti.length - falliti.length}/${esiti.length} verifiche passate`);

@@ -36,11 +36,15 @@ export const CATEGORIA_ALTRI_COSTI = /^altri costi$/i;
 // classificazione non cambia, cambia solo la voce del bilancio. Per nome, categoria e sottocategoria.
 // Le deleghe F24 della segreteria sono in Tasse e imposte, ma il bilancio le legge come costo della
 // gestione, in una voce loro accanto alla Segreteria (deciso dall'utente il 05/11/2026).
+// Allo stesso modo le tasse dei compensi stanno fra i costi operativi, sotto i compensi dei bubbler, in
+// una voce loro accanto ai bubbler (deciso dall'utente il 24/11/2026): `sezione` dice dove vanno quando
+// non è quella che direbbe la categoria.
 export const VOCI_DEL_BILANCIO = [
   { da: ['Tasse e imposte', 'Segreteria'], a: ['Gestione', 'Segreteria (tasse e imposte)'] },
+  { da: ['Tasse e imposte', 'Compensi'], a: ['Compensi bubbler', 'Tasse sui compensi'], sezione: 'costiOperativi' },
 ];
 const uguale = (a, b) => a.length === b.length && a.every((x, i) => x.toLowerCase() === String(b[i]).toLowerCase());
-const vocePer = (percorso) => VOCI_DEL_BILANCIO.find(r => uguale(percorso, r.da))?.a || percorso;
+const regolaPer = (percorso) => VOCI_DEL_BILANCIO.find(r => uguale(percorso, r.da));
 // La categoria degli incassi che è capitale e non ricavo, per nome, con tutte le sue sottocategorie.
 export const CATEGORIA_CAPITALE = /^capitale/i;
 
@@ -179,8 +183,9 @@ export function costruisciBilancio({
       return aggiungi(v.costiOperativi, [NOMI_OPERATIVE[s.operativa] || s.operativa, chi], uscita);
     }
     if (s.natura === 'generale' && s.categoria_id != null) {
-      const percorso = vocePer(percorsoDi(categorieSpese, s.categoria_id));
-      const sezione = CATEGORIA_ALTRI_COSTI.test(percorso[0]) ? v.costiAltriRicavi : CATEGORIE_STRUTTURA.test(percorso[0]) ? v.costiStruttura : v.altriCosti;
+      const regola = regolaPer(percorsoDi(categorieSpese, s.categoria_id));
+      const percorso = regola?.a || percorsoDi(categorieSpese, s.categoria_id);
+      const sezione = regola?.sezione ? v[regola.sezione] : CATEGORIA_ALTRI_COSTI.test(percorso[0]) ? v.costiAltriRicavi : CATEGORIE_STRUTTURA.test(percorso[0]) ? v.costiStruttura : v.altriCosti;
       return aggiungi(sezione, percorso, uscita);
     }
     return aggiungi(v.usciteDaClassificare, [], uscita);
