@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
-  categorieDi, idCategoriaScelta, num, r2, euro, giornataDiLavoro, aggiungiGiorni,
+  alberoCategorie, posizioniAlbero, conSottocategorie, idCategoriaScelta, num, r2, euro, giornataDiLavoro, aggiungiGiorni,
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDaSpecificare, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita, sommaRighe, totaleRiga, rigaDaIncrementare, vociFrequenti, voceDiNome,
   accontiConfermati,
 } from './calcolo'
@@ -145,18 +145,20 @@ function Giornata({ user, listino, ricaricaListino, categorie, utenti, puoCorreg
   const giornateAperte = recenti.filter(g => !g.chiusura.chiusa_il && g.chiusura.data < giornataDiLavoro());
 
   // La griglia: le voci attive, filtrate per "più usate", per categoria o per nome.
-  const catListino = categorieDi(categorie, 'listino');
+  // I pulsanti sono le categorie di primo livello: "Bar" mostra anche le voci delle sue sottocategorie.
+  const catListino = alberoCategorie(categorie, 'listino').filter(c => !c.gruppo || c.figlie.length);
   const categoriaDi = (voce) => categorie.find(c => c.id === voce?.categoria_id);
   const filtroAttivo = filtro ?? (frequenti.length > 0 ? 'frequenti' : 'tutte');
   const griglia = useMemo(() => {
-    const posizione = new Map(catListino.map((c, i) => [c.id, i]));
+    const posizione = posizioniAlbero(categorie, 'listino');
+    const ammesse = filtroAttivo === 'tutte' || filtroAttivo === 'frequenti' ? null : new Set(conSottocategorie(categorie, Number(filtroAttivo)));
     const testo = cerca.trim().toLowerCase();
     const base = testo ? listino.filter(v => v.attiva && v.nome.toLowerCase().includes(testo))
       : filtroAttivo === 'frequenti' ? frequenti
-        : listino.filter(v => v.attiva && (filtroAttivo === 'tutte' || String(v.categoria_id) === filtroAttivo));
+        : listino.filter(v => v.attiva && (!ammesse || ammesse.has(v.categoria_id)));
     return filtroAttivo === 'frequenti' && !testo ? base : [...base].sort((a, b) =>
       (posizione.get(a.categoria_id) ?? 999) - (posizione.get(b.categoria_id) ?? 999) || a.nome.localeCompare(b.nome));
-  }, [listino, frequenti, catListino, filtroAttivo, cerca]);
+  }, [listino, frequenti, categorie, filtroAttivo, cerca]);
 
   // La chiusura nasce alla prima cosa che si scrive per quel giorno. Se due telefoni la creano
   // insieme, il vincolo di unicità sulla data ne tiene una e l'altro la rilegge.

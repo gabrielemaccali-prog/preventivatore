@@ -8,6 +8,7 @@ export const SCHEDE_ALBATROS = [
   // Cassa (i ragazzi) tiene l'id 'spese', il permesso che avevano già; Conti (il responsabile) è nuovo.
   { id: 'spese', label: 'Cassa', icona: 'spese' },
   { id: 'conti', label: 'Conti', icona: 'banca' },
-  { id: 'incassi', label: 'Incassi', icona: 'indicatori' },
+  // Il Cruscotto tiene l'id 'incassi': è la chiave già salvata nei permessi dei ruoli.
+  { id: 'incassi', label: 'Cruscotto', icona: 'cruscotto' },
   { id: 'listino', label: 'Listino', icona: 'listino' },
 ];

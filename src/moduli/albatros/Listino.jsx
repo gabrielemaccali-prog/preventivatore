@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { puoVedere } from '../../lib/permessi'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import Icona from '../../components/Icona'
-import { categorieDi, nomeCategoria, idCategoriaScelta, r2, euro, voceDiNome } from './calcolo'
+import { alberoCategorie, posizioniAlbero, conSottocategorie, categoriaConOreCampo, testoOre, nomeCategoria, idCategoriaScelta, r2, euro, voceDiNome } from './calcolo'
 import SceltaCategoria from './SceltaCategoria'
 import IconaCategoria from './IconaCategoria'
 import Configuratore from './Configuratore'
@@ -21,7 +21,7 @@ import Configuratore from './Configuratore'
 // ============================================================
 
 const leggiImporto = (v) => { const n = Number(String(v ?? '').trim().replace(',', '.')); return Number.isFinite(n) ? r2(n) : NaN; };
-const VOCE_VUOTA = { nome: '', categoria: null, prezzo: '' };
+const VOCE_VUOTA = { nome: '', categoria: null, prezzo: '', ore: '', speciale: false };
 
 function Listino(props) {
   const { user } = props;
@@ -51,7 +51,8 @@ function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorregger
   const [filtroCategoria, setFiltroCategoria] = useState('');
   const [mostraArchiviate, setMostraArchiviate] = useState(false);
   const [cerca, setCerca] = useState('');
-  // La voce nell'overlay: null = chiuso; senza id è una voce nuova.
+  // La voce in modifica: con id si modifica sulla riga della tabella (matita, poi Salva); senza id
+  // è una voce nuova, nell'overlay.
   const [voceInForm, setVoceInForm] = useState(null);
   const [unione, setUnione] = useState(null);
   const [inCorso, setInCorso] = useState(false);
@@ -65,15 +66,20 @@ function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorregger
    
   useEffect(() => { caricaUsi(); }, []);
 
-  const catListino = categorieDi(categorie, 'listino');
+  const albero = alberoCategorie(categorie, 'listino');
+  // Le colonne delle ore campo, se qualche categoria del listino le prevede (sql/albatros_ore_campo.sql).
+  const conOreCampo = categorie.some(c => c.tipo === 'listino' && c.ore_campo);
+  const oreNellaRiga = !!voceInForm?.id && categoriaConOreCampo(categorie, idCategoriaScelta(voceInForm.categoria, categorie, 'listino'));
   const visibili = useMemo(() => {
     const testo = cerca.trim().toLowerCase();
     // Si ordina per categoria come le ordina il Configuratore; le voci senza categoria in fondo.
-    const posizione = new Map(categorieDi(categorie, 'listino', { ancheArchiviate: true }).map((c, i) => [c.id, i]));
+    const posizione = posizioniAlbero(categorie, 'listino', { ancheArchiviate: true });
+    // Scegliere una principale vuol dire anche le sue sottocategorie.
+    const ammesse = filtroCategoria && filtroCategoria !== 'nessuna' ? new Set(conSottocategorie(categorie, Number(filtroCategoria))) : null;
     const pos = (v) => posizione.get(v.categoria_id) ?? Infinity;
     return listino
       .filter(v => mostraArchiviate || v.attiva)
-      .filter(v => !filtroCategoria || String(v.categoria_id ?? 'nessuna') === filtroCategoria)
+      .filter(v => !filtroCategoria || (ammesse ? ammesse.has(v.categoria_id) : v.categoria_id == null))
       .filter(v => !testo || v.nome.toLowerCase().includes(testo))
       .sort((a, b) => (pos(a) === pos(b) ? 0 : pos(a) < pos(b) ? -1 : 1) || a.nome.localeCompare(b.nome));
   }, [listino, categorie, filtroCategoria, mostraArchiviate, cerca]);
@@ -87,7 +93,13 @@ function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorregger
     if (Number.isNaN(prezzo) || prezzo < 0 || String(v.prezzo).trim() === '') return { errore: 'Prezzo non valido.' };
     const doppione = voceDiNome(listino, nome);
     if (doppione && doppione.id !== idEscluso) return { errore: `"${doppione.nome}" c'è già nel listino${doppione.attiva ? '' : ' (disattivata)'}.` };
-    return { record: { nome, categoria_id: idCategoriaScelta(v.categoria, categorie, 'listino'), prezzo } };
+    // Le ore campo e la tariffa speciale contano solo nelle categorie che le prevedono (Campi, Feste).
+    const categoria_id = idCategoriaScelta(v.categoria, categorie, 'listino');
+    const conOre = categoriaConOreCampo(categorie, categoria_id);
+    const ore = String(v.ore ?? '').trim() === '' ? null : leggiImporto(v.ore);
+    if (conOre && ore != null && (Number.isNaN(ore) || ore < 0)) return { errore: 'Ore campo non valide.' };
+    const campo = categorie.some(c => 'ore_campo' in c) ? { ore_campo: conOre ? ore : null, tariffa_speciale: conOre && !!v.speciale } : {};
+    return { record: { nome, categoria_id, prezzo, ...campo } };
   };
 
   const salvaVoce = async () => {
@@ -102,6 +114,9 @@ function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorregger
     setVoceInForm(null);
     ricarica();
   };
+
+  // Sulla riga in modifica: Invio salva, Esc annulla.
+  const tastiRiga = (e) => { if (e.key === 'Enter') salvaVoce(); if (e.key === 'Escape') setVoceInForm(null); };
 
   const cambiaAttiva = async (v) => {
     const { error } = await supabase.from('albatros_listino').update({ attiva: !v.attiva }).eq('id', v.id);
@@ -150,14 +165,15 @@ function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorregger
           <label className="albatros-etichetta" style={{ flex: '1 1 160px' }}>Categoria
             <select value={filtroCategoria} onChange={(e) => setFiltroCategoria(e.target.value)} className="albatros-campo">
               <option value="">Tutte</option>
-              {catListino.map(c => <option key={c.id} value={String(c.id)}>{c.nome}</option>)}
+              {albero.flatMap(c => [<option key={c.id} value={String(c.id)}>{c.nome}{c.gruppo ? ' (tutte)' : ''}</option>,
+                ...c.figlie.map(f => <option key={f.id} value={String(f.id)}>{'\u00a0\u00a0\u00a0'}{f.nome}</option>)])}
               <option value="nessuna">Senza categoria</option>
             </select>
           </label>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.88rem', alignSelf: 'flex-end', paddingBottom: '10px' }}>
             <input type="checkbox" checked={mostraArchiviate} onChange={(e) => setMostraArchiviate(e.target.checked)} /> Anche disattivate
           </label>
-          <button type="button" className="btn-accent-inline albatros-bottone" style={{ marginLeft: 'auto', alignSelf: 'flex-end' }} onClick={() => setVoceInForm(VOCE_VUOTA)}>+ Nuova voce</button>
+          <button type="button" className="btn-accent-inline albatros-bottone" style={{ marginLeft: 'auto', alignSelf: 'flex-end' }} disabled={!!voceInForm} onClick={() => setVoceInForm(VOCE_VUOTA)}>+ Nuova voce</button>
         </div>
         <p className="albatros-nota">Di solito non serve aggiungerle qui: le voci scritte nella Giornata entrano nel listino da sole.</p>
 
@@ -166,14 +182,31 @@ function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorregger
           <div style={{ overflowX: 'auto', marginTop: '12px' }}>
             <table className="albatros-tabella">
               <thead>
-                <tr><th>Voce</th><th>Categoria</th><th className="num">Prezzo</th><th className="num">Usata</th>{puoCorreggere && <th title="Le voci spente non compaiono nella griglia della Giornata">Attiva</th>}{puoCorreggere && <th></th>}</tr>
+                <tr><th>Voce</th><th>Categoria</th><th className="num">Prezzo</th>{conOreCampo && <><th className="num" title="Ore di campo di una vendita">Ore campo</th><th title="Tariffa speciale (sconto)">Speciale</th></>}<th className="num">Usata</th>{puoCorreggere && <th title="Le voci spente non compaiono nella griglia della Giornata">Attiva</th>}{puoCorreggere && <th></th>}</tr>
               </thead>
               <tbody>
                 {visibili.map(v => (
                   <tr key={v.id} style={{ cursor: 'default', opacity: v.attiva ? 1 : 0.55 }}>
-                    <td><strong>{v.nome}</strong>{!v.attiva && <span className="albatros-tenue"> · disattivata</span>}</td>
-                    <td><span className="albatros-con-icona"><IconaCategoria categoria={categorie.find(c => c.id === v.categoria_id)} size={12} titolo={false} />{nomeCategoria(categorie, v.categoria_id)}</span></td>
-                    <td className="num">{euro(v.prezzo)}</td>
+                    {voceInForm?.id === v.id ? <>
+                      <td style={{ minWidth: '180px' }}><input type="text" value={voceInForm.nome} autoFocus onChange={(e) => setVoceInForm({ ...voceInForm, nome: e.target.value })} onKeyDown={tastiRiga}
+                        className="albatros-campo" style={{ height: '32px', width: '100%' }} /></td>
+                      <td><SceltaCategoria categorie={categorie} tipo="listino" valore={voceInForm.categoria} onChange={(x) => setVoceInForm({ ...voceInForm, categoria: x })} /></td>
+                      <td className="num"><input type="text" inputMode="decimal" value={voceInForm.prezzo} onChange={(e) => setVoceInForm({ ...voceInForm, prezzo: e.target.value })} onKeyDown={tastiRiga}
+                        className="albatros-campo albatros-importo" style={{ height: '32px', width: '80px' }} /></td>
+                      {conOreCampo && (oreNellaRiga ? <>
+                        <td className="num"><input type="text" inputMode="decimal" value={voceInForm.ore} placeholder="—" title="Ore campo; vuoto se non c'è campo" onChange={(e) => setVoceInForm({ ...voceInForm, ore: e.target.value })} onKeyDown={tastiRiga}
+                          className="albatros-campo albatros-importo" style={{ height: '32px', width: '64px' }} /></td>
+                        <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!voceInForm.speciale} title="Tariffa speciale (sconto)" onChange={(e) => setVoceInForm({ ...voceInForm, speciale: e.target.checked })} /></td>
+                      </> : <><td className="num albatros-tenue">—</td><td /></>)}
+                    </> : <>
+                      <td><strong>{v.nome}</strong>{!v.attiva && <span className="albatros-tenue"> · disattivata</span>}</td>
+                      <td><span className="albatros-con-icona"><IconaCategoria categoria={categorie.find(c => c.id === v.categoria_id)} size={12} titolo={false} />{nomeCategoria(categorie, v.categoria_id)}</span></td>
+                      <td className="num">{euro(v.prezzo)}</td>
+                      {conOreCampo && <>
+                        <td className="num">{Number(v.ore_campo) > 0 ? testoOre(v.ore_campo) : ''}</td>
+                        <td>{v.tariffa_speciale && <span className="albatros-chip" style={{ padding: '1px 6px', fontSize: '0.72rem', cursor: 'default' }}>Speciale</span>}</td>
+                      </>}
+                    </>}
                     <td className="num">{usi[v.id] || 0}</td>
                     {puoCorreggere && (
                       <td>
@@ -184,9 +217,14 @@ function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorregger
                       </td>
                     )}
                     {puoCorreggere && <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
-                      <button type="button" className="btn-icon-action" title="Modifica" onClick={() => setVoceInForm({ id: v.id, nome: v.nome, categoria: String(v.categoria_id ?? ''), prezzo: String(r2(v.prezzo)).replace('.', ',') })} style={{ marginRight: '4px' }}><Icona nome="modifica" size={14} style={{ marginRight: 0 }} /></button>
+                      {voceInForm?.id === v.id ? <>
+                        <button type="button" className="btn-accent-inline" disabled={inCorso} onClick={salvaVoce} style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.78rem', padding: '3px 8px', marginRight: '4px' }}><Icona nome="salva" size={13} style={{ marginRight: '4px' }} />Salva</button>
+                        <button type="button" className="btn-outline-annulla" disabled={inCorso} onClick={() => setVoceInForm(null)} style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.78rem', padding: '3px 8px', borderRadius: '4px' }}><Icona nome="annulla" size={13} style={{ marginRight: '4px' }} />Annulla</button>
+                      </> : <>
+                      <button type="button" className="btn-icon-action" title={voceInForm ? 'Finisci prima la voce che stai modificando' : 'Modifica'} disabled={!!voceInForm} onClick={() => setVoceInForm({ id: v.id, nome: v.nome, categoria: String(v.categoria_id ?? ''), prezzo: String(r2(v.prezzo)).replace('.', ','), ore: v.ore_campo == null ? '' : String(Number(v.ore_campo)).replace('.', ','), speciale: !!v.tariffa_speciale })} style={{ marginRight: '4px' }}><Icona nome="modifica" size={14} style={{ marginRight: 0 }} /></button>
                       <button type="button" className="btn-icon-action" title="Unisci in un'altra voce" onClick={() => setUnione({ voce: v, destinazioneId: '' })} style={{ marginRight: '4px' }}><Icona nome="unisci" size={14} style={{ marginRight: 0 }} /></button>
                       <button type="button" className="btn-icon-action danger" title="Cancella" onClick={() => elimina(v)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>
+                      </>}
                     </td>}
                   </tr>
                 ))}
@@ -196,7 +234,7 @@ function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorregger
         )}
       </div>
 
-      {voceInForm && (
+      {voceInForm && !voceInForm.id && (
         <div className="modal-form-backdrop" onClick={() => setVoceInForm(null)}>
           <div className="modal-form-box albatros-overlay" onClick={(e) => e.stopPropagation()}>
             <button type="button" className="modal-form-close" aria-label="Chiudi" onClick={() => setVoceInForm(null)}>✕</button>
@@ -212,6 +250,15 @@ function ElencoListino({ user, listino, ricaricaListino, categorie, puoCorregger
                 <input type="text" inputMode="decimal" value={voceInForm.prezzo} placeholder="0,00" onChange={(e) => setVoceInForm({ ...voceInForm, prezzo: e.target.value })}
                   onKeyDown={(e) => e.key === 'Enter' && salvaVoce()} className="albatros-campo albatros-importo" />
               </label>
+              {categoriaConOreCampo(categorie, idCategoriaScelta(voceInForm.categoria, categorie, 'listino')) && <>
+                <label className="albatros-etichetta">Ore campo
+                  <input type="text" inputMode="decimal" value={voceInForm.ore} placeholder="Nessuna" title="Le ore di campo di una vendita; vuoto se non c'è campo"
+                    onChange={(e) => setVoceInForm({ ...voceInForm, ore: e.target.value })} className="albatros-campo albatros-importo" />
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.88rem', alignSelf: 'flex-end', paddingBottom: '10px' }}>
+                  <input type="checkbox" checked={!!voceInForm.speciale} onChange={(e) => setVoceInForm({ ...voceInForm, speciale: e.target.checked })} /> Tariffa speciale (sconto)
+                </label>
+              </>}
             </div>
             <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end' }}>
               <button type="button" className="btn-outline-annulla albatros-bottone" onClick={() => setVoceInForm(null)}>Annulla</button>

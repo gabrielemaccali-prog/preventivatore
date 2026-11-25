@@ -5,7 +5,8 @@ import { alberoCategorie } from '../../lib/banca'
 
 // ============================================================
 // L'editor di un albero di categorie a due livelli (categoria e sottocategoria), uguale per le spese
-// e per gli incassi: cambia solo la tabella. Si aggiungono, si rinominano, si ordinano fra sorelle;
+// e per gli incassi: cambia solo la tabella. Si aggiungono, si rinominano (sulla riga, aperta col
+// pulsante matita, e scritta con Salva), si ordinano fra sorelle;
 // una voce usata non si cancella, si archivia e sparisce dalle scelte.
 // ============================================================
 
@@ -13,7 +14,8 @@ import { alberoCategorie } from '../../lib/banca'
 // non si elimina, e una che diventa padre lo dice prima.
 function EditorCategorie({ tabella, categorie, usi, ricarica, titolo, nota }) {
   const [nuove, setNuove] = useState({});
-  const [nomi, setNomi] = useState({});
+  // La voce che si sta rinominando: una per volta.
+  const [inModifica, setInModifica] = useState(null);
   const [inCorso, setInCorso] = useState(false);
 
   const albero = alberoCategorie(categorie, { ancheArchiviate: true });
@@ -47,10 +49,12 @@ function EditorCategorie({ tabella, categorie, usi, ricarica, titolo, nota }) {
       setNuove({ ...nuove, [chiave]: '' });
     }
   };
-  const rinomina = async (c) => {
-    const nome = (nomi[c.id] ?? c.nome).trim().replace(/\s+/g, ' ');
-    if (!nome || nome === c.nome) return;
-    await scrivi(() => supabase.from(tabella).update({ nome }).eq('id', c.id));
+  const salvaNome = async () => {
+    const c = categorie.find(x => x.id === inModifica.id);
+    const nome = inModifica.nome.trim().replace(/\s+/g, ' ');
+    if (!nome) return alert('Scrivi il nome.');
+    if (nome === c.nome) return setInModifica(null);
+    if (await scrivi(() => supabase.from(tabella).update({ nome }).eq('id', c.id))) setInModifica(null);
   };
   const sposta = async (sorelle, i, verso) => {
     const nuovo = [...sorelle];
@@ -81,10 +85,17 @@ function EditorCategorie({ tabella, categorie, usi, ricarica, titolo, nota }) {
           <button type="button" className="btn-icon-action" title="Giù" disabled={inCorso || i === sorelle.length - 1} onClick={() => sposta(sorelle, i, 1)}>▼</button>
         </span>
         {sotto && <span className="albatros-tenue">›</span>}
-        <input type="text" value={nomi[c.id] ?? c.nome} onChange={(e) => setNomi({ ...nomi, [c.id]: e.target.value })}
-          onBlur={() => rinomina(c)} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} className="albatros-campo"
-          style={{ flex: '1 1 180px', height: '34px', fontWeight: sotto ? 400 : 600 }} />
+        {inModifica?.id === c.id
+          ? <input type="text" value={inModifica.nome} autoFocus onChange={(e) => setInModifica({ ...inModifica, nome: e.target.value })}
+              onKeyDown={(e) => { if (e.key === 'Enter') salvaNome(); if (e.key === 'Escape') setInModifica(null); }} className="albatros-campo"
+              style={{ flex: '1 1 180px', height: '34px', fontWeight: sotto ? 400 : 600 }} />
+          : <span style={{ flex: '1 1 180px', fontWeight: sotto ? 400 : 600 }}>{c.nome}</span>}
         <span className="albatros-tenue" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{n === 1 ? '1 uso' : `${n} usi`}</span>
+        {inModifica?.id === c.id ? <span style={{ whiteSpace: 'nowrap' }}>
+                            <button type="button" className="btn-accent-inline" disabled={inCorso} onClick={salvaNome} style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.78rem', padding: '3px 8px' }}><Icona nome="salva" size={13} style={{ marginRight: '4px' }} />Salva</button>
+                            <button type="button" className="btn-outline-annulla" disabled={inCorso} onClick={() => setInModifica(null)} style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.78rem', padding: '3px 8px', borderRadius: '4px' }}><Icona nome="annulla" size={13} style={{ marginRight: '4px' }} />Annulla</button>
+                          </span>
+          : <button type="button" className="btn-icon-action" title={inModifica ? 'Finisci prima la voce che stai modificando' : 'Rinomina'} disabled={!!inModifica} onClick={() => setInModifica({ id: c.id, nome: c.nome })}><Icona nome="modifica" size={14} style={{ marginRight: 0 }} /></button>}
         <button type="button" className="albatros-chip" disabled={inCorso} onClick={() => scrivi(() => supabase.from(tabella).update({ attiva: !c.attiva }).eq('id', c.id))}>
           {c.attiva ? 'Archivia' : 'Riattiva'}
         </button>

@@ -74,10 +74,19 @@ export const SCHEDE_REGISTRY = {
           { id: 'conti_cashflow', label: 'Cashflow' },
           { id: 'conti_contanti', label: 'Contanti in mano' },
           { id: 'conti_bfm', label: 'BFM' },
-          { id: 'conti_configuratore', label: 'Configuratore (categorie spese)' },
         ],
       },
-      { id: 'incassi', label: 'Incassi' },
+      {
+        // Si chiama Cruscotto, ma l'id resta 'incassi': è la chiave già salvata nei permessi dei ruoli.
+        id: 'incassi',
+        label: 'Cruscotto',
+        sottoschede: [
+          { id: 'cruscotto_incassi', label: 'Incassi' },
+          { id: 'cruscotto_spese', label: 'Spese' },
+          { id: 'cruscotto_elenco', label: 'Tutte le spese' },
+          { id: 'cruscotto_configuratore', label: 'Configuratore (categorie spese)' },
+        ],
+      },
       {
         id: 'listino',
         label: 'Listino',

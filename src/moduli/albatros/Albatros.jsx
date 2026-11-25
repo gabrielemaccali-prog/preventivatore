@@ -5,7 +5,7 @@ import Giornata from './Giornata'
 import StoricoChiusure from './StoricoChiusure'
 import Spese from './Spese'
 import Listino from './Listino'
-import Incassi from './Incassi'
+import Cruscotto from './Cruscotto'
 import Missioni from './Missioni'
 import { giornataDiLavoro } from './calcolo'
 import { SCHEDE_ALBATROS } from './schede'
@@ -99,7 +99,7 @@ function Albatros({ user, scheda, onScheda, onMissioniCambiate }) {
           {attiva === 'spese' && <Spese key="cassa" {...comuni} modulo="cassa" />}
           {attiva === 'conti' && <Spese key="conti" {...comuni} modulo="conti" />}
           {attiva === 'listino' && <Listino {...comuni} />}
-          {attiva === 'incassi' && <Incassi {...comuni} />}
+          {attiva === 'incassi' && <Cruscotto {...comuni} />}
           {attiva === 'missioni' && <Missioni {...comuni} onCambiate={onMissioniCambiate} />}
         </>
       )}

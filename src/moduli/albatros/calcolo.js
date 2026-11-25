@@ -8,11 +8,67 @@
 export const categorieDi = (categorie, tipo, { ancheArchiviate = false } = {}) => (categorie || [])
   .filter(c => c.tipo === tipo && (ancheArchiviate || c.attiva))
   .sort((x, y) => x.ordine - y.ordine || x.nome.localeCompare(y.nome));
-export const nomeCategoria = (categorie, id) => (categorie || []).find(c => c.id === id)?.nome || 'Senza categoria';
-// Valore di una tendina di categoria: null = nessuna scelta ancora, vale la prima categoria;
-// '' = senza categoria; altrimenti l'id come testo.
+// Le categorie delle spese sono a due livelli, come nel modulo Spese di BFM: le principali
+// (gruppo = true) raggruppano le secondarie (padre_id), e una spesa va sempre a una secondaria. Le
+// secondarie non ancora raggruppate (padre_id null) si usano lo stesso. Il listino funziona allo
+// stesso modo (il Bar diviso come le spese del bar, per metterli a confronto).
+// L'albero: le principali con le loro secondarie, e le secondarie non raggruppate (senza figlie).
+export function alberoCategorie(categorie, tipo, { ancheArchiviate = false } = {}) {
+  const tutte = categorieDi(categorie, tipo, { ancheArchiviate });
+  return tutte.filter(c => c.padre_id == null).map(c => ({ ...c, figlie: c.gruppo ? tutte.filter(f => f.padre_id === c.id) : [] }));
+}
+// Le categorie sceglibili per una spesa (le secondarie), in ordine d'albero.
+export const foglieCategorie = (categorie, tipo) => alberoCategorie(categorie, tipo).flatMap(c => (c.gruppo ? c.figlie : [c]));
+export const categoriaFoglia = (categorie, id) => {
+  const c = (categorie || []).find(x => x.id === id);
+  return !!c && !c.gruppo;
+};
+// La posizione di ogni categoria nell'albero (principali e secondarie), per ordinare le voci.
+export const posizioniAlbero = (categorie, tipo, opzioni) =>
+  new Map(alberoCategorie(categorie, tipo, opzioni).flatMap(c => [c, ...c.figlie]).map((c, i) => [c.id, i]));
+// Le voci di una categoria con ore_campo (o figlia di una che ce l'ha) dicono quante ore di campo
+// vale una vendita e se è a tariffa speciale (sql/albatros_ore_campo.sql).
+export const categoriaConOreCampo = (categorie, id) => {
+  const c = (categorie || []).find(x => x.id === id);
+  if (!c) return false;
+  if (c.ore_campo) return true;
+  const padre = c.padre_id != null ? (categorie || []).find(x => x.id === c.padre_id) : null;
+  return !!padre?.ore_campo;
+};
+// Le ore campo fatte nelle righe (quantità × ore della voce), quelle a tariffa speciale, e per voce.
+export function oreCampo(righe, listino) {
+  const voci = new Map((listino || []).map(v => [v.id, v]));
+  const perVoce = new Map();
+  let ore = 0, speciali = 0;
+  (righe || []).forEach(r => {
+    const v = voci.get(r.voce_id);
+    const h = Number(v?.ore_campo) || 0;
+    if (!h) return;
+    const tot = Math.round(Number(r.quantita) * h * 100) / 100;
+    ore += tot;
+    if (v.tariffa_speciale) speciali += tot;
+    const x = perVoce.get(v.id) || { voce: v, quantita: 0, ore: 0 };
+    x.quantita += Number(r.quantita) || 0;
+    x.ore = Math.round((x.ore + tot) * 100) / 100;
+    perVoce.set(v.id, x);
+  });
+  return { ore: Math.round(ore * 100) / 100, speciali: Math.round(speciali * 100) / 100, perVoce: [...perVoce.values()].sort((a, b) => b.ore - a.ore) };
+}
+// Le ore scritte all'italiana: 1,5 h.
+export const testoOre = (h) => `${String(Math.round((Number(h) || 0) * 100) / 100).replace('.', ',')} h`;
+// Una categoria e le sue sottocategorie: per i filtri, dove scegliere la categoria vuol dire anche le figlie.
+export const conSottocategorie = (categorie, id) => [id, ...(categorie || []).filter(f => f.padre_id === id).map(f => f.id)];
+// Il nome di una categoria, col padre davanti se è una sottocategoria: "Bar › Bibite".
+export const nomeCategoria = (categorie, id) => {
+  const c = (categorie || []).find(x => x.id === id);
+  if (!c) return 'Senza categoria';
+  const padre = c.padre_id != null ? (categorie || []).find(x => x.id === c.padre_id) : null;
+  return padre ? `${padre.nome} › ${c.nome}` : c.nome;
+};
+// Valore di una tendina di categoria: null = nessuna scelta ancora, vale la prima categoria
+// sceglibile; '' = senza categoria; altrimenti l'id come testo.
 export const idCategoriaScelta = (valore, categorie, tipo) =>
-  (valore == null ? (categorieDi(categorie, tipo)[0]?.id ?? null) : (Number(valore) || null));
+  (valore == null ? (foglieCategorie(categorie, tipo)[0]?.id ?? null) : (Number(valore) || null));
 
 // Chi può pagare una spesa: solo questi tre enti.
 export const ENTI = [
@@ -180,6 +236,8 @@ export function importoInCategoria(spesa, voci, categoriaId) {
   if (categoriaId === DA_DETTAGLIARE) return Math.max(dettaglioSpesa(spesa, voci).nonDettagliato, 0);
   return r2((voci || []).filter(v => (v.categoria_id ?? null) === (categoriaId ?? null)).reduce((t, v) => t + num(v.importo), 0));
 }
+// Quanto di una spesa va a un gruppo di categorie (una categoria e le sue sottocategorie).
+export const importoInCategorie = (spesa, voci, ids) => r2((ids || []).reduce((t, id) => t + importoInCategoria(spesa, voci, id), 0));
 // Si apre per scriverci le voci solo uno scontrino.
 export const spesaDettagliabile = (spesa) => spesaMulticategoria(spesa);
 export const rigaSpesaConsentita = (spesa, righe, importo) => r2(dettaglioSpesa(spesa, righe).dettagliato + num(importo)) <= r2(spesa?.importo);
@@ -297,3 +355,28 @@ export function vociFrequenti(righe, listino, quante = 10) {
 
 const normalizza = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 export const voceDiNome = (listino, nome) => (listino || []).find(v => normalizza(v.nome) === normalizza(nome)) || null;
+
+// Le spese di un periodo divise per categoria, per il Cruscotto: con la stessa logica dell'elenco
+// delle spese (vedi importoInCategoria) una spesa semplice va tutta alla sua categoria, uno scontrino
+// va alle categorie delle sue voci, e la parte non ancora dettagliata va in DA_DETTAGLIARE. Le spese
+// con carta scritte a mano che non sono in banca non esistono, e non contano.
+// Restituisce una Map: categoria (id, null = senza categoria, DA_DETTAGLIARE) -> { totale, spese: [{ spesa, importo }] }.
+export function spesePerCategoria(spese, vociPer) {
+  const gruppi = new Map();
+  const aggiungi = (chiave, spesa, importo) => {
+    if (!(importo > 0)) return;
+    const g = gruppi.get(chiave) || { totale: 0, spese: [] };
+    g.totale = r2(g.totale + importo);
+    g.spese.push({ spesa, importo: r2(importo) });
+    gruppi.set(chiave, g);
+  };
+  (spese || []).filter(s => !nonInBanca(s)).forEach(s => {
+    const voci = (vociPer && vociPer[s.id]) || [];
+    if (!spesaMulticategoria(s)) return aggiungi(s.categoria_id ?? null, s, r2(s.importo));
+    const perVoce = new Map();
+    voci.forEach(v => perVoce.set(v.categoria_id ?? null, r2((perVoce.get(v.categoria_id ?? null) || 0) + num(v.importo))));
+    perVoce.forEach((importo, chiave) => aggiungi(chiave, s, importo));
+    aggiungi(DA_DETTAGLIARE, s, dettaglioSpesa(s, voci).nonDettagliato);
+  });
+  return gruppi;
+}

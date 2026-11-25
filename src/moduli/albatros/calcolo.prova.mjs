@@ -5,7 +5,7 @@ import {
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
   rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, modificaVoceConsentita, voceDaSalvare, voceCorreggibile, importoInCategoria, spesaDettagliabile, DA_DETTAGLIARE, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare, accontiConfermati, accontoConfermabile, movimentiAcconti, accontoSullaVoce,
 } from './calcolo.js';
-import { nonInBanca } from './calcolo.js';
+import { nonInBanca, spesePerCategoria, alberoCategorie, posizioniAlbero, oreCampo, categoriaConOreCampo, testoOre, foglieCategorie, categoriaFoglia, conSottocategorie, importoInCategorie, nomeCategoria, idCategoriaScelta } from './calcolo.js';
 import { movimentiNonContabilizzati, contabilizzatoDi, eIncassoPos, eVersamentoContanti, naturaEntrata, mittenteDi, causaleEntrataDi, versamentoManualeDa, trasferimentiDoppi, elaboraAlbatros, ePrelievo, principaleDi, usciteDaImportare, dataCompetenza, saldoAllInizio, spesaDaMovimento, spesaManualeDa, categoriaProposta, eOnereBancario, chiaveControparte } from './banca.js';
 import { missioneAperta, missioneScaduta, confrontaMissioni, campiCambioStato, statoDopoAttivita, avanzamento, attivitaScaduta } from './regoleMissioni.js';
 
@@ -316,6 +316,46 @@ verifica('NC: il movimento contabilizzato che è diventata', 31, contabilizzatoD
   { id: 32, non_contabilizzato: false, importo: -332.54, data_valuta: '2026-10-20', data_contabile: '2026-10-22' },
 ])?.id);
 verifica('NC: un altro importo no', null, contabilizzatoDi(ncDb, [{ id: 33, non_contabilizzato: false, importo: -330, data_valuta: '2026-11-06', data_contabile: '2026-11-09' }]));
+
+// ---------- cruscotto delle spese ----------
+const perCat = spesePerCategoria([
+  { id: 1, importo: 50, categoria_id: 4 },
+  { id: 2, importo: 100, multicategoria: true, categoria_id: null, movimento_id: 9 },
+  { id: 3, importo: 30, metodo: 'carta', movimento_id: null },
+  { id: 4, importo: 20, categoria_id: null },
+], { 2: [{ importo: 60, categoria_id: 4 }, { importo: 10, categoria_id: 5 }] });
+verifica('cruscotto: la spesa semplice e la voce dello scontrino nella stessa categoria', 110, perCat.get(4)?.totale);
+verifica("cruscotto: l'altra voce", 10, perCat.get(5)?.totale);
+verifica('cruscotto: la parte non dettagliata', 30, perCat.get(DA_DETTAGLIARE)?.totale);
+verifica('cruscotto: senza categoria', 20, perCat.get(null)?.totale);
+verifica('cruscotto: la spesa con carta non in banca non conta', 170, [...perCat.values()].reduce((t, g) => t + g.totale, 0));
+
+// ---------- categorie delle spese a due livelli ----------
+const catAlbero = [
+  { id: 1, tipo: 'spesa', nome: 'Bar', ordine: 1, attiva: true, padre_id: null, gruppo: true },
+  { id: 2, tipo: 'spesa', nome: 'Bibite', ordine: 1, attiva: true, padre_id: 1 },
+  { id: 3, tipo: 'spesa', nome: 'Snack', ordine: 2, attiva: true, padre_id: 1 },
+  { id: 4, tipo: 'spesa', nome: 'Manutenzione', ordine: 2, attiva: true, padre_id: null },
+  { id: 5, tipo: 'spesa', nome: 'Utenze', ordine: 3, attiva: true, padre_id: null, gruppo: true },
+];
+verifica('categorie: albero', 'Bar(Bibite,Snack) Manutenzione() Utenze()', alberoCategorie(catAlbero, 'spesa').map(c => `${c.nome}(${c.figlie.map(f => f.nome).join(',')})`).join(' '));
+verifica('categorie: si sceglie l\'ultimo livello', '2,3,4', foglieCategorie(catAlbero, 'spesa').map(c => c.id).join());
+verifica('categorie: una principale non si sceglie', false, categoriaFoglia(catAlbero, 1));
+verifica('categorie: una principale vuota non si sceglie lo stesso', false, foglieCategorie(catAlbero, 'spesa').some(c => c.id === 5));
+verifica('categorie: una secondaria non raggruppata sì', true, categoriaFoglia(catAlbero, 4));
+verifica('categorie: il nome col padre', 'Bar › Bibite', nomeCategoria(catAlbero, 2));
+verifica('categorie: il filtro su Bar prende anche le figlie', '1,2,3', conSottocategorie(catAlbero, 1).join());
+verifica('categorie: importo in Bar con le figlie', 70, importoInCategorie({ importo: 100, multicategoria: true }, [{ importo: 40, categoria_id: 2 }, { importo: 30, categoria_id: 3 }, { importo: 30, categoria_id: 4 }], [1, 2, 3]));
+verifica('categorie: la prima scelta è una foglia', 2, idCategoriaScelta(null, catAlbero, 'spesa'));
+verifica('categorie: posizioni in ordine d\'albero', '1:0 2:1 3:2 4:3 5:4', [...posizioniAlbero(catAlbero, 'spesa')].map(([id, i]) => `${id}:${i}`).join(' '));
+const listinoOre = [{ id: 1, nome: 'Campo 1h', ore_campo: 1 }, { id: 2, nome: 'Campo sconto 1,5h', ore_campo: 1.5, tariffa_speciale: true }, { id: 3, nome: 'Birra' }];
+const oreProva = oreCampo([{ voce_id: 1, quantita: 3 }, { voce_id: 2, quantita: 2 }, { voce_id: 3, quantita: 10 }, { voce_id: 1, quantita: 1 }], listinoOre);
+verifica('ore campo: quantità per ore', 7, oreProva.ore);
+verifica('ore campo: a tariffa speciale', 3, oreProva.speciali);
+verifica('ore campo: per voce, la birra non conta', '1:4,2:3', oreProva.perVoce.map(x => `${x.voce.id}:${x.ore}`).join());
+verifica('ore campo: testo', '1,5 h', testoOre(1.5));
+verifica('ore campo: la sottocategoria eredita', true, categoriaConOreCampo([{ id: 1, ore_campo: true }, { id: 2, padre_id: 1 }], 2));
+verifica('ore campo: altre categorie no', false, categoriaConOreCampo([{ id: 1, ore_campo: false }, { id: 2, padre_id: 1 }], 2));
 
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${e.atteso}, ottenuto ${e.ottenuto}`}`));
