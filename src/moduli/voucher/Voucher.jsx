@@ -578,7 +578,9 @@ function Voucher({ user }) {
   // Stampa il voucher attualmente nel form (deve essere già salvato per avere un codice)
   const stampaFormCorrente = async () => {
     if (!codiceGenerato) return alert("Salva prima il voucher, poi potrai stamparlo.");
-    if (!fatturazioneCompletaDi(form)) return alert("Inserisci tutti i dati di fatturazione prima di scaricare il PDF.");
+    // Il buono da regalare non ha niente a che vedere con la fattura: su un omaggio quei dati non
+    // si chiedono nemmeno, e pretenderli qui vorrebbe dire non poterlo stampare mai.
+    if (!form.omaggio && !fatturazioneCompletaDi(form)) return alert("Inserisci tutti i dati di fatturazione prima di scaricare il PDF.");
     setDatiPDF({ ...form, codice: codiceGenerato });
     await new Promise(r => setTimeout(r, 150));
     scaricaPDF(codiceGenerato);
