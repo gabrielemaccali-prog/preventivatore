@@ -466,16 +466,17 @@ body {
     padding: 0 !important; border-bottom: none; background: none; border-radius: 0; width: auto;
   }
   .schermata-storico tr.scheda-pren { grid-template-areas: "quando stato" "chi chi" "partita dove" "soldi fattura"; }
-  /* Il voucher ha sei colonne: in alto quando e' stato emesso e a che punto sta, poi a chi e'
-     intestato, poi il pacchetto col codice a destra -- il codice e' il suo nome, quello che il
-     cliente ha in mano -- e in fondo quanto ha pagato, con la spunta della fattura dentro. */
-  .schermata-storico tr.scheda-voucher { grid-template-areas: "quando stato" "chi chi" "partita dove" "soldi soldi"; }
+  /* Il voucher: in alto quando e' stato emesso e a che punto sta, poi a chi e' intestato, poi il
+     pacchetto col codice a destra -- il codice e' il suo nome, quello che il cliente ha in mano --
+     e in fondo quanto ha pagato, con la natura (posticipo, omaggio, pregresso) a destra. */
+  .schermata-storico tr.scheda-voucher { grid-template-areas: "quando stato" "chi chi" "partita dove" "soldi natura"; }
   .schermata-storico tr.scheda-voucher > td:nth-child(1) { grid-area: dove; justify-self: end; color: #94a3b8 !important; font-size: 0.76rem !important; white-space: nowrap; }
   .schermata-storico tr.scheda-voucher > td:nth-child(2) { grid-area: quando; font-weight: 600; font-size: 0.84rem !important; color: #334155 !important; }
   .schermata-storico tr.scheda-voucher > td:nth-child(3) { grid-area: stato; justify-self: end; align-self: center; }
-  .schermata-storico tr.scheda-voucher > td:nth-child(4) { grid-area: chi; font-size: 0.88rem !important; font-weight: 600; }
-  .schermata-storico tr.scheda-voucher > td:nth-child(5) { grid-area: partita; font-size: 0.76rem !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .schermata-storico tr.scheda-voucher > td:nth-child(6) { grid-area: soldi; font-size: 0.8rem !important; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(4) { grid-area: natura; justify-self: end; align-self: center; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(5) { grid-area: chi; font-size: 0.88rem !important; font-weight: 600; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(6) { grid-area: partita; font-size: 0.76rem !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .schermata-storico tr.scheda-voucher > td:nth-child(7) { grid-area: soldi; font-size: 0.8rem !important; }
   .schermata-storico tr.scheda-voucher .badge-mini { font-size: 0.6rem !important; padding: 1px 6px !important; }
   /* Il preventivo: in alto la data dell'evento con lo stato, poi il referente, poi dove si fa
      con il codice a destra, e in fondo la vendita col "di cui BFM". Restano fuori la data di

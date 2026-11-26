@@ -134,12 +134,25 @@ const dataValidita = (dataEmissione) => {
 const oggiISO = () => new Date().toISOString().slice(0, 10);
 const scadutoVoucher = (v) => v.stato !== STATO_VOUCHER.USATO && !!v.dataEmissione && dataValidita(v.dataEmissione).slice(0, 10) < oggiISO();
 
+// Da dove viene un voucher. Lo stato dice a che punto è (incompleto, emesso, usato), la natura
+// dice che cosa è: tre strade diverse che si comportano in modo diverso su pagamenti e fatture, e
+// che prima si leggevano solo da un segnino accanto al codice. Un voucher comprato non ha natura:
+// è il caso normale, e scriverlo su ogni riga sarebbe solo rumore.
+const NATURA_VOUCHER = {
+  posticipo: { testo: 'POSTICIPO', sfondo: '#ede9fe', colore: '#5b21b6', titolo: 'Nato da una partita annullata: i soldi erano già stati incassati su quella, e lì resta la fattura' },
+  omaggio: { testo: 'OMAGGIO', sfondo: '#dbeafe', colore: '#1d4ed8', titolo: 'Regalato da noi: nessun pagamento, nessuna fattura' },
+  pregresso: { testo: 'PREGRESSO', sfondo: '#e2e8f0', colore: '#475569', titolo: 'Buono venduto col vecchio sistema: incassato e fatturato lì' },
+};
+const naturaVoucherDi = (v) => (v.daPosticipo ? 'posticipo' : v.omaggio ? 'omaggio' : v.pregresso ? 'pregresso' : null);
+
 // Colonne della tabella voucher (Gestione e Storico): etichetta mostrata e valore su cui ordinare.
 // "Pagato / Totale" ordina sul totale, cioè sul valore del voucher.
 const COLONNE_VOUCHER = [
   { chiave: 'codice', label: 'Codice', valore: (v) => v.codice || '' },
   { chiave: 'data', label: 'Data', valore: (v) => v.dataEmissione || '' },
   { chiave: 'stato', label: 'Stato', valore: (v) => v.stato || '' },
+  // I comprati in fondo all'ordinamento: sono i più, e si ordina per cercare gli altri.
+  { chiave: 'natura', label: 'Natura', valore: (v) => naturaVoucherDi(v) || 'zz' },
   { chiave: 'intestatario', label: 'Intestatario', valore: (v) => v.nominativo || '' },
   { chiave: 'pacchetto', label: 'Pacchetto', valore: (v) => v.pacchettoNome || '' },
   { chiave: 'importo', label: 'Pagato / Totale', valore: (v) => parseFloat(v.importo) || 0 },
@@ -606,6 +619,7 @@ function Voucher({ user }) {
   const rigaTabellaVoucher = (v) => {
     const espansa = rigaEspansaId === v.codice;
     const prenUso = prenotazioneDelVoucher(v.codice);
+    const natura = NATURA_VOUCHER[naturaVoucherDi(v)];
     const totPagato = (v.pagamenti || []).reduce((s, x) => s + (parseFloat(x.importo) || 0), 0);
     const statoPag = statoPagamentoDi(v.pagamenti, v.importo);
     const pagColore = statoPag === 'saldato' ? '#16a34a' : statoPag === 'acconto' ? '#ca8a04' : '#dc2626';
@@ -617,15 +631,16 @@ function Voucher({ user }) {
           <td style={{ padding: '12px' }}>
             <span className="riga-espandibile-chevron" style={{ transform: espansa ? 'rotate(90deg)' : 'none' }}>›</span>
             <strong>{v.codice}</strong>
-            {/* Non è uno stato a parte -- vive come tutti gli altri -- ma dice da dove arriva: non un
-                regalo comprato, una partita annullata che tornerà. */}
-            {v.daPosticipo && <span className="badge-stato badge-mini" style={{ marginLeft: '6px', background: '#ede9fe', color: '#5b21b6' }} title={`Nato dalla partita annullata ${v.prenotazioneOrigine || ''}`}>POST</span>}
-            {v.omaggio && <span className="badge-stato badge-mini" style={{ marginLeft: '6px', background: '#dbeafe', color: '#1d4ed8' }} title="Regalato da noi: nessun pagamento, nessuna fattura">OMAGGIO</span>}
           </td>
           <td style={{ padding: '12px', color: '#777', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{formattaDataIT(v.dataEmissione)}</td>
           <td style={{ padding: '12px' }}>
             <span className={`badge-stato badge-mini ${classeBadgeStato(v.stato)}`}>{etichettaStatoVoucher(v.stato)}</span>
             {scadutoVoucher(v) && <span className="badge-stato badge-mini" style={{ marginLeft: '4px', background: '#fee2e2', color: '#991b1b' }} title={`Valido fino al ${formattaDataIT(dataValidita(v.dataEmissione))}`}>SCADUTO</span>}
+          </td>
+          <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
+            {natura
+              ? <span className="badge-stato badge-mini" style={{ background: natura.sfondo, color: natura.colore }} title={natura.titolo}>{natura.testo}</span>
+              : <span style={{ color: '#cbd5e1' }} title="Voucher comprato: pagato e fatturato come una vendita qualsiasi">—</span>}
           </td>
           <td style={{ padding: '12px' }}>👤 {v.nominativo}</td>
           <td style={{ padding: '12px', fontSize: '0.85rem', color: '#555' }}>{v.pacchettoNome ? `${v.pacchettoNome} — ` : ''}€{(parseFloat(v.importo) || 0).toFixed(2)}</td>
@@ -660,10 +675,7 @@ function Voucher({ user }) {
                   {v.stato !== STATO_VOUCHER.USATO && v.dataEmissione && (
                     <div><span style={{ color: '#94a3b8' }}>{scadutoVoucher(v) ? 'Scaduto il ' : 'Valido fino al '}</span>{formattaDataIT(dataValidita(v.dataEmissione))}</div>
                   )}
-                  <div><span style={{ color: '#94a3b8' }}>Codice </span><strong>{v.codice}</strong>
-                    {/* Un buono del vecchio sistema si dice qui, non nella riga: nell'elenco è un voucher come gli altri. */}
-                    {v.pregresso && <span className="badge-stato badge-mini pregresso" style={{ marginLeft: '6px' }}>pregresso</span>}
-                  </div>
+                  <div><span style={{ color: '#94a3b8' }}>Codice </span><strong>{v.codice}</strong></div>
                   {(v.telefono || v.email) && (
                     <div><span style={{ color: '#94a3b8' }}>Contatti </span>{[v.telefono, v.email].filter(Boolean).join(' · ')}</div>
                   )}
