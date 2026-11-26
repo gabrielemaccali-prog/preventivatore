@@ -59,7 +59,7 @@ export const SCHEDE_REGISTRY = {
         label: 'Cassa',
         sottoschede: [
           { id: 'cassa_spese', label: 'Spese' },
-          { id: 'cassa_dettagliare', label: 'Da dettagliare' },
+          { id: 'cassa_dettagliare', label: 'Da completare' },
           { id: 'cassa_trasferimenti', label: 'Trasferimenti' },
         ],
       },

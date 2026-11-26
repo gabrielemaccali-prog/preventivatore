@@ -5,7 +5,7 @@ import {
   quadratura, forseChiusuraDiIeri, fondoProposto, fondoDiverso, fondoDaSpecificare, daSpecificare, giornataDiLavoro, chiusuraModificabile, cassaScrivibile, composizioneCorreggibile, aggiuntaConsentita,
   rigaDaIncrementare, vociFrequenti, voceDiNome, lunediDi, aggiungiGiorni, intervalloPeriodo, dettaglioSpesa, rigaSpesaConsentita, modificaVoceConsentita, voceDaSalvare, voceCorreggibile, importoInCategoria, spesaDettagliabile, DA_DETTAGLIARE, posizioneEnte, contantiAlbatros, contoAlbatros, spesaDaPagare, accontiConfermati, accontoConfermabile, movimentiAcconti, accontoSullaVoce,
 } from './calcolo.js';
-import { nonInBanca, spesePerCategoria, alberoCategorie, posizioniAlbero, oreCampo, categoriaConOreCampo, testoOre, foglieCategorie, categoriaFoglia, conSottocategorie, importoInCategorie, nomeCategoria, idCategoriaScelta } from './calcolo.js';
+import { nonInBanca, spesePerCategoria, conVociOneri, voceDaCompletare, dettaglioSpesa as dettaglioProva, voceCorreggibile as correggibileProva, alberoCategorie, posizioniAlbero, oreCampo, categoriaConOreCampo, testoOre, foglieCategorie, categoriaFoglia, conSottocategorie, importoInCategorie, nomeCategoria, idCategoriaScelta } from './calcolo.js';
 import { movimentiNonContabilizzati, contabilizzatoDi, eIncassoPos, eVersamentoContanti, naturaEntrata, mittenteDi, causaleEntrataDi, versamentoManualeDa, trasferimentiDoppi, elaboraAlbatros, ePrelievo, principaleDi, usciteDaImportare, dataCompetenza, saldoAllInizio, spesaDaMovimento, spesaManualeDa, categoriaProposta, eOnereBancario, chiaveControparte } from './banca.js';
 import { missioneAperta, missioneScaduta, confrontaMissioni, campiCambioStato, statoDopoAttivita, avanzamento, attivitaScaduta } from './regoleMissioni.js';
 
@@ -244,6 +244,9 @@ verifica('banca: saldo al 30 settembre', 63.78, saldoAllInizio({ dal: '2026-09-0
 verifica('banca: file che parte da ottobre, niente saldo di partenza', null, saldoAllInizio({ dal: '2026-10-01', saldoIniziale: 100, movimenti: [] }));
 verifica('banca: POS = carta, nel giorno dell\'acquisto', 'carta 2026-10-26', `${spesaDaMovimento(metro).metodo} ${spesaDaMovimento(metro).data}`);
 verifica('banca: il negozio, senza la città', 'Metro Fil.San Donato Milanese', spesaDaMovimento(metro).descrizione);
+const wefor = { tipo: 'DISPOSIZIONE SCT', dataContabile: '2026-11-20', importo: -120, descrizione: '98 SCT (DIS) Cod. Disp.: 0306918197399003S93373033730IT disposto verso Wefor srl' };
+verifica('banca: disposto verso, col tipo e il beneficiario', 'Disposizione Sct · Wefor srl', spesaDaMovimento(wefor).descrizione);
+verifica('banca: disposto verso, la controparte', 'WEFOR SRL', chiaveControparte(wefor));
 verifica('banca: addebito diretto = dal conto, col creditore', 'conto Enegan Spa', `${spesaDaMovimento(enegan).metodo} ${spesaDaMovimento(enegan).descrizione}`);
 verifica('banca: il bollo è un onere', true, eOnereBancario(bollo));
 verifica('banca: il prelievo allo sportello è un trasferimento', true, ePrelievo({ tipo: 'PRELEVAMENTO CARTA SU SPORTELLO AUTOMATICO' }));
@@ -356,6 +359,18 @@ verifica('ore campo: per voce, la birra non conta', '1:4,2:3', oreProva.perVoce.
 verifica('ore campo: testo', '1,5 h', testoOre(1.5));
 verifica('ore campo: la sottocategoria eredita', true, categoriaConOreCampo([{ id: 1, ore_campo: true }, { id: 2, padre_id: 1 }], 2));
 verifica('ore campo: altre categorie no', false, categoriaConOreCampo([{ id: 1, ore_campo: false }, { id: 2, padre_id: 1 }], 2));
+const lasi = { id: 7, importo: 236.10, multicategoria: true };
+const vociLasi = conVociOneri([lasi], { 7: [{ id: 1, importo: 235.60, categoria_id: 2 }] }, new Map([[7, 0.5]]), [{ id: 9, tipo: 'spesa', nome: 'Oneri bancari', attiva: true }]);
+verifica('commissioni: lo scontrino con le commissioni è tutto dettagliato', 0, dettaglioProva(lasi, vociLasi[7]).nonDettagliato);
+verifica('commissioni: vanno negli oneri bancari', 9, vociLasi[7][1].categoria_id);
+verifica('commissioni: la voce automatica non si tocca', false, correggibileProva(vociLasi[7][1], true));
+verifica('da completare: una voce senza categoria', true, voceDaCompletare({ categoria_id: null }, catAlbero));
+verifica('da completare: una voce su una principale', true, voceDaCompletare({ categoria_id: 1 }, catAlbero));
+verifica('da completare: una voce su una secondaria no', false, voceDaCompletare({ categoria_id: 2 }, catAlbero));
+verifica('da completare: le commissioni no', false, voceDaCompletare(vociLasi[7][1], []));
+verifica('da completare: chiunque completa una voce salvata senza categoria', true, correggibileProva({ salvata: true, categoria_id: null }, false, catAlbero));
+verifica('da completare: ma non una salvata con la categoria', false, correggibileProva({ salvata: true, categoria_id: 2 }, false, catAlbero));
+verifica('commissioni: una spesa semplice resta uguale', undefined, conVociOneri([{ id: 8, importo: 10 }], {}, new Map([[8, 0.5]]), [])[8]);
 
 const falliti = esiti.filter(e => !e.ok);
 esiti.forEach(e => console.log(`${e.ok ? 'ok  ' : 'NO  '} ${e.caso}${e.ok ? '' : ` — atteso ${e.atteso}, ottenuto ${e.ottenuto}`}`));

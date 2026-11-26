@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import { supabase, leggiTutte } from '../../lib/supabaseClient'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
-import { euro, r2, num, totaleRiga, alberoCategorie, periodoIniziale, intervalloPeriodo, dicituraPeriodo, etichettaEnte, etichettaMetodoSpesa, nonInBanca, spesePerCategoria, DA_DETTAGLIARE } from './calcolo'
+import { euro, r2, num, totaleRiga, conVociOneri, alberoCategorie, periodoIniziale, intervalloPeriodo, dicituraPeriodo, etichettaEnte, etichettaMetodoSpesa, nonInBanca, spesePerCategoria, DA_DETTAGLIARE } from './calcolo'
 import IconaCategoria from './IconaCategoria'
 import FiltroPeriodo from './FiltroPeriodo'
 
@@ -46,12 +46,18 @@ function CruscottoSpese({ categorie, listino = [] }) {
       : { data: [] };
     const mappa = {};
     (voci || []).forEach(v => { (mappa[v.spesa_id] = mappa[v.spesa_id] || []).push(v); });
+    // Le commissioni bancarie sommate agli scontrini: sono una voce automatica, non da dettagliare.
+    const { data: oneri } = ids.length
+      ? await leggiTutte(() => supabase.from('albatros_banca_movimenti').select('id, onere_spesa_id, importo').in('onere_spesa_id', ids).order('id'))
+      : { data: [] };
+    const oneriPer = new Map();
+    (oneri || []).forEach(m => oneriPer.set(m.onere_spesa_id, r2((oneriPer.get(m.onere_spesa_id) || 0) - num(m.importo))));
+    setVociPer(conVociOneri(elenco, mappa, oneriPer, categorie));
     const { data: ch } = await leggiTutte(() => supabase.from('albatros_chiusure').select('id').gte('data', da).lte('data', al).not('chiusa_il', 'is', null).order('id'));
     const { data: rg } = (ch || []).length
       ? await leggiTutte(() => supabase.from('albatros_righe').select('voce_id, quantita, prezzo').in('chiusura_id', ch.map(c => c.id)).order('id'))
       : { data: [] };
     setSpese(elenco);
-    setVociPer(mappa);
     setRigheIncasso(rg || []);
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,7 +87,7 @@ function CruscottoSpese({ categorie, listino = [] }) {
       if (incasso != null) confronti++;
       return { chiave: c.id, categoria: c, nome: c.nome, figlie, spese: proprie.spese, incasso, totale: r2(proprie.totale + figlie.reduce((t, x) => t + x.totale, 0)) };
     }).filter(x => x.totale > 0 || x.incasso);
-    if (gruppi.has(null)) elenco.push({ chiave: SENZA_CATEGORIA, nome: 'Senza categoria', grigia: true, figlie: [], ...gruppi.get(null) });
+    if (gruppi.has(null)) elenco.push({ chiave: SENZA_CATEGORIA, nome: 'Senza categoria (da completare)', grigia: true, figlie: [], ...gruppi.get(null) });
     if (gruppi.has(DA_DETTAGLIARE)) elenco.push({ chiave: DA_DETTAGLIARE, nome: 'Da dettagliare (scontrini)', grigia: true, figlie: [], ...gruppi.get(DA_DETTAGLIARE) });
     const valide = spese.filter(s => !nonInBanca(s));
     const perEnte = (ente) => r2(valide.filter(s => (s.ente || null) === ente).reduce((t, s) => t + num(s.importo), 0));

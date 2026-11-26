@@ -230,11 +230,15 @@ export function verificaContinuita(estratto, caricamenti, movimenti) {
 // Commissioni e costi: si sommano alla spesa principale quando c'è un'uscita con lo stesso codice.
 export const eOnere = (m) => /^(COSTO|COMMISSIONE)\b/i.test(String(m?.tipo || '').trim());
 
+const iniziali = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase().replace(/(^|[\s.-])(\p{L})/gu, (x, a, b) => a + b.toUpperCase());
 // Cosa è stato pagato, per la descrizione della spesa: il testo utile senza i codici della banca.
 export function descrizioneDi(m) {
   const t = String(m?.descrizione || '');
   const aFavore = /a favore di:\s*(.+)$/i.exec(t);
   if (aFavore) return aFavore[1].trim();
+  // "98 SCT (DIS) Cod. Disp.: … disposto verso Wefor srl": il tipo e il beneficiario, che sta in fondo.
+  const verso = /disposto verso:?\s*(.+)$/i.exec(t);
+  if (verso) return [iniziali(m?.tipo), verso[1].trim()].filter(Boolean).join(' · ');
   const presso = /\bPRESSO\s+(.+)$/i.exec(t);
   if (presso) return presso[1].trim();
   const nome = /NOME:\s*(.+?)\s+MANDATO:/i.exec(t);
@@ -261,7 +265,7 @@ const parole = (s) => String(s || '').toUpperCase().normalize('NFD').replace(/[�
 const NON_DISTINTIVE = new Set(['SRL', 'SRLS', 'SPA', 'SAS', 'SNC', 'SSD', 'ASD', 'ARL', 'RL', 'SOCIETA', 'SPORTIVA', 'DILETTANTISTICA', 'IL', 'LA', 'LO', 'DI', 'DEL', 'DELLA', 'CENTRO', 'SPORTIVO']);
 const testoBeneficiario = (m) => {
   const t = String(m?.descrizione || '');
-  return (/a favore di:\s*(.+)$/i.exec(t)?.[1]) || t;
+  return (/a favore di:\s*(.+)$/i.exec(t)?.[1]) || (/disposto verso:?\s*(.+)$/i.exec(t)?.[1]) || t;
 };
 export function controparteDi(m, tipo, controparti) {
   const testo = new Set(parole(testoBeneficiario(m)));

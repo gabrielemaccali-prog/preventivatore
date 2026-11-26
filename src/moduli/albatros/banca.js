@@ -1,3 +1,4 @@
+import { categoriaOneriBancari } from './calcolo.js'
 // ============================================================
 // Le spese dal conto in banca di Albatros: funzioni pure, provate da calcolo.prova.mjs.
 // Il file lo legge leggiEstrattoConto (lib/banca.js), lo stesso dell'estratto di BFM: qui si
@@ -49,6 +50,9 @@ export function controparteDi(m) {
   if (nome) return maiuscoleIniziali(nome[1]);
   const favore = /a favore di: (.+?)(?: Saldo| Acconto| SALDO| ACCONTO|$)/.exec(d);
   if (favore && !/BENEFICIARI DIVERSI/i.test(favore[1])) return pulisci(favore[1]);
+  // "98 SCT (DIS) Cod. Disp.: … disposto verso Wefor srl": il beneficiario sta in fondo.
+  const verso = /disposto verso:? (.+)$/i.exec(d);
+  if (verso && !/BENEFICIARI DIVERSI/i.test(verso[1])) return pulisci(verso[1]);
   // Un'operazione non ancora contabilizzata ha per descrizione il solo negozio ("METRO FIL SAN DONATO").
   if (m?.nonContabilizzato || m?.non_contabilizzato) return maiuscoleIniziali(d.split(/\s+/).slice(0, 4).join(' '));
   return '';
@@ -78,7 +82,8 @@ export function principaleDi(onere, movimenti) {
 }
 
 // La spesa che nasce da un'uscita: il giorno è quello dell'acquisto (data valuta, per un POS) o
-// della contabilizzazione; il nome è la controparte, o il tipo di movimento.
+// della contabilizzazione; il nome è la controparte, o il tipo di movimento. Quando il beneficiario
+// sta in fondo ("disposto verso") si tengono tutte e due: "Disposizione Sct · Wefor srl".
 export function spesaDaMovimento(m) {
   const pos = ePagamentoPos(m);
   const chi = controparteDi(m);
@@ -86,7 +91,9 @@ export function spesaDaMovimento(m) {
     data: (pos && m.dataValuta) || m.dataContabile,
     importo: r2(Math.abs(m.importo)),
     // Un onere si chiama col suo tipo (e di chi è, se c'è): "Commissioni e spese adue · Enegan Spa".
-    descrizione: (eOnereBancario(m) ? [maiuscoleIniziali(m.tipo), chi].filter(Boolean).join(' · ') : chi || maiuscoleIniziali(m.tipo) || 'Movimento bancario').slice(0, 300),
+    descrizione: (eOnereBancario(m) || (chi && /disposto verso/i.test(String(m.descrizione || '')))
+      ? [maiuscoleIniziali(m.tipo), chi].filter(Boolean).join(' · ')
+      : chi || maiuscoleIniziali(m.tipo) || 'Movimento bancario').slice(0, 300),
     metodo: pos ? 'carta' : 'conto',
   };
 }
@@ -140,11 +147,11 @@ export function spesaManualeDa(m, spese, giaPrese = new Set()) {
     .sort((a, b) => giorni(a.data, s0.data) - giorni(b.data, s0.data))[0] || null;
 }
 
-// La categoria proposta: gli oneri bancari vanno nella categoria che si chiama così (se c'è); le
+// La categoria proposta: gli oneri bancari vanno in Servizi accessori › Banca (categoriaOneriBancari); le
 // altre prendono quella dell'ultima spesa dalla banca con la stessa controparte. Se no, nessuna:
 // la si sceglie a mano, e dalla volta dopo si propone quella.
 export function categoriaProposta(m, precedenti, categorie) {
-  if (eOnereBancario(m)) return (categorie || []).find(c => c.tipo === 'spesa' && c.attiva && /oneri bancari/i.test(c.nome))?.id ?? null;
+  if (eOnereBancario(m)) return categoriaOneriBancari(categorie);
   const chiave = chiaveControparte(m);
   if (!chiave) return null;
   const uguale = (precedenti || [])

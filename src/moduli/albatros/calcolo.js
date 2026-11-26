@@ -247,7 +247,35 @@ export const modificaVoceConsentita = (spesa, righe, voce, importo) => rigaSpesa
 // preme "Salva il dettaglio" la cambia o la toglie chiunque. Salvata, solo l'amministratore. Prima
 // di sql/albatros_spese_righe_salvate.sql la colonna non c'è: le voci sono tutte salvate.
 export const voceDaSalvare = (voce) => voce?.salvata === false;
-export const voceCorreggibile = (voce, puoCorreggere) => !!puoCorreggere || voceDaSalvare(voce);
+// "Senza categoria" non si sceglie più: una voce di scontrino senza categoria (o su una categoria
+// che nel frattempo ha sottocategorie) è da completare, e chiunque la può completare.
+export const voceDaCompletare = (voce, categorie) => !!voce && !voce.automatica && 'categoria_id' in voce
+  && (voce.categoria_id == null || !categoriaFoglia(categorie, voce.categoria_id));
+export const voceCorreggibile = (voce, puoCorreggere, categorie) => !voce?.automatica
+  && (!!puoCorreggere || voceDaSalvare(voce) || (!!categorie && voceDaCompletare(voce, categorie)));
+
+// Le commissioni bancarie sommate a una spesa (operazioniBanca) stanno nel suo importo, ma in uno
+// scontrino non sono roba da dettagliare: diventano una voce automatica, che non si tocca, nella
+// categoria degli oneri bancari: Servizi accessori › Banca (o, se non c'è, una che si chiami "Oneri
+// bancari"). Così lo scontrino da 235,60 € + 0,50 € di commissioni è tutto dettagliato con le voci
+// da 235,60 €.
+export const categoriaOneriBancari = (categorie) => {
+  const spesa = (categorie || []).filter(c => c.tipo === 'spesa' && !c.gruppo && c.attiva);
+  const padreDi = (c) => (categorie || []).find(p => p.id === c.padre_id);
+  const banca = spesa.find(c => /^banca$/i.test(c.nome.trim()) && /^servizi accessori$/i.test(padreDi(c)?.nome?.trim() || ''));
+  return (banca || spesa.find(c => /oneri bancari|commissioni bancarie/i.test(c.nome)))?.id ?? null;
+};
+// vociPer: id spesa -> voci salvate; oneriPer: Map id spesa -> commissioni sommate (positive).
+export function conVociOneri(spese, vociPer, oneriPer, categorie) {
+  const categoria_id = categoriaOneriBancari(categorie);
+  const esito = { ...(vociPer || {}) };
+  (spese || []).forEach(s => {
+    const oneri = r2(oneriPer?.get(s.id) || 0);
+    if (!spesaMulticategoria(s) || !(oneri > 0)) return;
+    esito[s.id] = [...(esito[s.id] || []), { id: `oneri-${s.id}`, spesa_id: s.id, descrizione: 'Commissioni bancarie', importo: oneri, categoria_id, automatica: true, salvata: true }];
+  });
+  return esito;
+}
 
 // Il periodo dei filtri di Chiusure, Spese e Incassi: una settimana, un mese o un anno. Si parte
 // dal mese corrente; passando da un tipo all'altro gli altri restano dov'erano.

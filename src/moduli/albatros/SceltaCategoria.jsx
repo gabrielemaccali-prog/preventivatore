@@ -11,13 +11,17 @@ function SceltaCategoria({ categorie, tipo, valore, onChange, className = 'albat
   // Quella già assegnata resta in elenco anche se archiviata, o se nel frattempo è diventata un gruppo.
   const assegnata = (categorie || []).find(c => String(c.id) === effettivo);
   const fuoriElenco = assegnata && !sceglibili.some(c => c.id === assegnata.id) ? assegnata : null;
+  // Per le spese "Senza categoria" non si sceglie: se manca, la tendina chiede di sceglierla e la
+  // spesa (o la voce) resta da completare. Il listino ce l'ha ancora.
+  const senza = tipo !== 'spesa';
   return (
     <select value={effettivo} onChange={(e) => onChange(e.target.value)} className={className}>
+      {!senza && effettivo === '' && <option value="" disabled>Scegli la categoria…</option>}
       {fuoriElenco && <option value={String(fuoriElenco.id)}>{nomeCategoria(categorie, fuoriElenco.id)}{fuoriElenco.attiva ? '' : ' (archiviata)'}</option>}
       {alberoCategorie(categorie, tipo).filter(c => !c.gruppo || c.figlie.length).map(c => (c.gruppo
         ? <optgroup key={c.id} label={c.nome}>{c.figlie.map(f => <option key={f.id} value={String(f.id)}>{f.nome}</option>)}</optgroup>
         : <option key={c.id} value={String(c.id)}>{c.nome}</option>))}
-      <option value="">Senza categoria</option>
+      {senza && <option value="">Senza categoria</option>}
     </select>
   );
 }

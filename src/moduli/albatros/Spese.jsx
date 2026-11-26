@@ -4,7 +4,7 @@ import Icona from '../../components/Icona'
 import { formattaDataGGMMAAAA } from '../../lib/utils'
 import {
   nomeCategoria, idCategoriaScelta, ENTI, etichettaEnte, num, r2, euro, giornataDiLavoro, periodoIniziale, intervalloPeriodo, dicituraPeriodo,
-  dettaglioSpesa, rigaSpesaConsentita, modificaVoceConsentita, voceDaSalvare, voceCorreggibile, importoInCategoria, importoInCategorie, alberoCategorie, categoriaFoglia, conSottocategorie, spesaDettagliabile, spesaMulticategoria, nonInBanca, DA_DETTAGLIARE, METODI_SPESA, spesaDaPagare, etichettaMetodoSpesa,
+  dettaglioSpesa, conVociOneri, voceDaCompletare, rigaSpesaConsentita, modificaVoceConsentita, voceDaSalvare, voceCorreggibile, importoInCategoria, importoInCategorie, alberoCategorie, categoriaFoglia, conSottocategorie, spesaDettagliabile, spesaMulticategoria, nonInBanca, DA_DETTAGLIARE, METODI_SPESA, spesaDaPagare, etichettaMetodoSpesa,
   contantiAlbatros,
 } from './calcolo'
 import { principaleDi, trasferimentiDoppi } from './banca'
@@ -46,8 +46,9 @@ import SceltaCategoria from './SceltaCategoria'
 // nata, e lì si dice se non è una spesa. Le commissioni si vedono accanto all'importo, come in BFM.
 // La vista Banca (id 'movimenti') è la scheda Banca di BFM: saldo e destinazione di ogni movimento;
 // la vista Incassi (id 'entrate') è la sua scheda Incassi: ogni entrata del conto è un incasso POS, un versamento di contanti,
-// un'altra entrata, o da completare. La vista Da dettagliare raccoglie gli scontrini con più
-// categorie non ancora dettagliati del tutto, di qualunque periodo.
+// un'altra entrata, o da completare. La vista Da completare (id 'dettagliare') raccoglie gli
+// scontrini pagati con carta non ancora dettagliati del tutto e quelli con voci senza categoria, di
+// qualunque periodo. "Senza categoria" non si sceglie più: quello che non ce l'ha è da completare.
 // Non tutte le uscite sono spese: un prelievo di contanti è un trasferimento dal conto ai contanti
 // in mano (albatros_trasferimenti, come quelli del Cashflow). Prelievi e versamenti si riconoscono
 // dal tipo di movimento e diventano trasferimenti da soli all'import: non si sceglie a mano. I trasferimenti
@@ -67,7 +68,7 @@ const ENTI_SCEGLIBILI = ENTI.filter(e => e.id !== 'bfm');
 const VISTE = {
   cassa: [
     { id: 'contanti', label: 'Spese', icona: 'spese', permesso: 'cassa_spese' },
-    { id: 'dettagliare', label: 'Da dettagliare', icona: 'listino', permesso: 'cassa_dettagliare' },
+    { id: 'dettagliare', label: 'Da completare', icona: 'listino', permesso: 'cassa_dettagliare' },
     { id: 'trasferimenti', label: 'Trasferimenti', icona: 'cashflow', permesso: 'cassa_trasferimenti' },
   ],
   conti: [
@@ -105,7 +106,8 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
   const [modulo, setModulo] = useState(null);
   const [inCorso, setInCorso] = useState(false);
   // Le voci di dettaglio, per spesa; la spesa aperta e la voce che si sta scrivendo dentro.
-  const [vociPer, setVociPer] = useState({});
+  // Le voci salvate degli scontrini; vociPer (più sotto) ci aggiunge le commissioni bancarie.
+  const [vociSalvate, setVociPer] = useState({});
   const [espansa, setEspansa] = useState(null);
   const [nuovaVoce, setNuovaVoce] = useState(VOCE_VUOTA);
   // La voce che si sta correggendo (descrizione, importo, categoria): null = nessuna.
@@ -127,12 +129,14 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
 
   const [da, al] = intervalloPeriodo(periodo);
 
+  const ogniPeriodo = vista === 'dettagliare' || vista === 'tutte';
   const carica = async () => {
-    // In un anno le righe superano il limite di una lettura: si leggono a pagine. Da dettagliare
-    // guarda tutti gli scontrini, di qualunque periodo.
+    // In un anno le righe superano il limite di una lettura: si leggono a pagine. Da completare (Cassa)
+    // e Tutte le spese leggono le spese di qualunque periodo: Tutte poi mostra il periodo scelto,
+    // tranne col filtro Da completare, che come la scheda della Cassa le prende tutte.
     const { data } = await leggiTutte(() => {
       const q = supabase.from('albatros_spese').select('*');
-      return (vista === 'dettagliare' ? q.eq('multicategoria', true) : q.gte('data', da).lte('data', al))
+      return (ogniPeriodo ? q : q.gte('data', da).lte('data', al))
         .order('data', { ascending: false }).order('id', { ascending: false });
     });
     setSpese(data || []);
@@ -162,7 +166,14 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { carica(); }, [da, al, vista === 'dettagliare']);
+  useEffect(() => { carica(); }, [da, al, ogniPeriodo]);
+
+  // Le commissioni sommate a una spesa (come nel modulo Spese di BFM): l'importo della spesa le
+  // comprende già, la riga le mostra a parte. In uno scontrino sono una voce automatica, così non
+  // restano da dettagliare (conVociOneri).
+  const oneriPer = new Map();
+  banca.movimenti.filter(m => m.onere_spesa_id != null).forEach(m => oneriPer.set(m.onere_spesa_id, r2((oneriPer.get(m.onere_spesa_id) || 0) - num(m.importo))));
+  const vociPer = conVociOneri(spese, vociSalvate, oneriPer, categorie);
 
   // filtroEnte: '' = tutte, 'nessuno' = da attribuire, altrimenti l'id dell'ente.
   const categoriaFiltro = filtroCategoria === 'nessuna' ? null : filtroCategoria === DA_DETTAGLIARE ? DA_DETTAGLIARE : Number(filtroCategoria);
@@ -170,17 +181,22 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
   const idsFiltro = typeof categoriaFiltro === 'number' ? conSottocategorie(categorie, categoriaFiltro) : [categoriaFiltro];
   const importo = (s) => (filtroCategoria ? (typeof categoriaFiltro === 'number' ? importoInCategorie(s, vociPer[s.id], idsFiltro) : importoInCategoria(s, vociPer[s.id], categoriaFiltro)) : r2(num(s.importo)));
   // BFM: le spese che BFM sostiene per Albatros, arrivate dal modulo Spese di BFM (spesa_bfm_id).
+  // Uno scontrino con voci senza categoria (o su una categoria diventata principale): da completare.
+  const vociDaCompletare = (s) => spesaMulticategoria(s) && (vociPer[s.id] || []).some(v => voceDaCompletare(v, categorie));
+  const daDettagliare = (s) => spesaMulticategoria(s) && dettaglioSpesa(s, vociPer[s.id]).nonDettagliato > 0;
+  // Senza categoria (o su una categoria che nel frattempo ha sottocategorie, come in BFM), o con voci senza categoria.
+  const daCompletareBanca = (s) => (!spesaMulticategoria(s) && (s.categoria_id == null || !categoriaFoglia(categorie, s.categoria_id))) || vociDaCompletare(s);
+  // La regola della scheda Da completare della Cassa e del filtro Da completare di Tutte le spese:
+  // senza categoria, voci senza categoria, o scontrino non ancora dettagliato del tutto.
+  const daCompletareSpesa = (s) => daCompletareBanca(s) || daDettagliare(s);
+  const nelPeriodo = (s) => s.data >= da && s.data <= al;
   const speseVista = spese.filter(s => !nonInBanca(s) && (vista === 'banca' ? s.movimento_id != null
     : vista === 'contanti' ? s.movimento_id == null && s.spesa_bfm_id == null
       : vista === 'bfm' ? s.spesa_bfm_id != null
-        : vista === 'dettagliare' ? s.movimento_id != null && spesaMulticategoria(s) && dettaglioSpesa(s, vociPer[s.id]).nonDettagliato > 0
-          : vista === 'tutte'));
-  // Le commissioni sommate a una spesa (come nel modulo Spese di BFM): l'importo della spesa le
-  // comprende già, la riga le mostra a parte.
-  const oneriPer = new Map();
+        : vista === 'dettagliare' ? daCompletareSpesa(s)
+          : vista === 'tutte' && (soloDaCompletare ? daCompletareSpesa(s) : nelPeriodo(s))));
   // I movimenti non ancora contabilizzati (NC): la loro spesa ha il segno accanto alla data.
   const ncDi = new Set(banca.movimenti.filter(m => m.non_contabilizzato).map(m => m.id));
-  banca.movimenti.filter(m => m.onere_spesa_id != null).forEach(m => oneriPer.set(m.onere_spesa_id, r2((oneriPer.get(m.onere_spesa_id) || 0) - num(m.importo))));
   // Commissioni caricate prima che si sommassero: sono ancora spese a sé, ma il loro bonifico o
   // addebito ha una spesa a cui riunirle.
   const speseDaBanca = banca.spese.filter(x => x.movimento_id != null);
@@ -229,14 +245,14 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
     }
   };
 
-  const daDettagliare = (s) => spesaMulticategoria(s) && dettaglioSpesa(s, vociPer[s.id]).nonDettagliato > 0;
-  // Da completare: senza categoria, o su una categoria che nel frattempo ha sottocategorie (come in BFM).
-  const daCompletareBanca = (s) => s.movimento_id != null && !spesaMulticategoria(s) && (s.categoria_id == null || !categoriaFoglia(categorie, s.categoria_id));
+  // Il filtro Da completare: in Tutte le spese conta quelle di ogni periodo, come la scheda della Cassa.
+  const daCompletareVista = (s) => (vista === 'tutte' ? daCompletareSpesa(s) : daCompletareBanca(s));
+  const quanteDaCompletare = (vista === 'tutte' ? spese.filter(x => !nonInBanca(x)) : speseVista).filter(daCompletareVista);
   // Come in BFM l'avviso conta tutte le spese da completare, non solo quelle del periodo.
   const daCompletareTutte = speseDaBanca.filter(daCompletareBanca);
   const visibili = speseVista
-    .filter(s => !((vista === 'banca' || vista === 'tutte') && soloDaCompletare) || daCompletareBanca(s))
-    .filter(s => !((vista === 'banca' || vista === 'tutte') && soloDaDettagliare) || daDettagliare(s))
+    .filter(s => !((vista === 'banca' || vista === 'tutte') && soloDaCompletare) || daCompletareVista(s))
+    .filter(s => !(vista === 'banca' && soloDaDettagliare) || daDettagliare(s))
     .filter(s => !filtroEnte || (filtroEnte === 'nessuno' ? !s.ente : filtroEnte === 'dapagare' ? spesaDaPagare(s) : s.ente === filtroEnte))
     .filter(s => importo(s) > 0)
     .filter(s => {
@@ -275,6 +291,7 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
     if (modulo.daBanca) {
       const multi = !!modulo.multicategoria;
       if (!multi && (vociPer[modulo.id] || []).length) return alert('Questo scontrino ha già delle voci: per farne una spesa con una sola categoria toglile prima dal dettaglio.');
+      if (!multi && idCategoriaScelta(modulo.categoria, categorie, 'spesa') == null) return alert('Scegli la categoria.');
       setInCorso(true);
       const { error } = await supabase.from('albatros_spese')
         .update({ multicategoria: multi, categoria_id: multi ? null : idCategoriaScelta(modulo.categoria, categorie, 'spesa') }).eq('id', modulo.id);
@@ -294,6 +311,7 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
     if (importo < giaDettagliato) return alert(`Il dettaglio di questa spesa arriva già a ${euro(giaDettagliato)}: il totale non può essere più basso.`);
     const multi = !!modulo.multicategoria;
     if (!multi && giaDettagliato > 0) return alert('Questo scontrino ha già delle voci: per farne una spesa con una sola categoria toglile prima dal dettaglio.');
+    if (!multi && idCategoriaScelta(modulo.categoria, categorie, 'spesa') == null) return alert('Scegli la categoria.');
     const record = {
       data: modulo.data, importo, descrizione, multicategoria: multi,
       categoria_id: multi ? null : idCategoriaScelta(modulo.categoria, categorie, 'spesa'),
@@ -357,6 +375,7 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
     if (!descrizione) return alert('Scrivi cosa è stato pagato.');
     const multi = rigaBanca.categoria === SCONTRINO;
     if (!multi && (vociPer[rigaBanca.id] || []).length) return alert('Questo scontrino ha già delle voci: per dargli una sola categoria toglile prima dal dettaglio.');
+    if (!multi && idCategoriaScelta(rigaBanca.categoria, categorie, 'spesa') == null) return alert('Scegli la categoria.');
     setInCorso(true);
     const { error } = await supabase.from('albatros_spese').update({
       descrizione, multicategoria: multi, categoria_id: multi ? null : idCategoriaScelta(rigaBanca.categoria, categorie, 'spesa'),
@@ -388,6 +407,7 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
     if (!descrizione) return alert('Scrivi cosa è stato comprato.');
     if (!importo || importo <= 0) return alert('Importo non valido.');
     const voci = vociPer[s.id] || [];
+    if (idCategoriaScelta(nuovaVoce.categoria, categorie, 'spesa') == null) return alert('Scegli la categoria della voce.');
     if (!rigaSpesaConsentita(s, voci, importo)) return alert(`Così si supera il totale dello scontrino: restano ${euro(dettaglioSpesa(s, voci).nonDettagliato)} da dettagliare.`);
     setInCorso(true);
     const { error } = await supabase.from('albatros_spese_righe').insert([{
@@ -409,6 +429,7 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
     const importo = leggiImporto(voceInModifica.importo);
     if (!descrizione) return alert('Scrivi cosa è stato comprato.');
     if (!importo || importo <= 0) return alert('Importo non valido.');
+    if (idCategoriaScelta(voceInModifica.categoria, categorie, 'spesa') == null) return alert('Scegli la categoria della voce.');
     if (!modificaVoceConsentita(s, vociPer[s.id], voce, importo)) return alert(`Così si supera il totale dello scontrino (${euro(s.importo)}).`);
     setInCorso(true);
     const { error } = await supabase.from('albatros_spese_righe')
@@ -488,8 +509,9 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
           </div>
         )}
         <div className="albatros-testata filtri-telefono">
-          {vista !== 'dettagliare' && <FiltroPeriodo periodo={periodo} onChange={setPeriodo} />}
-          {vista === 'dettagliare' && <p className="albatros-nota" style={{ margin: 0, alignSelf: 'center' }}>Gli scontrini pagati con carta (arrivati dalla banca) non ancora dettagliati del tutto, di qualunque periodo. Tocca la riga e aggiungi le voci.</p>}
+          {vista !== 'dettagliare' && !(vista === 'tutte' && soloDaCompletare) && <FiltroPeriodo periodo={periodo} onChange={setPeriodo} />}
+          {vista === 'tutte' && soloDaCompletare && <p className="albatros-nota" style={{ margin: 0, alignSelf: 'center' }}>Le spese da completare di qualunque periodo, le stesse della scheda Da completare della Cassa.</p>}
+          {vista === 'dettagliare' && <p className="albatros-nota" style={{ margin: 0, alignSelf: 'center' }}>Le spese senza categoria, gli scontrini non ancora dettagliati del tutto e quelli con voci senza categoria, di qualunque periodo. Tocca la riga: aggiungi le voci o scegli la categoria.</p>}
           {vista === 'trasferimenti' && (
             <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: '0.88rem' }}>
               <div>Prelevati dal conto: <strong>{euro(trasferimentiBanca.filter(t => t.da === 'conto').reduce((x, t) => x + num(t.importo), 0))}</strong></div>
@@ -511,7 +533,7 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
                 <option key={c.id} value={String(c.id)}>{c.nome}{c.attiva ? '' : ' (archiviata)'}</option>,
                 ...c.figlie.map(x => <option key={x.id} value={String(x.id)}>{`  › ${x.nome}`}{x.attiva ? '' : ' (archiviata)'}</option>),
               ])}
-              <option value="nessuna">Senza categoria</option>
+              <option value="nessuna">Senza categoria (da completare)</option>
             </select>
           </label>
           <label className="albatros-etichetta filtro-largo" style={{ flex: '1 1 180px' }}>Cerca
@@ -530,18 +552,18 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
             </button>
             {(vista === 'banca' || vista === 'tutte') && (
               <button type="button" className={`albatros-chip albatros-chip-avviso ${soloDaCompletare ? 'attivo' : ''}`}
-                disabled={!soloDaCompletare && !speseVista.some(daCompletareBanca)} onClick={() => setSoloDaCompletare(!soloDaCompletare)}>
-                Da completare ({speseVista.filter(daCompletareBanca).length})
+                disabled={!soloDaCompletare && !quanteDaCompletare.length} onClick={() => setSoloDaCompletare(!soloDaCompletare)}>
+                Da completare ({quanteDaCompletare.length})
               </button>
             )}
-            {(vista === 'banca' || vista === 'tutte') && (
+            {vista === 'banca' && (
               <button type="button" className={`albatros-chip albatros-chip-avviso ${soloDaDettagliare ? 'attivo' : ''}`}
                 disabled={!soloDaDettagliare && !speseVista.some(daDettagliare)} onClick={() => setSoloDaDettagliare(!soloDaDettagliare)}>
                 Da dettagliare ({speseVista.filter(daDettagliare).length})
               </button>
             )}
             <div style={{ marginLeft: 'auto', textAlign: 'right', fontSize: '0.88rem' }}>
-              <div>{vista === 'dettagliare' ? 'Da dettagliare' : `Spese ${dicituraPeriodo(periodo, 'del')}`}: <strong>{euro(vista === 'dettagliare' ? visibili.reduce((t, sp) => t + dettaglioSpesa(sp, vociPer[sp.id]).nonDettagliato, 0) : totale(visibili))}</strong></div>
+              <div>{vista === 'dettagliare' || (vista === 'tutte' && soloDaCompletare) ? 'Da completare' : `Spese ${dicituraPeriodo(periodo, 'del')}`}: <strong>{euro(totale(visibili))}</strong></div>
               {!filtroEnte && (
                 <div className="albatros-tenue">{[...ENTI.map(e => `${e.label} ${euro(totale(speseVista.filter(s => s.ente === e.id)))}`), ...(daAttribuire.length ? [`da attribuire ${euro(totale(daAttribuire))}`] : [])].join(' · ')}</div>
               )}
@@ -550,7 +572,7 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
           </>)}
         </div>
 
-        {vista !== 'trasferimenti' && visibili.length === 0 && <p className="albatros-vuoto">{vista === 'banca' ? 'Nessuna spesa dalla banca in questo periodo.' : vista === 'bfm' ? 'Nessuna spesa dal conto di BFM in questo periodo: si scrivono nel modulo Spese di BFM.' : vista === 'dettagliare' ? 'Nessuno scontrino da dettagliare.' : 'Nessuna spesa.'}</p>}
+        {vista !== 'trasferimenti' && visibili.length === 0 && <p className="albatros-vuoto">{vista === 'banca' ? 'Nessuna spesa dalla banca in questo periodo.' : vista === 'bfm' ? 'Nessuna spesa dal conto di BFM in questo periodo: si scrivono nel modulo Spese di BFM.' : vista === 'dettagliare' ? 'Niente da completare.' : 'Nessuna spesa.'}</p>}
         {vista === 'trasferimenti' && (
           <div style={{ marginTop: '12px' }}>
             {puoCorreggere && doppi.length > 0 && (
@@ -602,7 +624,7 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
                         ? <input type="text" value={rigaBanca.descrizione} autoFocus onChange={(e) => setRigaBanca({ ...rigaBanca, descrizione: e.target.value })} className="albatros-campo albatros-categoria-riga" />
                         : s.descrizione}
                       {vista !== 'tutte' && s.spesa_bfm_id && <span className="albatros-badge mini" style={{ marginLeft: '6px', background: '#e0f2fe', color: '#075985' }} title="Arriva dal modulo Spese di BFM (conto corrente): data, importo e descrizione si cambiano lì">Dal conto BFM</span>}
-                      {daCompletareBanca(s) && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }} title="Spesa dalla banca senza categoria: aprila con la matita e sceglila">Da completare</span>}
+                      {daCompletareBanca(s) && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }} title={vociDaCompletare(s) ? 'Ci sono voci senza categoria: tocca la riga e dagliela' : s.spesa_bfm_id ? 'Spesa dal conto BFM senza categoria di Albatros: si completa nel modulo Spese di BFM' : 'Spesa senza categoria: aprila con la matita e sceglila'}>Da completare</span>}
                       {dettagliabile && voci.length === 0 && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }} title="Scontrino da dettagliare: tocca la riga e aggiungi le voci">Da dettagliare</span>}
                       {voci.length > 0 && <span className={`albatros-badge mini ${det.nonDettagliato > 0 ? 'da-specificare' : 'chiusa'}`} style={{ marginLeft: '6px' }}>{det.nonDettagliato > 0 && dettagliabile ? 'Da dettagliare · ' : ''}{voci.length} {voci.length === 1 ? 'voce' : 'voci'} · {Math.round(det.quota * 100)}%</span>}
                     </td>
@@ -619,7 +641,7 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
                           {alberoCategorie(categorie, 'spesa').filter(c => !c.gruppo || c.figlie.length).map(c => (c.gruppo
                             ? <optgroup key={c.id} label={c.nome}>{c.figlie.map(x => <option key={x.id} value={String(x.id)}>{x.nome}</option>)}</optgroup>
                             : <option key={c.id} value={String(c.id)}>{c.nome}</option>))}
-                          <option value="">Senza categoria</option>
+                          {rigaBanca.categoria === '' && <option value="" disabled>Scegli la categoria…</option>}
                           <option value={SCONTRINO}>Scontrino con più categorie</option>
                         </select>
                       : spesaMulticategoria(s)
@@ -684,14 +706,16 @@ function Spese({ user, categorie, listino, utenti, puoCorreggere, modulo: modulo
                               {v.descrizione}
                               <span className="albatros-tenue"> · {nomeCategoria(categorie, v.categoria_id)}</span>
                               {voceDaSalvare(v) && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }}>da salvare</span>}
+                              {voceDaCompletare(v, categorie) && <span className="albatros-badge mini da-specificare" style={{ marginLeft: '6px' }} title="Correggi la voce e scegli la categoria">da completare</span>}
+                              {v.automatica && <span className="albatros-tenue" style={{ fontSize: '0.75rem' }} title="Sommate dalla banca: non si dettagliano"> · automatica</span>}
                             </div>
                             <div className="albatros-riga-importo">{euro(v.importo)}</div>
-                            {voceCorreggibile(v, puoCorreggere) && (
+                            {voceCorreggibile(v, puoCorreggere, categorie) && (
                               <button type="button" className="btn-icon-action" title="Correggi la voce" disabled={inCorso} onClick={() => apriModificaVoce(v)}>
                                 <Icona nome="modifica" size={14} style={{ marginRight: 0 }} />
                               </button>
                             )}
-                            {voceCorreggibile(v, puoCorreggere) && <button type="button" className="btn-icon-action danger" title="Togli la voce" disabled={inCorso} onClick={() => togliVoce(v)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
+                            {voceCorreggibile(v, puoCorreggere, categorie) && <button type="button" className="btn-icon-action danger" title="Togli la voce" disabled={inCorso} onClick={() => togliVoce(v)}><Icona nome="elimina" size={14} style={{ marginRight: 0 }} /></button>}
                           </div>
                         )))}
                         {altreVoci.length > 0 && (

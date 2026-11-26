@@ -6,7 +6,7 @@
 import * as XLSX from 'xlsx';
 import {
   leggiEstrattoConto, controlloSaldi, verificaContinuita, elabora, regolaPer, controparteDi, preparaControparti, codiceDi, oneriDi, daCompletare,
-  cosaManca, completaDaRegola, regolaDaSpesa, cercaCategorie, percorsoCategoria, eFoglia, esitoRegola,
+  cosaManca, completaDaRegola, regolaDaSpesa, cercaCategorie, percorsoCategoria, eFoglia, esitoRegola, descrizioneDi,
 } from './banca.js';
 
 const esiti = [];
@@ -184,6 +184,7 @@ verifica('costi dei bonifici e commissione ADUE: oneri della spesa principale', 
 const note = el.nuove.find(n => n.movimento.id === 2).spesa;
 verifica('spesa generale dalla regola, importo senza oneri', [1064.5, 'bfm', 'generale', 21, 2], [note.importo, note.ente, note.natura, note.categoria_id, note.regola_id]);
 verifica('descrizione dal testo dopo "a favore di"', 'Gabriele Maccali Rimborso note spese Luglio 2026', note.descrizione);
+verifica('descrizione: disposto verso, col tipo e il beneficiario', 'Disposizione Sct · Wefor srl', descrizioneDi({ tipo: 'DISPOSIZIONE SCT', descrizione: '98 SCT (DIS) Cod. Disp.: 0306918197399003S93373033730IT disposto verso Wefor srl' }));
 const bub = el.nuove.find(n => n.movimento.id === 4).spesa;
 verifica('compenso bubbler: operativa, con controparte e beneficiario', ['operativa', 'bubbler', '7', 'Daniele Inzaghi', null], [bub.natura, bub.operativa, bub.controparte_id, bub.beneficiario, bub.categoria_id]);
 const f24 = el.nuove.find(n => n.movimento.id === 6).spesa;
